@@ -664,18 +664,20 @@ export const useScoreStore = create((set, get) => ({
     )
   },
 
+  // Plain ↑↓ = chromatic half-step (same logic as shiftPitchHalfStep)
   shiftPitchStep: (dir) => {
-    const STEPS = ['C','D','E','F','G','A','B']
+    get().shiftPitchHalfStep(dir)
+  },
+
+  // Shift+↑↓ = octave jump
+  shiftPitchOctave: (dir) => {
     const { score, selectedNoteId, selectedPartId, selectedMeasureIndex } = get()
     const note = score.parts.find(p => p.id === selectedPartId)
       ?.measures[selectedMeasureIndex]?.notes.find(n => n.id === selectedNoteId)
     if (!note?.pitch) return
-    let idx = STEPS.indexOf(note.pitch.step), oct = note.pitch.octave
-    idx += dir
-    if (idx >= STEPS.length) { idx -= STEPS.length; oct++ }
-    if (idx < 0)              { idx += STEPS.length; oct-- }
+    const np = { ...note.pitch, octave: note.pitch.octave + dir }
     get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) =>
-      notes.map(n => n.id === selectedNoteId ? { ...n, pitch: { step: STEPS[idx], octave: oct, accidental: null } } : n)
+      notes.map(n => n.id === selectedNoteId ? { ...n, pitch: np } : n)
     )
   },
 

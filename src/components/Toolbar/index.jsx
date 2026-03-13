@@ -137,47 +137,14 @@ export default function Toolbar() {
           ♩ Note
         </TBtn>
 
-        {/* ── Draggable note ghost — visible and draggable in note mode ── */}
+        {/* In note mode: show a subtle hint that score is draggable */}
         {inputMode === 'note' && (
-          <div
-            draggable
-            onDragStart={e => {
-              // Tag the drag with our custom MIME type so ScoreRenderer
-              // knows this is a toolbar-note drag (not an existing note move)
-              e.dataTransfer.setData('application/scoreai-toolnote', JSON.stringify({
-                step:        selectedNote?.step,
-                accidental:  selectedNote?.accidental ?? null,
-                duration:    selectedDuration,
-                dots:        selectedDots,
-                octave:      selectedOctave,
-              }))
-              e.dataTransfer.effectAllowed = 'copy'
-            }}
-            title={`Drag to place ${selectedNote?.label ?? ''}${selectedDots ? '.' : ''} (${selectedDuration}) onto a bar`}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 3,
-              padding: '2px 10px', height: 28, borderRadius: 6,
-              background: 'linear-gradient(135deg, #166534 0%, #15803d 100%)',
-              border: '1.5px solid #14532d',
-              cursor: 'grab', userSelect: 'none', flexShrink: 0,
-              boxShadow: '0 1px 3px rgba(0,0,0,0.18)',
-              color: 'white', fontWeight: 700, fontSize: 13,
-              letterSpacing: 0.3,
-            }}>
-            <span style={{ fontSize: 16, lineHeight: 1 }}>
-              {selectedDuration === 'w'  ? '𝅝'
-               : selectedDuration === 'h'  ? '𝅗𝅥'
-               : selectedDuration === 'q'  ? '♩'
-               : selectedDuration === '8'  ? '♪'
-               : selectedDuration === '16' ? '𝅘𝅥𝅰'
-               : '𝅘𝅥𝅱'}
-              {selectedDots ? '·' : ''}
-            </span>
-            <span style={{ fontSize: 12 }}>
-              {selectedNote?.label ?? 'C'}{selectedOctave}
-            </span>
-            <span style={{ fontSize: 9, opacity: 0.75 }}>drag →</span>
-          </div>
+          <span style={{
+            fontSize: 10, color: '#15803d', fontStyle: 'italic',
+            padding: '0 6px', opacity: 0.8,
+          }}>
+            drag onto staff to place
+          </span>
         )}
 
         <Sep />

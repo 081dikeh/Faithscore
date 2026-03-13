@@ -74,10 +74,11 @@ function buildVfNote(n, clef, isSelected, chordExtras = []) {
 export default function ScoreRenderer() {
   const containerRef = useRef(null)
   const [zones, setZones] = useState([])
-  const [dragState, setDragState]       = useState(null)   // existing-note drag
-  const [dropTarget, setDropTarget]     = useState(null)   // drop highlight key
-  const [toolDragOver, setToolDragOver] = useState(null)   // toolbar-note drag target
-  const [toolDragBeat, setToolDragBeat] = useState(null)   // beat position preview
+  const [dragState, setDragState]   = useState(null)   // existing-note drag
+  const [dropTarget, setDropTarget] = useState(null)   // drop highlight key
+  // ghostDrag: active when user drags in Note mode over the score
+  // { zKey, x, y, beat, pitch } — used to render the floating ghost note
+  const [ghostDrag, setGhostDrag]   = useState(null)
 
   const score                = useScoreStore(s => s.score)
   const selectedMeasureIndex = useScoreStore(s => s.selectedMeasureIndex)
@@ -89,10 +90,8 @@ export default function ScoreRenderer() {
   const playbackBeat         = useScoreStore(s => s.playbackBeat)
   const dropNoteAtBeat       = useScoreStore(s => s.dropNoteAtBeat)
   const inputMode            = useScoreStore(s => s.inputMode)
-  const selectedNote         = useScoreStore(s => s.selectedNote)
   const selectedDuration     = useScoreStore(s => s.selectedDuration)
   const selectedDots         = useScoreStore(s => s.selectedDots)
-  const selectedOctave       = useScoreStore(s => s.selectedOctave)
 
   const render = useCallback(() => {
     if (!containerRef.current) return
@@ -307,78 +306,145 @@ export default function ScoreRenderer() {
     <div style={{ position: 'relative', display: 'inline-block', minWidth: '100%', lineHeight: 0 }}>
       <div ref={containerRef} style={{ display: 'block' }} />
 
-      {/* Measure zones */}
+      {/* Measure zones — handle both ghost-note drags (note mode) and existing-note moves */}
       {measureZones.map((z) => {
         const zKey        = `${z.partId}-${z.measureIndex}`
         const isExistDrop = dropTarget === zKey
-        const isToolDrop  = toolDragOver === zKey
+        const isGhostDrop = ghostDrag?.zKey === zKey
 
-        // Compute beat position from mouse X within this zone (for preview line)
+        const part  = score.parts.find(p => p.id === z.partId)
+        const clef  = part?.clef || 'treble'
+        const beats = part?.measures[z.measureIndex]?.timeSignature?.beats ?? 4
+
+        // ── X → beat position ─────────────────────────────────────────────
         const getBeatFromX = (clientX) => {
-          // Get the zone's bounding rect from the page
-          // We use the stored zone coords relative to the container
+          const container = containerRef.current?.parentElement
+          const rect      = container ? container.getBoundingClientRect() : { left: 0, top: 0 }
           const noteStart = z.measureIndex === 0 ? z.x + 55 : z.x + 10
           const noteWidth = z.width - (z.measureIndex === 0 ? 60 : 15)
-          // clientX is relative to viewport; we need it relative to SVG container
-          const container = containerRef.current?.parentElement
-          const rect      = container ? container.getBoundingClientRect() : { left: 0 }
           const relX      = clientX - rect.left
           const frac      = Math.max(0, Math.min(1, (relX - noteStart) / noteWidth))
-          const part      = score.parts.find(p => p.id === z.partId)
-          const beats     = part?.measures[z.measureIndex]?.timeSignature?.beats ?? 4
           return frac * beats
+        }
+
+        // ── Y → pitch (line/space on staff) ───────────────────────────────
+        // VexFlow staff: 5 lines, top line at staveTop+10, bottom at staveTop+50
+        // Each line/space = 10px apart (STAVE_HEIGHT=80 / 8 positions = 10px)
+        // We map Y pixel → staff position (0=top line, 8=bottom line) → pitch
+        const getPitchFromY = (clientY) => {
+          const container = containerRef.current?.parentElement
+          const rect      = container ? container.getBoundingClientRect() : { left: 0, top: 0 }
+          const relY      = clientY - rect.top
+
+          // Staff top line ≈ staveY+10, bottom line ≈ staveY+50
+          // Positions above/below staff are also valid
+          const staffTopY    = z.y + 10   // top line pixel Y
+          const staffBottomY = z.y + 50   // bottom line pixel Y
+          const staffSpan    = staffBottomY - staffTopY  // 40px for 4 spaces = 10px/space
+
+          // Position 0 = top line, increases downward (lower pitch)
+          // Each 10px = one staff position (line or space)
+          const rawPos = (relY - staffTopY) / (staffSpan / 4)  // 0=top, 4=bottom line
+          // Clamp from -3 (above staff) to 7 (below staff)
+          const pos = Math.max(-3, Math.min(7, Math.round(rawPos)))
+
+          if (clef === 'treble') {
+            // Treble clef positions (0=F5, 1=E5, 2=D5, 3=C5, 4=B4, 5=A4, 6=G4, 7=F4, 8=E4...)
+            // Lines: F5(0), D5(2), B4(4), G4(6), E4(8) — but we index from top line
+            const TREBLE = [
+              {s:'F',o:5,a:null}, {s:'E',o:5,a:null}, {s:'D',o:5,a:null},
+              {s:'C',o:5,a:null}, {s:'B',o:4,a:null}, {s:'A',o:4,a:null},
+              {s:'G',o:4,a:null}, {s:'F',o:4,a:null}, {s:'E',o:4,a:null},
+              {s:'D',o:4,a:null}, {s:'C',o:4,a:null},
+            ]
+            const idx = pos + 3  // shift so pos=-3 maps to idx=0
+            const p   = TREBLE[Math.max(0, Math.min(TREBLE.length-1, idx))]
+            return { step: p.s, octave: p.o, accidental: p.a }
+          } else {
+            // Bass clef positions (top line = A3, spaces down: G3,F3,E3,D3,C3,B2,A2,G2...)
+            const BASS = [
+              {s:'A',o:3,a:null}, {s:'G',o:3,a:null}, {s:'F',o:3,a:null},
+              {s:'E',o:3,a:null}, {s:'D',o:3,a:null}, {s:'C',o:3,a:null},
+              {s:'B',o:2,a:null}, {s:'A',o:2,a:null}, {s:'G',o:2,a:null},
+              {s:'F',o:2,a:null}, {s:'E',o:2,a:null},
+            ]
+            const idx = pos + 3
+            const p   = BASS[Math.max(0, Math.min(BASS.length-1, idx))]
+            return { step: p.s, octave: p.o, accidental: p.a }
+          }
+        }
+
+        // ── Shared drag event handler for ghost-note drags ─────────────────
+        const handleGhostDragOver = (e) => {
+          if (inputMode !== 'note') return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
+          const container = containerRef.current?.parentElement
+          const rect      = container ? container.getBoundingClientRect() : { left:0, top:0 }
+          const beat  = getBeatFromX(e.clientX)
+          const pitch = getPitchFromY(e.clientY)
+          // Compute ghost X pixel (for preview dot)
+          const noteStart = z.measureIndex === 0 ? z.x + 55 : z.x + 10
+          const noteWidth = z.width - (z.measureIndex === 0 ? 60 : 15)
+          const ghostX    = noteStart + Math.min(1, beat / beats) * noteWidth
+          // Ghost Y: map pitch back to pixel
+          const staffTopY  = z.y + 10
+          const staffBotY  = z.y + 50
+          const TREBLE_LABELS = ['F5','E5','D5','C5','B4','A4','G4','F4','E4','D4','C4']
+          const BASS_LABELS   = ['A3','G3','F3','E3','D3','C3','B2','A2','G2','F2','E2']
+          const labels = clef === 'treble' ? TREBLE_LABELS : BASS_LABELS
+          const pitchLabel = `${pitch.step}${pitch.octave}`
+          const pitchIdx   = labels.indexOf(pitchLabel)
+          const ghostY     = pitchIdx >= 0
+            ? staffTopY + (pitchIdx / (labels.length - 1)) * (staffBotY - staffTopY)
+            : e.clientY - rect.top
+          setGhostDrag({ zKey, beat, pitch, ghostX, ghostY })
+          setDropTarget(null)
         }
 
         return (
           <div key={zKey}
             onClick={() => selectMeasure(z.partId, z.measureIndex)}
             onDragOver={e => {
-              e.preventDefault()
-              e.dataTransfer.dropEffect = 'copy'
-              const isDraggingToolNote = e.dataTransfer.types.includes('application/scoreai-toolnote')
-              if (isDraggingToolNote) {
-                setToolDragOver(zKey)
-                setToolDragBeat(getBeatFromX(e.clientX))
-                setDropTarget(null)
+              if (inputMode === 'note') {
+                handleGhostDragOver(e)
               } else {
+                e.preventDefault()
                 setDropTarget(zKey)
-                setToolDragOver(null)
               }
             }}
             onDrop={e => {
               e.preventDefault()
-              const isDraggingToolNote = e.dataTransfer.types.includes('application/scoreai-toolnote')
-              if (isDraggingToolNote) {
-                // Drop toolbar note at computed beat position
-                const beatPos = getBeatFromX(e.clientX)
-                const pitch   = { step: selectedNote?.step, octave: selectedOctave, accidental: selectedNote?.accidental ?? null }
-                dropNoteAtBeat(z.partId, z.measureIndex, pitch, selectedDuration, selectedDots, beatPos)
+              if (inputMode === 'note' && ghostDrag) {
+                dropNoteAtBeat(
+                  z.partId, z.measureIndex,
+                  ghostDrag.pitch,
+                  selectedDuration, selectedDots,
+                  ghostDrag.beat
+                )
               } else if (dragState) {
                 moveNote(dragState.noteId, dragState.partId, dragState.measureIndex, z.partId, z.measureIndex)
               }
               setDragState(null)
               setDropTarget(null)
-              setToolDragOver(null)
-              setToolDragBeat(null)
+              setGhostDrag(null)
             }}
             onDragLeave={e => {
-              // Only clear if leaving the zone entirely (not entering a child)
               if (!e.currentTarget.contains(e.relatedTarget)) {
                 setDropTarget(null)
-                setToolDragOver(null)
-                setToolDragBeat(null)
+                setGhostDrag(null)
               }
             }}
             style={{
               position: 'absolute', left: z.x, top: z.y, width: z.width, height: z.height,
-              cursor: inputMode === 'note' ? 'copy' : 'pointer',
+              cursor: inputMode === 'note' ? 'crosshair' : 'pointer',
               borderRadius: 2, boxSizing: 'border-box', zIndex: 1,
-              border: isToolDrop
+              border: isGhostDrop
                 ? '2px dashed #16a34a'
                 : isExistDrop ? '2px dashed #ea580c'
                 : z.selected ? '2px solid #1d4ed8' : '2px solid transparent',
-              backgroundColor: isToolDrop
-                ? 'rgba(22,163,74,0.10)'
+              backgroundColor: isGhostDrop
+                ? 'rgba(22,163,74,0.07)'
                 : isExistDrop ? 'rgba(234,88,12,0.08)'
                 : z.selected ? 'rgba(29,78,216,0.06)' : 'transparent',
             }}
@@ -386,24 +452,59 @@ export default function ScoreRenderer() {
         )
       })}
 
-      {/* Beat-position preview line during toolbar drag */}
-      {toolDragOver && toolDragBeat !== null && (() => {
-        const z = measureZones.find(z => `${z.partId}-${z.measureIndex}` === toolDragOver)
-        if (!z) return null
-        const part     = score.parts.find(p => p.id === z.partId)
-        const beats    = part?.measures[z.measureIndex]?.timeSignature?.beats ?? 4
-        const noteStart = z.measureIndex === 0 ? z.x + 55 : z.x + 10
-        const noteWidth = z.width - (z.measureIndex === 0 ? 60 : 15)
-        const frac      = Math.min(1, toolDragBeat / beats)
-        const px        = noteStart + frac * noteWidth
+      {/* Ghost note preview — floating note dot + pitch label while dragging in note mode */}
+      {ghostDrag && (() => {
+        const dur = selectedDuration
+        const sym = dur==='w' ? '𝅝' : dur==='h' ? '𝅗𝅥' : dur==='q' ? '♩' : dur==='8' ? '♪' : '𝅘𝅥𝅰'
+        const label = `${ghostDrag.pitch.step}${ghostDrag.pitch.accidental ?? ''}${ghostDrag.pitch.octave}`
         return (
-          <div style={{
-            position: 'absolute', left: px, top: z.y - 4,
-            width: 2, height: z.height + 8,
-            background: '#16a34a', borderRadius: 1,
-            pointerEvents: 'none', zIndex: 15,
-            boxShadow: '0 0 6px rgba(22,163,74,0.6)',
-          }} />
+          <>
+            {/* Vertical beat-position line */}
+            {(() => {
+              const z = measureZones.find(mz => mz.partId === ghostDrag.zKey?.split('-')[0]
+                && String(mz.measureIndex) === ghostDrag.zKey?.split('-').slice(1).join('-'))
+                || measureZones.find(mz => `${mz.partId}-${mz.measureIndex}` === ghostDrag.zKey)
+              if (!z) return null
+              return <div style={{
+                position: 'absolute',
+                left: ghostDrag.ghostX,
+                top: z.y - 6,
+                width: 1.5,
+                height: z.height + 12,
+                background: 'rgba(22,163,74,0.5)',
+                pointerEvents: 'none',
+                zIndex: 14,
+              }} />
+            })()}
+            {/* Note symbol at pitch position */}
+            <div style={{
+              position: 'absolute',
+              left: ghostDrag.ghostX - 10,
+              top:  ghostDrag.ghostY  - 12,
+              pointerEvents: 'none',
+              zIndex: 16,
+              fontSize: 22,
+              color: '#16a34a',
+              textShadow: '0 0 8px rgba(22,163,74,0.6)',
+              userSelect: 'none',
+              lineHeight: 1,
+            }}>{sym}</div>
+            {/* Pitch label bubble */}
+            <div style={{
+              position: 'absolute',
+              left: ghostDrag.ghostX + 6,
+              top:  ghostDrag.ghostY - 20,
+              pointerEvents: 'none',
+              zIndex: 17,
+              background: '#166534',
+              color: 'white',
+              fontSize: 10,
+              fontWeight: 700,
+              padding: '1px 5px',
+              borderRadius: 4,
+              whiteSpace: 'nowrap',
+            }}>{label}{selectedDots ? '.' : ''}</div>
+          </>
         )
       })()}
 

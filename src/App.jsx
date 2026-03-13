@@ -35,6 +35,7 @@ export default function App() {
   const setChordMode           = useScoreStore(s => s.setChordMode)
   const navigateNote           = useScoreStore(s => s.navigateNote)
   const shiftPitchHalfStep     = useScoreStore(s => s.shiftPitchHalfStep)
+  const shiftPitchOctave       = useScoreStore(s => s.shiftPitchOctave)
   const shiftPitchStep         = useScoreStore(s => s.shiftPitchStep)
   const clearNoteSelection     = useScoreStore(s => s.clearNoteSelection)
   const clearSelection         = useScoreStore(s => s.clearSelection)
@@ -113,8 +114,8 @@ export default function App() {
 
         // Pitch shifts (only for real notes)
         if (!selNote?.isRest) {
-          if (e.shiftKey && e.key === 'ArrowUp')   { e.preventDefault(); shiftPitchHalfStep(1);  return }
-          if (e.shiftKey && e.key === 'ArrowDown')  { e.preventDefault(); shiftPitchHalfStep(-1); return }
+          if (e.shiftKey && e.key === 'ArrowUp')   { e.preventDefault(); shiftPitchOctave(1);   return }
+          if (e.shiftKey && e.key === 'ArrowDown')  { e.preventDefault(); shiftPitchOctave(-1);  return }
           if (!e.shiftKey && e.key === 'ArrowUp')   { e.preventDefault(); shiftPitchStep(1);  return }
           if (!e.shiftKey && e.key === 'ArrowDown') { e.preventDefault(); shiftPitchStep(-1); return }
         }
@@ -296,7 +297,7 @@ export default function App() {
         {[
           ['N','Note mode'], ['S','Select'], ['A–G','Natural note'],
           ['Enter','Chromatic'], ['1–6','Duration'], ['.','Dot'],
-          ['J','Chord'], ['↑↓','Step'], ['⇧↑↓','Half-step'],
+          ['J','Chord'], ['↑↓','Chromatic'], ['⇧↑↓','Octave jump'],
           ['←→','Navigate'], ['Del','Delete note'], ['M','Add bar'],
           ['Right-click','Bar menu'],
         ].map(([k,v]) => (
@@ -328,8 +329,24 @@ export default function App() {
             )}
           </div>
 
-          {/* Score notation */}
-          <div className="px-6 py-6 overflow-x-visible">
+          {/* Score notation — draggable in note mode so user can drag onto any bar */}
+          <div
+            className="px-6 py-6 overflow-x-visible"
+            draggable={inputMode === 'note'}
+            onDragStart={e => {
+              if (inputMode !== 'note') return
+              // Signal ScoreRenderer that this is a ghost-note drag (not a note move)
+              e.dataTransfer.setData('application/scoreai-toolnote', '1')
+              e.dataTransfer.effectAllowed = 'copy'
+              // Hide the default drag image (ScoreRenderer shows its own ghost)
+              const blank = document.createElement('div')
+              blank.style.cssText = 'width:1px;height:1px;opacity:0;position:fixed;top:-100px'
+              document.body.appendChild(blank)
+              e.dataTransfer.setDragImage(blank, 0, 0)
+              setTimeout(() => document.body.removeChild(blank), 0)
+            }}
+            style={{ cursor: inputMode === 'note' ? 'crosshair' : 'default' }}
+          >
             <ScoreRenderer />
           </div>
         </div>
