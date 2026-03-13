@@ -355,6 +355,66 @@ export const useScoreStore = create((set, get) => ({
   },
 
   // ── Standard note add (appends to end of real notes) ──────────────────────
+
+  // ── Drop note at specific beat position (drag-and-drop from toolbar) ────────
+  // beatPosition = fractional beat index within the measure (0 = start, 1 = after beat 1, etc.)
+  // The note is inserted at the rest slot whose beat range contains beatPosition.
+  dropNoteAtBeat: (partId, measureIndex, pitch, duration, dots, beatPosition) => {
+    const part    = get().score.parts.find(p => p.id === partId)
+    const measure = part?.measures[measureIndex]
+    if (!measure) return
+
+    const maxBeats  = measure.timeSignature.beats
+    const clampedBeat = Math.max(0, Math.min(beatPosition, maxBeats - 0.001))
+
+    // Find which rest slot the drop position falls into
+    // Walk through non-chord notes, tracking beat cursor, find the rest at clampedBeat
+    const nonChord = measure.notes.filter(n => !n.chordWith)
+    let cursor = 0
+    let targetRest = null
+
+    for (const n of nonChord) {
+      const dur = noteDuration(n)
+      if (n.isRest && clampedBeat >= cursor - 0.001 && clampedBeat < cursor + dur - 0.001) {
+        targetRest = n
+        break
+      }
+      cursor += dur
+    }
+
+    // If no rest found at that position (it's occupied by a note), find the next rest
+    if (!targetRest) {
+      targetRest = nonChord.find(n => n.isRest)
+    }
+    if (!targetRest) return  // measure is completely full of real notes
+
+    const restBeats  = noteDuration(targetRest)
+    const durKey     = duration + (dots ? 'd' : '')
+    const newBeats   = DURATION_BEATS[durKey] || DURATION_BEATS[duration] || 1
+    const actualBeats = Math.min(newBeats, restBeats)  // clamp to fit
+    const fitDur     = actualBeats === newBeats
+      ? { duration, dots: dots || 0 }
+      : beatsToRest(restBeats)
+
+    const newId   = crypto.randomUUID()
+    const newNote = { id: newId, isRest: false, pitch, duration: fitDur.duration, dots: fitDur.dots }
+    const leftover = restBeats - noteDuration(newNote)
+
+    get()._applyToMeasure(partId, measureIndex, (notes) => {
+      const idx      = notes.findIndex(n => n.id === targetRest.id)
+      const before   = notes.slice(0, idx)
+      const after    = notes.slice(idx + 1).filter(n => !n.isRest)
+      const leftovers = leftover > 0.001 ? makeRests(leftover, `drop_${newId}`) : []
+      return [...before, newNote, ...leftovers, ...after]
+    })
+
+    set({
+      selectedPartId:       partId,
+      selectedMeasureIndex: measureIndex,
+      selectedNoteId:       newId,
+    })
+  },
+
   addNote: (partId, measureIndex, noteData) => {
     const state = get()
     const { chordMode, selectedNoteId } = state

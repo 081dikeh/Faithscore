@@ -17,7 +17,7 @@ const STAVE_HEIGHT        = 80
 // Middle of staff for rests — VexFlow places rest glyph at this key position.
 // Bass clef lines (bottom→top): G2 B2 D3 F3 A3 — middle line = D3
 // Treble clef lines (bottom→top): E4 G4 B4 D5 F5 — middle line = B4
-const REST_KEY = { treble: 'c/5', bass: 'e/3' }
+const REST_KEY = { treble: 'b/4', bass: 'd/3' }
 
 function keyNumToVexflow(num) {
   const map = {
@@ -47,7 +47,7 @@ function buildVfNote(n, clef, isSelected, chordExtras = []) {
     return sn
   }
 
-  const defKey = clef === 'bass' ? 'f/3' : 'd/5'
+  const defKey = clef === 'bass' ? 'f/3' : 'b/4'
   const allNotes = [n, ...chordExtras]
   const keys = allNotes.map(nn =>
     nn.pitch ? `${nn.pitch.step.toLowerCase()}/${nn.pitch.octave}` : defKey
@@ -74,8 +74,10 @@ function buildVfNote(n, clef, isSelected, chordExtras = []) {
 export default function ScoreRenderer() {
   const containerRef = useRef(null)
   const [zones, setZones] = useState([])
-  const [dragState, setDragState]   = useState(null)
-  const [dropTarget, setDropTarget] = useState(null)
+  const [dragState, setDragState]       = useState(null)   // existing-note drag
+  const [dropTarget, setDropTarget]     = useState(null)   // drop highlight key
+  const [toolDragOver, setToolDragOver] = useState(null)   // toolbar-note drag target
+  const [toolDragBeat, setToolDragBeat] = useState(null)   // beat position preview
 
   const score                = useScoreStore(s => s.score)
   const selectedMeasureIndex = useScoreStore(s => s.selectedMeasureIndex)
@@ -85,6 +87,12 @@ export default function ScoreRenderer() {
   const selectNote           = useScoreStore(s => s.selectNote)
   const moveNote             = useScoreStore(s => s.moveNote)
   const playbackBeat         = useScoreStore(s => s.playbackBeat)
+  const dropNoteAtBeat       = useScoreStore(s => s.dropNoteAtBeat)
+  const inputMode            = useScoreStore(s => s.inputMode)
+  const selectedNote         = useScoreStore(s => s.selectedNote)
+  const selectedDuration     = useScoreStore(s => s.selectedDuration)
+  const selectedDots         = useScoreStore(s => s.selectedDots)
+  const selectedOctave       = useScoreStore(s => s.selectedOctave)
 
   const render = useCallback(() => {
     if (!containerRef.current) return
@@ -300,30 +308,104 @@ export default function ScoreRenderer() {
       <div ref={containerRef} style={{ display: 'block' }} />
 
       {/* Measure zones */}
-      {measureZones.map((z) => (
-        <div key={`m-${z.partId}-${z.measureIndex}`}
-          onClick={() => selectMeasure(z.partId, z.measureIndex)}
-          onDragOver={e => { e.preventDefault(); setDropTarget(`${z.partId}-${z.measureIndex}`) }}
-          onDrop={e => {
-            e.preventDefault(); setDropTarget(null)
-            if (dragState) {
-              moveNote(dragState.noteId, dragState.partId, dragState.measureIndex, z.partId, z.measureIndex)
+      {measureZones.map((z) => {
+        const zKey        = `${z.partId}-${z.measureIndex}`
+        const isExistDrop = dropTarget === zKey
+        const isToolDrop  = toolDragOver === zKey
+
+        // Compute beat position from mouse X within this zone (for preview line)
+        const getBeatFromX = (clientX) => {
+          // Get the zone's bounding rect from the page
+          // We use the stored zone coords relative to the container
+          const noteStart = z.measureIndex === 0 ? z.x + 55 : z.x + 10
+          const noteWidth = z.width - (z.measureIndex === 0 ? 60 : 15)
+          // clientX is relative to viewport; we need it relative to SVG container
+          const container = containerRef.current?.parentElement
+          const rect      = container ? container.getBoundingClientRect() : { left: 0 }
+          const relX      = clientX - rect.left
+          const frac      = Math.max(0, Math.min(1, (relX - noteStart) / noteWidth))
+          const part      = score.parts.find(p => p.id === z.partId)
+          const beats     = part?.measures[z.measureIndex]?.timeSignature?.beats ?? 4
+          return frac * beats
+        }
+
+        return (
+          <div key={zKey}
+            onClick={() => selectMeasure(z.partId, z.measureIndex)}
+            onDragOver={e => {
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'copy'
+              const isDraggingToolNote = e.dataTransfer.types.includes('application/scoreai-toolnote')
+              if (isDraggingToolNote) {
+                setToolDragOver(zKey)
+                setToolDragBeat(getBeatFromX(e.clientX))
+                setDropTarget(null)
+              } else {
+                setDropTarget(zKey)
+                setToolDragOver(null)
+              }
+            }}
+            onDrop={e => {
+              e.preventDefault()
+              const isDraggingToolNote = e.dataTransfer.types.includes('application/scoreai-toolnote')
+              if (isDraggingToolNote) {
+                // Drop toolbar note at computed beat position
+                const beatPos = getBeatFromX(e.clientX)
+                const pitch   = { step: selectedNote?.step, octave: selectedOctave, accidental: selectedNote?.accidental ?? null }
+                dropNoteAtBeat(z.partId, z.measureIndex, pitch, selectedDuration, selectedDots, beatPos)
+              } else if (dragState) {
+                moveNote(dragState.noteId, dragState.partId, dragState.measureIndex, z.partId, z.measureIndex)
+              }
               setDragState(null)
-            }
-          }}
-          onDragLeave={() => setDropTarget(null)}
-          style={{
-            position: 'absolute', left: z.x, top: z.y, width: z.width, height: z.height,
-            cursor: 'pointer', borderRadius: 2, boxSizing: 'border-box', zIndex: 1,
-            border: dropTarget === `${z.partId}-${z.measureIndex}`
-              ? '2px dashed #16a34a'
-              : z.selected ? '2px solid #1d4ed8' : '2px solid transparent',
-            backgroundColor: dropTarget === `${z.partId}-${z.measureIndex}`
-              ? 'rgba(22,163,74,0.08)'
-              : z.selected ? 'rgba(29,78,216,0.06)' : 'transparent',
-          }}
-        />
-      ))}
+              setDropTarget(null)
+              setToolDragOver(null)
+              setToolDragBeat(null)
+            }}
+            onDragLeave={e => {
+              // Only clear if leaving the zone entirely (not entering a child)
+              if (!e.currentTarget.contains(e.relatedTarget)) {
+                setDropTarget(null)
+                setToolDragOver(null)
+                setToolDragBeat(null)
+              }
+            }}
+            style={{
+              position: 'absolute', left: z.x, top: z.y, width: z.width, height: z.height,
+              cursor: inputMode === 'note' ? 'copy' : 'pointer',
+              borderRadius: 2, boxSizing: 'border-box', zIndex: 1,
+              border: isToolDrop
+                ? '2px dashed #16a34a'
+                : isExistDrop ? '2px dashed #ea580c'
+                : z.selected ? '2px solid #1d4ed8' : '2px solid transparent',
+              backgroundColor: isToolDrop
+                ? 'rgba(22,163,74,0.10)'
+                : isExistDrop ? 'rgba(234,88,12,0.08)'
+                : z.selected ? 'rgba(29,78,216,0.06)' : 'transparent',
+            }}
+          />
+        )
+      })}
+
+      {/* Beat-position preview line during toolbar drag */}
+      {toolDragOver && toolDragBeat !== null && (() => {
+        const z = measureZones.find(z => `${z.partId}-${z.measureIndex}` === toolDragOver)
+        if (!z) return null
+        const part     = score.parts.find(p => p.id === z.partId)
+        const beats    = part?.measures[z.measureIndex]?.timeSignature?.beats ?? 4
+        const noteStart = z.measureIndex === 0 ? z.x + 55 : z.x + 10
+        const noteWidth = z.width - (z.measureIndex === 0 ? 60 : 15)
+        const frac      = Math.min(1, toolDragBeat / beats)
+        const px        = noteStart + frac * noteWidth
+        return (
+          <div style={{
+            position: 'absolute', left: px, top: z.y - 4,
+            width: 2, height: z.height + 8,
+            background: '#16a34a', borderRadius: 1,
+            pointerEvents: 'none', zIndex: 15,
+            boxShadow: '0 0 6px rgba(22,163,74,0.6)',
+          }} />
+        )
+      })()}
 
       {/* Note / rest zones */}
       {noteZones.map(z => (
