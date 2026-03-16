@@ -175,10 +175,36 @@ export default function Toolbar() {
 
         <Sep />
 
-        {/* Chord */}
-        <TBtn active={chordMode} onClick={() => setChordMode(!chordMode)} title="Chord mode (J)" color="purple" wide>
-          ⊕ Chord
-        </TBtn>
+        {/* Chord mode — purple when active, shows how to use it */}
+        <button
+          onClick={() => setChordMode(!chordMode)}
+          title={chordMode
+            ? 'Chord mode ON — next note stacks on selected note. Click or press J to turn off.'
+            : 'Chord mode — press J or click to enable, then press Shift+letter or drag to add notes to a chord'}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '0 10px', height: 28, borderRadius: 6,
+            background: chordMode
+              ? 'linear-gradient(135deg,#6d28d9,#7c3aed)'
+              : 'white',
+            border: chordMode ? '1.5px solid #5b21b6' : '1.5px solid #d1d5db',
+            color: chordMode ? 'white' : '#374151',
+            fontWeight: 700, fontSize: 12, cursor: 'pointer',
+            boxShadow: chordMode ? '0 0 0 3px rgba(124,58,237,0.25)' : 'none',
+            transition: 'all 0.15s',
+            flexShrink: 0,
+          }}>
+          <span style={{ fontSize: 15 }}>𝄪</span>
+          <span>{chordMode ? 'Chord ON' : 'Chord'}</span>
+          {chordMode && <span style={{ fontSize: 9, opacity: 0.85 }}>(J to off)</span>}
+        </button>
+
+        {/* Visual hint when chord mode is active */}
+        {chordMode && (
+          <span style={{ fontSize: 10, color: '#7c3aed', fontStyle: 'italic', padding: '0 4px' }}>
+            select a note → Shift+key or drag to stack
+          </span>
+        )}
 
         <Sep />
 

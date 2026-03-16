@@ -33,7 +33,12 @@ function makeRests(beats, idPrefix) {
     const { duration, dots } = beatsToRest(rem)
     const key = duration + (dots ? 'd' : '')
     const used = DURATION_BEATS[key] || DURATION_BEATS[duration] || 1
-    rests.push({ id: `${idPrefix}_r${i++}`, isRest: true, pitch: null, duration, dots })
+    // Always use a unique ID — prefix is kept for debugging but a random suffix
+    // ensures no duplicate React keys even when normalizing multiple measures
+    const uid = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}_${Math.random().toString(36).slice(2)}`
+    rests.push({ id: `${idPrefix}_r${i++}_${uid}`, isRest: true, pitch: null, duration, dots })
     rem -= used
   }
   return rests
@@ -212,19 +217,31 @@ export const useScoreStore = create((set, get) => ({
     score: { ...s.score, parts: s.score.parts.map(p => ({ ...p, measures: p.measures.map(m => ({ ...m, keySignature })) })) },
   })),
 
-  setGlobalTimeSignature: (timeSignature) => set(s => ({
-    score: {
-      ...s.score,
-      parts: s.score.parts.map(p => ({
-        ...p,
-        measures: p.measures.map(m => ({
-          ...m,
-          timeSignature,
-          notes: normalizeMeasure(m.notes, timeSignature.beats),
+  setGlobalTimeSignature: (beatsOrObj, beatType) => {
+    // Accept either setGlobalTimeSignature({beats,beatType}) or setGlobalTimeSignature(beats, beatType)
+    const ts = (typeof beatsOrObj === 'object' && beatsOrObj !== null)
+      ? beatsOrObj
+      : { beats: beatsOrObj, beatType }
+    if (!ts.beats || !ts.beatType) return
+    set(s => ({
+      score: {
+        ...s.score,
+        parts: s.score.parts.map(p => ({
+          ...p,
+          measures: p.measures.map((m, mIdx) => ({
+            ...m,
+            timeSignature: ts,
+            // Use unique prefix per measure to prevent duplicate React keys
+            notes: normalizeMeasure(m.notes, ts.beats).map((n, ni) =>
+              n.isRest && n.id.startsWith('init_')
+                ? { ...n, id: `ts_${ts.beats}_${ts.beatType}_m${mIdx}_r${ni}_${Date.now()}` }
+                : n
+            ),
+          })),
         })),
-      })),
-    },
-  })),
+      },
+    }))
+  },
 
   // ── Core note mutation: always normalizes after every change ───────────────
 
@@ -415,6 +432,51 @@ export const useScoreStore = create((set, get) => ({
     })
   },
 
+
+  // ── Add a note as a chord companion to an existing note ──────────────────
+  // baseNoteId must be a real (non-rest) note. The new pitch is stacked on
+  // the same beat with the same duration. Works regardless of chordMode.
+  addChordNote: (partId, measureIndex, baseNoteId, pitch) => {
+    const part    = get().score.parts.find(p => p.id === partId)
+    const measure = part?.measures[measureIndex]
+    if (!measure || !pitch) return
+
+    const base = measure.notes.find(n => n.id === baseNoteId && !n.isRest)
+    if (!base) return
+
+    // Don't add duplicate pitch
+    const existingChords = measure.notes.filter(n => n.chordWith === baseNoteId)
+    const allPitches = [base, ...existingChords]
+    const alreadyExists = allPitches.some(n =>
+      n.pitch?.step === pitch.step &&
+      n.pitch?.octave === pitch.octave &&
+      (n.pitch?.accidental ?? null) === (pitch.accidental ?? null)
+    )
+    if (alreadyExists) return
+
+    const newId = crypto.randomUUID()
+    set(s => ({
+      selectedNoteId: baseNoteId,  // keep selection on the BASE note for continued chording
+      score: {
+        ...s.score,
+        parts: s.score.parts.map(p => p.id !== partId ? p : {
+          ...p,
+          measures: p.measures.map((m, i) => i !== measureIndex ? m : {
+            ...m,
+            notes: [...m.notes, {
+              id: newId,
+              isRest: false,
+              pitch,
+              duration: base.duration,
+              dots: base.dots,
+              chordWith: baseNoteId,
+            }],
+          }),
+        }),
+      },
+    }))
+  },
+
   addNote: (partId, measureIndex, noteData) => {
     const state = get()
     const { chordMode, selectedNoteId } = state
@@ -429,24 +491,12 @@ export const useScoreStore = create((set, get) => ({
     const measure = part?.measures[measureIndex]
     if (!measure) return
 
-    // Chord mode
+    // Chord mode: if chordMode is on AND a real note is selected in this measure,
+    // stack the new note on top of the selected one (same beat, same duration)
     if (chordMode && selectedNoteId) {
-      const base = measure.notes.find(n => n.id === selectedNoteId)
-      if (base && !base.isRest) {
-        const newId = crypto.randomUUID()
-        set(s => ({
-          selectedNoteId: newId,
-          score: {
-            ...s.score,
-            parts: s.score.parts.map(p => p.id !== partId ? p : {
-              ...p,
-              measures: p.measures.map((m, i) => i !== measureIndex ? m : {
-                ...m,
-                notes: [...m.notes, { id: newId, ...noteData, chordWith: selectedNoteId }],
-              }),
-            }),
-          },
-        }))
+      const base = measure.notes.find(n => n.id === selectedNoteId && !n.isRest)
+      if (base) {
+        get().addChordNote(partId, measureIndex, selectedNoteId, noteData.pitch)
         return
       }
     }

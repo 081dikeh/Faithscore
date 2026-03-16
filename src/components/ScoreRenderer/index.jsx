@@ -89,6 +89,9 @@ export default function ScoreRenderer() {
   const moveNote             = useScoreStore(s => s.moveNote)
   const playbackBeat         = useScoreStore(s => s.playbackBeat)
   const dropNoteAtBeat       = useScoreStore(s => s.dropNoteAtBeat)
+  const addChordNote         = useScoreStore(s => s.addChordNote)
+  const chordMode            = useScoreStore(s => s.chordMode)
+  const selectedNoteId_store = useScoreStore(s => s.selectedNoteId)
   const inputMode            = useScoreStore(s => s.inputMode)
   const selectedDuration     = useScoreStore(s => s.selectedDuration)
   const selectedDots         = useScoreStore(s => s.selectedDots)
@@ -327,51 +330,77 @@ export default function ScoreRenderer() {
           return frac * beats
         }
 
-        // ── Y → pitch (line/space on staff) ───────────────────────────────
-        // VexFlow staff: 5 lines, top line at staveTop+10, bottom at staveTop+50
-        // Each line/space = 10px apart (STAVE_HEIGHT=80 / 8 positions = 10px)
-        // We map Y pixel → staff position (0=top line, 8=bottom line) → pitch
+        // ── Y → pitch (line/space on staff) — PRECISE version ───────────────
+        // Staff geometry: VexFlow places 5 lines with 10px spacing.
+        // staveY is the top of the stave div zone; the top staff LINE is ~15px down.
+        // Each half-step position (line or space) = 5px.
+        // We cover 3 ledger lines above and below = 22 positions total.
         const getPitchFromY = (clientY) => {
           const container = containerRef.current?.parentElement
           const rect      = container ? container.getBoundingClientRect() : { left: 0, top: 0 }
           const relY      = clientY - rect.top
 
-          // Staff top line ≈ staveY+10, bottom line ≈ staveY+50
-          // Positions above/below staff are also valid
-          const staffTopY    = z.y + 10   // top line pixel Y
-          const staffBottomY = z.y + 50   // bottom line pixel Y
-          const staffSpan    = staffBottomY - staffTopY  // 40px for 4 spaces = 10px/space
+          // Top staff line pixel Y (approx). Staff lines are at +15,+25,+35,+45,+55 from zone top
+          const topLineY = z.y + 15
+          // Each staff position = 5px (half the 10px line spacing = 1 space)
+          const PX_PER_POS = 5
 
-          // Position 0 = top line, increases downward (lower pitch)
-          // Each 10px = one staff position (line or space)
-          const rawPos = (relY - staffTopY) / (staffSpan / 4)  // 0=top, 4=bottom line
-          // Clamp from -3 (above staff) to 7 (below staff)
-          const pos = Math.max(-3, Math.min(7, Math.round(rawPos)))
+          // pos 0 = top line, increases downward (pitch decreases going down)
+          // Negative pos = above top line (higher pitch)
+          const rawPos = (relY - topLineY) / PX_PER_POS
+          // Allow up to 6 ledger positions above and below the staff
+          const pos = Math.max(-6, Math.min(14, Math.round(rawPos)))
 
-          if (clef === 'treble') {
-            // Treble clef positions (0=F5, 1=E5, 2=D5, 3=C5, 4=B4, 5=A4, 6=G4, 7=F4, 8=E4...)
-            // Lines: F5(0), D5(2), B4(4), G4(6), E4(8) — but we index from top line
-            const TREBLE = [
-              {s:'F',o:5,a:null}, {s:'E',o:5,a:null}, {s:'D',o:5,a:null},
-              {s:'C',o:5,a:null}, {s:'B',o:4,a:null}, {s:'A',o:4,a:null},
-              {s:'G',o:4,a:null}, {s:'F',o:4,a:null}, {s:'E',o:4,a:null},
-              {s:'D',o:4,a:null}, {s:'C',o:4,a:null},
-            ]
-            const idx = pos + 3  // shift so pos=-3 maps to idx=0
-            const p   = TREBLE[Math.max(0, Math.min(TREBLE.length-1, idx))]
-            return { step: p.s, octave: p.o, accidental: p.a }
-          } else {
-            // Bass clef positions (top line = A3, spaces down: G3,F3,E3,D3,C3,B2,A2,G2...)
-            const BASS = [
-              {s:'A',o:3,a:null}, {s:'G',o:3,a:null}, {s:'F',o:3,a:null},
-              {s:'E',o:3,a:null}, {s:'D',o:3,a:null}, {s:'C',o:3,a:null},
-              {s:'B',o:2,a:null}, {s:'A',o:2,a:null}, {s:'G',o:2,a:null},
-              {s:'F',o:2,a:null}, {s:'E',o:2,a:null},
-            ]
-            const idx = pos + 3
-            const p   = BASS[Math.max(0, Math.min(BASS.length-1, idx))]
-            return { step: p.s, octave: p.o, accidental: p.a }
-          }
+          // Full chromatic pitch tables indexed by staff POSITION (not pitch name)
+          // Each position maps to a diatonic pitch. Accidentals applied separately via toolbar.
+          // Treble: top line F5, then E5 D5 C5 B4 A4 G4 F4 E4 D4 C4 B3...
+          const TREBLE_POS = [
+            // pos -6..-1 (above staff)
+            {s:'E',o:6}, {s:'D',o:6}, {s:'C',o:6}, {s:'B',o:5}, {s:'A',o:5}, {s:'G',o:5},
+            // pos 0..4 (5 staff lines, 4 spaces between)
+            {s:'F',o:5}, {s:'E',o:5}, {s:'D',o:5}, {s:'C',o:5}, {s:'B',o:4},
+            // pos 5..9 (spaces + bottom)
+            {s:'A',o:4}, {s:'G',o:4}, {s:'F',o:4}, {s:'E',o:4}, {s:'D',o:4},
+            // pos 10..14 (below staff)
+            {s:'C',o:4}, {s:'B',o:3}, {s:'A',o:3}, {s:'G',o:3}, {s:'F',o:3},
+          ]
+          // Bass: top line A3, then G3 F3 E3 D3 C3 B2 A2 G2 F2 E2 D2...
+          const BASS_POS = [
+            // pos -6..-1 (above staff)
+            {s:'C',o:5}, {s:'B',o:4}, {s:'A',o:4}, {s:'G',o:4}, {s:'F',o:4}, {s:'E',o:4},
+            // pos 0..4
+            {s:'A',o:3}, {s:'G',o:3}, {s:'F',o:3}, {s:'E',o:3}, {s:'D',o:3},
+            // pos 5..9
+            {s:'C',o:3}, {s:'B',o:2}, {s:'A',o:2}, {s:'G',o:2}, {s:'F',o:2},
+            // pos 10..14
+            {s:'E',o:2}, {s:'D',o:2}, {s:'C',o:2}, {s:'B',o:1}, {s:'A',o:1},
+          ]
+
+          const table = clef === 'treble' ? TREBLE_POS : BASS_POS
+          const idx   = pos + 6   // shift: pos=-6 → idx=0
+          const entry = table[Math.max(0, Math.min(table.length - 1, idx))]
+          return { step: entry.s, octave: entry.o, accidental: null }
+        }
+
+        // Convert a pitch back to a Y pixel (for ghost note rendering)
+        const getYFromPitch = (pitch) => {
+          const TREBLE_POS = [
+            {s:'E',o:6},{s:'D',o:6},{s:'C',o:6},{s:'B',o:5},{s:'A',o:5},{s:'G',o:5},
+            {s:'F',o:5},{s:'E',o:5},{s:'D',o:5},{s:'C',o:5},{s:'B',o:4},
+            {s:'A',o:4},{s:'G',o:4},{s:'F',o:4},{s:'E',o:4},{s:'D',o:4},
+            {s:'C',o:4},{s:'B',o:3},{s:'A',o:3},{s:'G',o:3},{s:'F',o:3},
+          ]
+          const BASS_POS = [
+            {s:'C',o:5},{s:'B',o:4},{s:'A',o:4},{s:'G',o:4},{s:'F',o:4},{s:'E',o:4},
+            {s:'A',o:3},{s:'G',o:3},{s:'F',o:3},{s:'E',o:3},{s:'D',o:3},
+            {s:'C',o:3},{s:'B',o:2},{s:'A',o:2},{s:'G',o:2},{s:'F',o:2},
+            {s:'E',o:2},{s:'D',o:2},{s:'C',o:2},{s:'B',o:1},{s:'A',o:1},
+          ]
+          const table   = clef === 'treble' ? TREBLE_POS : BASS_POS
+          const posIdx  = table.findIndex(e => e.s === pitch.step && e.o === pitch.octave)
+          if (posIdx < 0) return z.y + 35  // fallback to middle
+          const pos     = posIdx - 6
+          return z.y + 15 + pos * 5
         }
 
         // ── Shared drag event handler for ghost-note drags ─────────────────
@@ -379,26 +408,15 @@ export default function ScoreRenderer() {
           if (inputMode !== 'note') return
           e.preventDefault()
           e.dataTransfer.dropEffect = 'copy'
-          const container = containerRef.current?.parentElement
-          const rect      = container ? container.getBoundingClientRect() : { left:0, top:0 }
           const beat  = getBeatFromX(e.clientX)
           const pitch = getPitchFromY(e.clientY)
-          // Compute ghost X pixel (for preview dot)
           const noteStart = z.measureIndex === 0 ? z.x + 55 : z.x + 10
           const noteWidth = z.width - (z.measureIndex === 0 ? 60 : 15)
           const ghostX    = noteStart + Math.min(1, beat / beats) * noteWidth
-          // Ghost Y: map pitch back to pixel
-          const staffTopY  = z.y + 10
-          const staffBotY  = z.y + 50
-          const TREBLE_LABELS = ['F5','E5','D5','C5','B4','A4','G4','F4','E4','D4','C4']
-          const BASS_LABELS   = ['A3','G3','F3','E3','D3','C3','B2','A2','G2','F2','E2']
-          const labels = clef === 'treble' ? TREBLE_LABELS : BASS_LABELS
-          const pitchLabel = `${pitch.step}${pitch.octave}`
-          const pitchIdx   = labels.indexOf(pitchLabel)
-          const ghostY     = pitchIdx >= 0
-            ? staffTopY + (pitchIdx / (labels.length - 1)) * (staffBotY - staffTopY)
-            : e.clientY - rect.top
-          setGhostDrag({ zKey, beat, pitch, ghostX, ghostY })
+          const ghostY    = getYFromPitch(pitch)
+          // isChord: we're in chord mode or there's a selected real note in this measure
+          const isChordDrop = chordMode && selectedNoteId_store
+          setGhostDrag({ zKey, beat, pitch, ghostX, ghostY, isChord: isChordDrop })
           setDropTarget(null)
         }
 
@@ -416,12 +434,17 @@ export default function ScoreRenderer() {
             onDrop={e => {
               e.preventDefault()
               if (inputMode === 'note' && ghostDrag) {
-                dropNoteAtBeat(
-                  z.partId, z.measureIndex,
-                  ghostDrag.pitch,
-                  selectedDuration, selectedDots,
-                  ghostDrag.beat
-                )
+                if (ghostDrag.isChord && selectedNoteId_store) {
+                  // Chord drop: stack onto the currently selected note
+                  addChordNote(z.partId, z.measureIndex, selectedNoteId_store, ghostDrag.pitch)
+                } else {
+                  dropNoteAtBeat(
+                    z.partId, z.measureIndex,
+                    ghostDrag.pitch,
+                    selectedDuration, selectedDots,
+                    ghostDrag.beat
+                  )
+                }
               } else if (dragState) {
                 moveNote(dragState.noteId, dragState.partId, dragState.measureIndex, z.partId, z.measureIndex)
               }
@@ -489,21 +512,21 @@ export default function ScoreRenderer() {
               userSelect: 'none',
               lineHeight: 1,
             }}>{sym}</div>
-            {/* Pitch label bubble */}
+            {/* Pitch label bubble — shows chord indicator if in chord mode */}
             <div style={{
               position: 'absolute',
               left: ghostDrag.ghostX + 6,
               top:  ghostDrag.ghostY - 20,
               pointerEvents: 'none',
               zIndex: 17,
-              background: '#166534',
+              background: ghostDrag.isChord ? '#7c3aed' : '#166534',
               color: 'white',
               fontSize: 10,
               fontWeight: 700,
               padding: '1px 5px',
               borderRadius: 4,
               whiteSpace: 'nowrap',
-            }}>{label}{selectedDots ? '.' : ''}</div>
+            }}>{ghostDrag.isChord ? '+ ' : ''}{label}{selectedDots ? '.' : ''}</div>
           </>
         )
       })()}

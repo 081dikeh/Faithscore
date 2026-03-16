@@ -4,6 +4,7 @@ import Toolbar from './components/Toolbar'
 import ScoreRenderer from './components/ScoreRenderer'
 import NoteEditor from './components/NoteEditor'
 import { useScoreStore } from './store/scoreStore'
+import Sidebar from './components/Sidebar'
 import { usePlayback } from './hooks/usePlayback'
 
 const DURATION_KEYS = { '1':'w','2':'h','3':'q','4':'8','5':'16','6':'32' }
@@ -19,6 +20,7 @@ export default function App() {
   const selectedDots           = useScoreStore(s => s.selectedDots)
   const selectedOctave         = useScoreStore(s => s.selectedOctave)
   const chordMode              = useScoreStore(s => s.chordMode)
+  const addChordNote           = useScoreStore(s => s.addChordNote)
   const getSelectedNote        = useScoreStore(s => s.getSelectedNote)
 
   const addNote                = useScoreStore(s => s.addNote)
@@ -50,6 +52,20 @@ export default function App() {
   const playbackBeat = useScoreStore(s => s.playbackBeat)
 
   const { play, pause, stop, rewind } = usePlayback()
+  const [samplesLoaded, setSamplesLoaded] = useState(false)
+  const [samplesLoading, setSamplesLoading] = useState(false)
+
+  // Intercept play to show loading state while piano samples fetch
+  const handlePlay = async () => {
+    if (!samplesLoaded && !samplesLoading) {
+      setSamplesLoading(true)
+      // Samples load inside play() — watch for the console log or just let it run
+      // After 15s it falls back to FM synth either way
+    }
+    await play()
+    setSamplesLoaded(true)
+    setSamplesLoading(false)
+  }
 
   const [contextMenu, setContextMenu] = useState(null)
   const ctxRef = useRef(null)
@@ -154,18 +170,28 @@ export default function App() {
       if (inputMode === 'note' && selectedMeasureIndex !== null) {
         const step = KEY_TO_STEP[e.key.toLowerCase()]
         if (step) {
-          const cur = st()
+          const cur     = st()
           const selNote = cur.getSelectedNote()
-          const pitch   = { step, octave: cur.selectedOctave, accidental: null }
+          const pitch   = { step, octave: cur.selectedOctave, accidental: cur.selectedNote?.accidental ?? null }
+
+          // Shift+letter OR chordMode while a real note is selected = add chord
+          if ((e.shiftKey || cur.chordMode) && selectedNoteId && selNote && !selNote.isRest) {
+            addChordNote(selectedPartId, selectedMeasureIndex, selectedNoteId, pitch)
+            return
+          }
           if (selNote?.isRest) fillSelectedRest(pitch)
           else addNote(selectedPartId, selectedMeasureIndex, { pitch, duration: cur.selectedDuration, dots: cur.selectedDots || 0 })
           return
         }
         if (e.key === 'Enter' && st().selectedNote) {
-          const cur = st()
-          const n   = cur.selectedNote
-          const pitch = { step: n.step, octave: cur.selectedOctave, accidental: n.accidental }
+          const cur     = st()
+          const n       = cur.selectedNote
+          const pitch   = { step: n.step, octave: cur.selectedOctave, accidental: n.accidental }
           const selNote = cur.getSelectedNote()
+          if ((e.shiftKey || cur.chordMode) && selectedNoteId && selNote && !selNote.isRest) {
+            addChordNote(selectedPartId, selectedMeasureIndex, selectedNoteId, pitch)
+            return
+          }
           if (selNote?.isRest) fillSelectedRest(pitch)
           else addNote(selectedPartId, selectedMeasureIndex, { pitch, duration: cur.selectedDuration, dots: cur.selectedDots || 0 })
           return
@@ -181,7 +207,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [inputMode, selectedDuration, selectedDots, selectedMeasureIndex, selectedPartId, selectedNoteId, selectedOctave, chordMode])
+  }, [inputMode, selectedDuration, selectedDots, selectedMeasureIndex, selectedPartId, selectedNoteId, selectedOctave, chordMode, addChordNote])
 
   const handleContextMenu = e => {
     e.preventDefault()
@@ -212,7 +238,7 @@ export default function App() {
           </button>
           {/* Play / Pause toggle */}
           <button
-            onClick={isPlaying ? pause : play}
+            onClick={isPlaying ? pause : handlePlay}
             className={`w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition-colors
               ${isPlaying
                 ? 'bg-orange-500 hover:bg-orange-600 text-white'
@@ -225,12 +251,18 @@ export default function App() {
             className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">
             ⏹
           </button>
-          {/* Beat counter */}
-          <span className="text-gray-400 text-xs ml-1 font-mono w-10">
-            {playbackBeat !== null && playbackBeat !== undefined
-              ? `${Math.floor(playbackBeat / 4)}:${(Math.floor(playbackBeat) % 4) + 1}`
-              : '0:1'}
-          </span>
+          {/* Beat counter / loading indicator */}
+          {samplesLoading ? (
+            <span className="text-amber-500 text-xs ml-1 animate-pulse" title="Loading real piano samples...">
+              🎹 loading…
+            </span>
+          ) : (
+            <span className="text-gray-400 text-xs ml-1 font-mono w-10">
+              {playbackBeat !== null && playbackBeat !== undefined
+                ? `${Math.floor(playbackBeat / 4)}:${(Math.floor(playbackBeat) % 4) + 1}`
+                : '0:1'}
+            </span>
+          )}
         </div>
 
         {/* Part manager */}
@@ -297,7 +329,7 @@ export default function App() {
         {[
           ['N','Note mode'], ['S','Select'], ['A–G','Natural note'],
           ['Enter','Chromatic'], ['1–6','Duration'], ['.','Dot'],
-          ['J','Chord'], ['↑↓','Chromatic'], ['⇧↑↓','Octave jump'],
+          ['⇧+A–G','Add chord'], ['J','Chord mode'], ['↑↓','Chromatic'], ['⇧↑↓','Octave'],
           ['←→','Navigate'], ['Del','Delete note'], ['M','Add bar'],
           ['Right-click','Bar menu'],
         ].map(([k,v]) => (
@@ -310,6 +342,10 @@ export default function App() {
 
       {/* ── Note editor panel ── */}
       <NoteEditor />
+
+      {/* ── Main area: Sidebar + Score canvas ── */}
+      <div className="flex flex-1 overflow-hidden">
+      <Sidebar />
 
       {/* ── Score canvas ── */}
       <main className="flex-1 overflow-auto p-6">
@@ -351,6 +387,7 @@ export default function App() {
           </div>
         </div>
       </main>
+      </div>{/* end sidebar+canvas flex row */}
 
       {/* ── Context menu ── */}
       {contextMenu && (
