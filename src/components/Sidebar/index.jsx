@@ -3,7 +3,7 @@
 // with collapsible accordion sections and functional palette items.
 
 import { useState } from 'react'
-import { useScoreStore } from '../../store/scoreStore'
+import { useScoreStore, DURATION_BEATS } from '../../store/scoreStore'
 
 // ── Tiny helpers ──────────────────────────────────────────────────────────────
 function Section({ title, children, defaultOpen = false }) {
@@ -289,6 +289,35 @@ function PalettesTab() {
         ))}
       </Section>
 
+      <Section title="Transpose" defaultOpen>
+        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 6 }}>
+          Select a note or measure range, then transpose:
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {[
+            { label: '+½', semi: 1,   title: 'Up half step (Ctrl+↑)' },
+            { label: '−½', semi: -1,  title: 'Down half step (Ctrl+↓)' },
+            { label: '+1', semi: 2,   title: 'Up whole step' },
+            { label: '−1', semi: -2,  title: 'Down whole step' },
+            { label: '+3', semi: 3,   title: 'Up minor third' },
+            { label: '+4', semi: 5,   title: 'Up perfect fourth' },
+            { label: '+5', semi: 7,   title: 'Up perfect fifth' },
+            { label: '+8ve',semi: 12, title: 'Up octave (Ctrl+→)' },
+            { label: '−8ve',semi:-12, title: 'Down octave (Ctrl+←)' },
+          ].map(t => (
+            <button key={t.label} title={t.title}
+              onClick={() => useScoreStore.getState().transposeSelection(t.semi)}
+              onMouseEnter={e => e.currentTarget.style.background='#f3f4f6'}
+              onMouseLeave={e => e.currentTarget.style.background='white'}
+              style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #e5e7eb',
+                background: 'white', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                color: t.semi > 0 ? '#166534' : '#991b1b' }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </Section>
+
       <Section title="Accidentals">
         <PaletteGrid>
           {ACCIDENTALS.map(a => (
@@ -300,14 +329,34 @@ function PalettesTab() {
       </Section>
 
       <Section title="Dynamics">
+        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+          Select a note then click a dynamic to apply it at that beat.
+        </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {DYNAMICS.map(d => (
-            <button key={d.label} title={d.sub} style={{
-              padding: '4px 8px', borderRadius: 4, border: '1px solid #e5e7eb',
-              background: 'white', cursor: 'pointer', fontSize: 12,
-              fontStyle: 'italic', fontFamily: 'Times New Roman, serif',
-              fontWeight: 700,
-            }}
+            <button key={d.label} title={d.sub}
+              onClick={() => {
+                const st = useScoreStore.getState()
+                const { selectedPartId, selectedMeasureIndex, selectedNoteId, score } = st
+                if (selectedNoteId === null || selectedMeasureIndex === null) return
+                const part    = score.parts.find(p => p.id === selectedPartId)
+                const measure = part?.measures[selectedMeasureIndex]
+                const note    = measure?.notes.find(n => n.id === selectedNoteId)
+                if (!note) return
+                // Calculate beat of selected note
+                let beat = 0
+                for (const n of measure.notes.filter(x => !x.chordWith)) {
+                  if (n.id === selectedNoteId) break
+                  beat += (DURATION_BEATS[n.duration + (n.dots?'d':'')] || DURATION_BEATS[n.duration] || 1)
+                }
+                st.addDynamic(selectedPartId, selectedMeasureIndex, beat, d.symbol)
+              }}
+              style={{
+                padding: '4px 8px', borderRadius: 4, border: '1px solid #e5e7eb',
+                background: 'white', cursor: 'pointer', fontSize: 12,
+                fontStyle: 'italic', fontFamily: 'Times New Roman, serif',
+                fontWeight: 700,
+              }}
               onMouseEnter={e => e.currentTarget.style.background='#f3f4f6'}
               onMouseLeave={e => e.currentTarget.style.background='white'}
             >{d.symbol}</button>
@@ -327,6 +376,29 @@ function PalettesTab() {
         {TEXT_TYPES.map(t => (
           <ListItem key={t.label} label={t.label} symbol={t.symbol} sub={t.sub} />
         ))}
+      </Section>
+
+      <Section title="Rehearsal Marks">
+        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 6 }}>
+          Select a measure, then click a letter to add a rehearsal mark.
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(letter => (
+            <button key={letter}
+              onClick={() => {
+                const { selectedMeasureIndex } = useScoreStore.getState()
+                if (selectedMeasureIndex === null) return
+                useScoreStore.getState().addRehearsalMark(selectedMeasureIndex, letter)
+              }}
+              style={{
+                width: 26, height: 26, borderRadius: 4, border: '2px solid #1d3a6e',
+                background: '#1d3a6e', color: 'white', cursor: 'pointer',
+                fontSize: 11, fontWeight: 700,
+              }}>
+              {letter}
+            </button>
+          ))}
+        </div>
       </Section>
 
       <Section title="Repeats & Jumps">

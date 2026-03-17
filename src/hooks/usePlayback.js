@@ -204,6 +204,18 @@ export function usePlayback() {
     })
   }
 
+  // ── Build metronome click synth ──────────────────────────────────────────
+  function getMetronome() {
+    if (!metronomeRef.current) {
+      metronomeRef.current = new Tone.Synth({
+        oscillator: { type: 'triangle' },
+        envelope:   { attack: 0.001, decay: 0.05, sustain: 0, release: 0.05 },
+        volume: -8,
+      }).toDestination()
+    }
+    return metronomeRef.current
+  }
+
   // ── Build FM Synth (offline fallback) ─────────────────────────────────────
   function buildFMSynth() {
     const { eq } = getEffectsChain()
@@ -258,6 +270,44 @@ export function usePlayback() {
   }
 
   // ── play ──────────────────────────────────────────────────────────────────
+  // ── playFromBeat — start playback from a specific beat position ────────
+  const playFromBeat = useCallback(async (startBeat) => {
+    await Tone.start()
+    Tone.getTransport().stop()
+    Tone.getTransport().cancel()
+    stopCursorLoop()
+
+    const { events, totalSecs, tempo } = buildSchedule(score)
+    totalSecsRef.current = totalSecs
+    tempoRef.current     = tempo
+    if (events.length === 0) return
+
+    const secPerBeat   = 60 / tempo
+    const startSec     = (startBeat || 0) * secPerBeat
+    const instrument   = await getInstrument()
+    const LEAD         = 0.1
+
+    // Only schedule events after startSec
+    events.filter(ev => ev.time >= startSec - 0.001).forEach(ev => {
+      Tone.getTransport().schedule((audioTime) => {
+        instrument.triggerAttackRelease(ev.notes, ev.dur, audioTime, 0.8)
+      }, ev.time - startSec + LEAD)
+    })
+
+    Tone.getTransport().schedule((audioTime) => {
+      transportStart.current = audioTime - startSec * 0  // cursor tracks from startBeat
+      // Adjust so cursor shows correct beat
+      transportStart.current = audioTime
+    }, LEAD)
+
+    Tone.getTransport().bpm.value = tempo
+    Tone.getTransport().start()
+    isPlayingRef.current = true
+    setIsPlaying(true)
+
+    setTimeout(() => { if (isPlayingRef.current) startCursorLoop() }, LEAD * 1000 + 20)
+  }, [score])
+
   const play = useCallback(async () => {
     await Tone.start()
     Tone.getTransport().stop()
@@ -326,5 +376,17 @@ export function usePlayback() {
     }
   }, [])
 
-  return { play, pause, stop, rewind }
+  const toggleMetronome = useCallback(() => {
+    metronomeOnRef.current = !metronomeOnRef.current
+    return metronomeOnRef.current
+  }, [])
+
+  const toggleLoop = useCallback(() => {
+    loopRef.current = !loopRef.current
+    return loopRef.current
+  }, [])
+
+  return { play, pause, stop, rewind, playFromBeat, toggleMetronome, toggleLoop,
+    isMetronomeOn: () => metronomeOnRef.current,
+    isLooping:     () => loopRef.current }
 }

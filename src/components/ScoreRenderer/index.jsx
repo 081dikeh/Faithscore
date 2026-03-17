@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   Renderer, Stave, StaveNote, Voice, Formatter,
-  Accidental, Annotation, StaveConnector, Dot
+  Accidental, Annotation, StaveConnector, Dot, Beam, StaveTie, Curve
 } from 'vexflow'
 import { useScoreStore, DURATION_BEATS, noteDuration } from '../../store/scoreStore'
 
@@ -95,6 +95,10 @@ export default function ScoreRenderer() {
   const inputMode            = useScoreStore(s => s.inputMode)
   const selectedDuration     = useScoreStore(s => s.selectedDuration)
   const selectedDots         = useScoreStore(s => s.selectedDots)
+  const zoom                 = useScoreStore(s => s.zoom)
+  const dynamics             = useScoreStore(s => s.score.dynamics || [])
+  const hairpins             = useScoreStore(s => s.score.hairpins || [])
+  const rehearsalMarks       = useScoreStore(s => s.score.rehearsalMarks || [])
 
   const render = useCallback(() => {
     if (!containerRef.current) return
@@ -155,10 +159,27 @@ export default function ScoreRenderer() {
           if (isMeasureSel) stave.setStyle({ fillStyle: '#1d4ed8', strokeStyle: '#1d4ed8' })
           stave.setContext(ctx).draw()
 
-          if (isFirst && line === 0) {
+          // Rehearsal mark (square box above staff) — only on first part
+          if (pIdx === 0) {
+            const rm = rehearsalMarks.find(r => r.measureIndex === col)
+            if (rm) {
+              ctx.save()
+              ctx.setFont('Arial', 13)
+              const rmW = Math.max(20, rm.text.length * 10 + 8)
+              ctx.setFillStyle('#1d3a6e')
+              ctx.fillRect(x + 2, partY - 30, rmW, 20)
+              ctx.setFillStyle('white')
+              ctx.fillText(rm.text, x + 5, partY - 14)
+              ctx.restore()
+            }
+          }
+
+          if (isFirst) {
             ctx.save()
-            ctx.setFont('Times New Roman', 10)
-            ctx.fillText(part.name, 24, partY - 6)
+            ctx.setFont('Times New Roman', line === 0 ? 11 : 9)
+            // Full name on first system, abbreviation (first 3 chars + '.') on subsequent
+            const label = line === 0 ? part.name : (part.name.slice(0, 3) + '.')
+            ctx.fillText(label, 24, partY - 6)
             ctx.restore()
           }
 
@@ -195,6 +216,51 @@ export default function ScoreRenderer() {
             voice.addTickables(vfNotes)
             new Formatter().joinVoices([voice]).format([voice], width - 48)
             voice.draw(ctx, stave)
+
+            // ── Auto-beaming ────────────────────────────────────────────────
+            // Generate beams for 8th/16th notes based on time signature
+            try {
+              const beamGroups = Beam.generateBeams(
+                vfNotes.filter(n => {
+                  const dur = n.getDuration()
+                  return dur === '8' || dur === '16' || dur === '32'
+                }),
+                { stem_direction: 1 }
+              )
+              beamGroups.forEach(b => b.setContext(ctx).draw())
+            } catch(_) {}
+
+            // ── Ties ────────────────────────────────────────────────────────
+            // Draw a tie from each note with tieStart=true to the next note
+            // with the same pitch (in this measure or the next)
+            renderSeq.forEach((seqNote, ni) => {
+              if (!seqNote.tieStart || seqNote.isRest) return
+              const nextNote = renderSeq[ni + 1]
+              if (!nextNote || nextNote.isRest) return
+              try {
+                const tie = new StaveTie({
+                  first_note:    vfNotes[ni],
+                  last_note:     vfNotes[ni + 1],
+                  first_indices: [0],
+                  last_indices:  [0],
+                })
+                tie.setContext(ctx).draw()
+              } catch(_) {}
+            })
+
+            // ── Slurs ────────────────────────────────────────────────────────
+            // Draw a slur arc from slurStart note to the next real note
+            renderSeq.forEach((seqNote, ni) => {
+              if (!seqNote.slurStart || seqNote.isRest) return
+              const nextIdx = renderSeq.findIndex((n, i) => i > ni && !n.isRest)
+              if (nextIdx < 0) return
+              try {
+                const curve = new Curve(vfNotes[ni], vfNotes[nextIdx], {
+                  cps: [{ x: 0, y: 12 }, { x: 0, y: 12 }],
+                })
+                curve.setContext(ctx).draw()
+              } catch(_) {}
+            })
 
             // Measure background zone
             allZones.push({ type: 'measure', partId: part.id, measureIndex: col,
@@ -306,7 +372,12 @@ export default function ScoreRenderer() {
   })()
 
   return (
-    <div style={{ position: 'relative', display: 'inline-block', minWidth: '100%', lineHeight: 0 }}>
+    <div style={{
+      position: 'relative', display: 'inline-block', minWidth: '100%', lineHeight: 0,
+      transform: `scale(${zoom})`, transformOrigin: 'top left',
+      // Adjust container height for zoom so scrollbar reflects true size
+      marginBottom: zoom !== 1 ? `${(zoom - 1) * 100}%` : 0,
+    }}>
       <div ref={containerRef} style={{ display: 'block' }} />
 
       {/* Measure zones — handle both ghost-note drags (note mode) and existing-note moves */}
@@ -327,7 +398,10 @@ export default function ScoreRenderer() {
           const noteWidth = z.width - (z.measureIndex === 0 ? 60 : 15)
           const relX      = clientX - rect.left
           const frac      = Math.max(0, Math.min(1, (relX - noteStart) / noteWidth))
-          return frac * beats
+          const rawBeat = frac * beats
+          // Snap to nearest 16th note (0.25 beats) for precise placement
+          const SNAP = 0.25
+          return Math.round(rawBeat / SNAP) * SNAP
         }
 
         // ── Y → pitch (line/space on staff) — PRECISE version ───────────────
@@ -561,6 +635,76 @@ export default function ScoreRenderer() {
       ))}
       {/* Playback cursor — red vertical line tracking beat position */}
       {cursorStyle && <div style={cursorStyle} />}
+
+      {/* ── Dynamics overlays ─────────────────────────────────────────── */}
+      {dynamics.map(dyn => {
+        const z = measureZones.find(mz => mz.partId === dyn.partId && mz.measureIndex === dyn.measureIndex)
+        if (!z) return null
+        const noteStart = dyn.measureIndex === 0 ? z.x + 55 : z.x + 10
+        const noteWidth = z.width - (dyn.measureIndex === 0 ? 60 : 15)
+        const part      = score.parts.find(p => p.id === dyn.partId)
+        const beats     = part?.measures[dyn.measureIndex]?.timeSignature?.beats ?? 4
+        const px        = noteStart + (dyn.beat / beats) * noteWidth
+        return (
+          <div key={dyn.id} style={{
+            position: 'absolute', left: px - 8, top: z.y + z.height - 4,
+            fontSize: 13, fontStyle: 'italic', fontFamily: 'Times New Roman, serif',
+            fontWeight: 700, color: '#1e293b', pointerEvents: 'none', zIndex: 12,
+            whiteSpace: 'nowrap', userSelect: 'none',
+          }}>{dyn.value}</div>
+        )
+      })}
+
+      {/* ── Hairpin overlays (crescendo/decrescendo wedges) ────────────── */}
+      {hairpins.map(hp => {
+        const z1 = measureZones.find(mz => mz.partId === hp.partId && mz.measureIndex === hp.startMeasure)
+        const z2 = measureZones.find(mz => mz.partId === hp.partId && mz.measureIndex === hp.endMeasure) || z1
+        if (!z1) return null
+        const beatToX = (z, beat) => {
+          const ns = z.measureIndex === 0 ? z.x + 55 : z.x + 10
+          const nw = z.width - (z.measureIndex === 0 ? 60 : 15)
+          const part = score.parts.find(p => p.id === hp.partId)
+          const beats = part?.measures[z.measureIndex]?.timeSignature?.beats ?? 4
+          return ns + (beat / beats) * nw
+        }
+        const x1   = beatToX(z1, hp.startBeat)
+        const x2   = beatToX(z2, hp.endBeat)
+        const y    = z1.y + z1.height + 8
+        const mid  = 5
+        const isC  = hp.type === 'cresc'
+        // Draw SVG wedge inline
+        const d = isC
+          ? `M ${x1} ${y} L ${x2} ${y - mid} M ${x1} ${y} L ${x2} ${y + mid}`
+          : `M ${x1} ${y - mid} L ${x2} ${y} M ${x1} ${y + mid} L ${x2} ${y}`
+        return (
+          <svg key={hp.id} style={{
+            position: 'absolute', left: 0, top: 0,
+            width: '100%', height: '100%',
+            pointerEvents: 'none', zIndex: 11, overflow: 'visible',
+          }}>
+            <path d={d} stroke="#1e293b" strokeWidth="1.5" fill="none" />
+          </svg>
+        )
+      })}
+
+      {/* ── Staff text overlays ────────────────────────────────────────── */}
+      {(score.staffTexts || []).map(st => {
+        const z = measureZones.find(mz => mz.partId === st.partId && mz.measureIndex === st.measureIndex)
+        if (!z) return null
+        const ns = z.measureIndex === 0 ? z.x + 55 : z.x + 10
+        const nw = z.width - (z.measureIndex === 0 ? 60 : 15)
+        const part = score.parts.find(p => p.id === st.partId)
+        const beats = part?.measures[st.measureIndex]?.timeSignature?.beats ?? 4
+        const px = ns + (st.beat / beats) * nw
+        return (
+          <div key={st.id} style={{
+            position: 'absolute', left: px, top: z.y - 22,
+            fontSize: 11, fontFamily: 'Times New Roman, serif',
+            color: '#374151', pointerEvents: 'none', zIndex: 12,
+            whiteSpace: 'nowrap', fontStyle: 'italic',
+          }}>{st.text}</div>
+        )
+      })}
     </div>
   )
 }

@@ -3,8 +3,9 @@ import { useEffect, useState, useRef } from 'react'
 import Toolbar from './components/Toolbar'
 import ScoreRenderer from './components/ScoreRenderer'
 import NoteEditor from './components/NoteEditor'
-import { useScoreStore } from './store/scoreStore'
+import { useScoreStore, clearSavedScore } from './store/scoreStore'
 import Sidebar from './components/Sidebar'
+import { exportMusicXML, exportMIDI, printScore } from './utils/exportScore'
 import { usePlayback } from './hooks/usePlayback'
 
 const DURATION_KEYS = { '1':'w','2':'h','3':'q','4':'8','5':'16','6':'32' }
@@ -21,6 +22,21 @@ export default function App() {
   const selectedOctave         = useScoreStore(s => s.selectedOctave)
   const chordMode              = useScoreStore(s => s.chordMode)
   const addChordNote           = useScoreStore(s => s.addChordNote)
+  const undo                   = useScoreStore(s => s.undo)
+  const redo                   = useScoreStore(s => s.redo)
+  const copyMeasure            = useScoreStore(s => s.copyMeasure)
+  const pasteMeasure           = useScoreStore(s => s.pasteMeasure)
+  const copyMeasureRange       = useScoreStore(s => s.copyMeasureRange)
+  const clipboard              = useScoreStore(s => s.clipboard)
+  const selectedMeasureRange   = useScoreStore(s => s.selectedMeasureRange)
+  const extendMeasureRange     = useScoreStore(s => s.extendMeasureRange)
+  const setMeasureRange        = useScoreStore(s => s.setMeasureRange)
+  const transposeSelection     = useScoreStore(s => s.transposeSelection)
+  const toggleTie              = useScoreStore(s => s.toggleTie)
+  const toggleSlurStart        = useScoreStore(s => s.toggleSlurStart)
+  const zoom                   = useScoreStore(s => s.zoom)
+  const setZoom                = useScoreStore(s => s.setZoom)
+  const _undoStack             = useScoreStore(s => s._undoStack)
   const getSelectedNote        = useScoreStore(s => s.getSelectedNote)
 
   const addNote                = useScoreStore(s => s.addNote)
@@ -51,23 +67,34 @@ export default function App() {
   const isPlaying    = useScoreStore(s => s.isPlaying)
   const playbackBeat = useScoreStore(s => s.playbackBeat)
 
-  const { play, pause, stop, rewind } = usePlayback()
-  const [samplesLoaded, setSamplesLoaded] = useState(false)
-  const [samplesLoading, setSamplesLoading] = useState(false)
+  const { play, pause, stop, rewind, playFromBeat, toggleMetronome, toggleLoop } = usePlayback()
+
+  // ── Local UI state — all declared together before any logic ───────────────
+  const [samplesLoaded, setSamplesLoaded]     = useState(false)
+  const [samplesLoading, setSamplesLoading]   = useState(false)
+  const [metronomeOn, setMetronomeOn]         = useState(false)
+  const [loopOn, setLoopOn]                   = useState(false)
+  const [showExportMenu, setShowExportMenu]   = useState(false)
+  const [contextMenu, setContextMenu]         = useState(null)
+  const [darkMode, setDarkMode]               = useState(() => {
+    try { return localStorage.getItem('scoreai_dark') === '1' } catch { return false }
+  })
+
+  // Apply dark mode class to <html> whenever darkMode changes
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode)
+    document.body.style.background = darkMode ? '#111827' : ''
+  }, [darkMode])
 
   // Intercept play to show loading state while piano samples fetch
   const handlePlay = async () => {
     if (!samplesLoaded && !samplesLoading) {
       setSamplesLoading(true)
-      // Samples load inside play() — watch for the console log or just let it run
-      // After 15s it falls back to FM synth either way
     }
     await play()
     setSamplesLoaded(true)
     setSamplesLoading(false)
   }
-
-  const [contextMenu, setContextMenu] = useState(null)
   const ctxRef = useRef(null)
 
   // Close context menu on outside click
@@ -201,13 +228,47 @@ export default function App() {
       // ── Global shortcuts ──
       if (e.key === 'n' || e.key === 'N') { setInputMode('note');   return }
       if (e.key === 's' || e.key === 'S') { setInputMode('select'); return }
-      if (e.key === 'Escape')             { clearSelection(); setInputMode('select'); return }
+      if (e.key === 'Escape')             { clearSelection(); setMeasureRange(null); setInputMode('select'); return }
       if (e.key === 'm' || e.key === 'M') { addMeasure(); return }
+
+      // Undo / Redo
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return }
+
+      // Copy / Paste
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        e.preventDefault()
+        if (selectedMeasureIndex !== null) copyMeasure(selectedPartId, selectedMeasureIndex)
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        e.preventDefault()
+        if (selectedMeasureIndex !== null) pasteMeasure(selectedPartId, selectedMeasureIndex)
+        return
+      }
+
+      // Tie (T)
+      if (e.key === 't' || e.key === 'T') { toggleTie(); return }
+      // Slur (S already taken by Select — use Shift+S)
+      if (e.shiftKey && e.key === 'S') { toggleSlurStart(); return }
+
+      // Transpose (up/down by semitone when no note selected, by measure range)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowUp')   { e.preventDefault(); transposeSelection(1);  return }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowDown') { e.preventDefault(); transposeSelection(-1); return }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowRight'){ e.preventDefault(); transposeSelection(12); return }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowLeft') { e.preventDefault(); transposeSelection(-12);return }
+
+      // Zoom (Ctrl + / -)
+      if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) { e.preventDefault(); setZoom(zoom + 0.1); return }
+      if ((e.ctrlKey || e.metaKey) && e.key === '-') { e.preventDefault(); setZoom(zoom - 0.1); return }
+      if ((e.ctrlKey || e.metaKey) && e.key === '0') { e.preventDefault(); setZoom(1.0); return }
+
+      // Shift+click measure = extend range (handled in ScoreRenderer onClick)
     }
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [inputMode, selectedDuration, selectedDots, selectedMeasureIndex, selectedPartId, selectedNoteId, selectedOctave, chordMode, addChordNote])
+  }, [inputMode, selectedDuration, selectedDots, selectedMeasureIndex, selectedPartId, selectedNoteId, selectedOctave, chordMode, addChordNote, undo, redo, copyMeasure, pasteMeasure, transposeSelection, toggleTie, toggleSlurStart, zoom, setZoom, setMeasureRange])
 
   const handleContextMenu = e => {
     e.preventDefault()
@@ -218,14 +279,61 @@ export default function App() {
   const liveNote = getSelectedNote()
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-100">
+    <div className={`min-h-screen flex flex-col ${darkMode ? "bg-gray-900 text-gray-100" : "bg-gray-100"}`}>
 
       {/* ── Top menu bar ── */}
       <div className="bg-white border-b border-gray-200 flex items-center h-10 px-3 gap-1 flex-shrink-0 shadow-sm">
         <span className="text-blue-600 font-bold text-sm mr-3">🎵 ScoreAI</span>
-        {['File','Edit','Add','Format','View','Tools'].map(m => (
+        {/* File menu with export */}
+        <div style={{ position: 'relative' }}>
+          <button onClick={() => setShowExportMenu(v => !v)}
+            className="px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded transition-colors">
+            File ▾
+          </button>
+          {showExportMenu && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, zIndex: 100,
+              background: 'white', border: '1px solid #e5e7eb', borderRadius: 6,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: 180, padding: 4,
+            }}
+              onMouseLeave={() => setShowExportMenu(false)}>
+              {[
+                { label: '📄 Export MusicXML', action: () => { exportMusicXML(score); setShowExportMenu(false) } },
+                { label: '🎹 Export MIDI',      action: () => { exportMIDI(score);     setShowExportMenu(false) } },
+                { label: '🖨️  Print / PDF',      action: () => { printScore();          setShowExportMenu(false) } },
+                { label: '📂 New Score',         action: () => { if(confirm('Discard current score?')) { clearSavedScore(); window.location.reload() } } },
+              ].map(item => (
+                <button key={item.label} onClick={item.action}
+                  style={{ display: 'block', width: '100%', textAlign: 'left',
+                    padding: '6px 12px', fontSize: 12, border: 'none', background: 'none',
+                    cursor: 'pointer', borderRadius: 4 }}
+                  onMouseEnter={e => e.currentTarget.style.background='#f3f4f6'}
+                  onMouseLeave={e => e.currentTarget.style.background='none'}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {['Edit','Add','Format','View','Tools'].map(m => (
           <button key={m} className="px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded transition-colors">{m}</button>
         ))}
+
+        <div className="w-px h-4 bg-gray-200 mx-1" />
+
+        {/* Undo / Redo */}
+        <button onClick={undo} disabled={_undoStack.length === 0} title="Undo (Ctrl+Z)"
+          className="w-7 h-7 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100 disabled:opacity-30 text-sm transition-colors">↩</button>
+        <button onClick={redo} title="Redo (Ctrl+Y)"
+          className="w-7 h-7 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100 text-sm transition-colors">↪</button>
+
+        {/* Zoom */}
+        <div className="w-px h-4 bg-gray-200 mx-1" />
+        <button onClick={() => setZoom(zoom - 0.1)} title="Zoom out (Ctrl+-)"
+          className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100 text-sm">−</button>
+        <span className="text-xs text-gray-500 w-9 text-center font-mono">{Math.round(zoom*100)}%</span>
+        <button onClick={() => setZoom(zoom + 0.1)} title="Zoom in (Ctrl+=)"
+          className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100 text-sm">+</button>
 
         <div className="flex-1" />
 
@@ -251,6 +359,20 @@ export default function App() {
             className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">
             ⏹
           </button>
+          {/* Metronome */}
+          <button onClick={() => { const v = toggleMetronome(); setMetronomeOn(v) }}
+            title="Metronome click during playback"
+            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors
+              ${metronomeOn ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
+            𝅘
+          </button>
+          {/* Loop */}
+          <button onClick={() => { const v = toggleLoop(); setLoopOn(v) }}
+            title="Loop playback"
+            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors
+              ${loopOn ? 'bg-green-100 border-green-400 text-green-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
+            🔁
+          </button>
           {/* Beat counter / loading indicator */}
           {samplesLoading ? (
             <span className="text-amber-500 text-xs ml-1 animate-pulse" title="Loading real piano samples...">
@@ -264,6 +386,17 @@ export default function App() {
             </span>
           )}
         </div>
+
+        {/* Dark mode */}
+        <button onClick={() => {
+          const next = !darkMode; setDarkMode(next)
+          localStorage.setItem('scoreai_dark', next ? '1' : '0')
+          document.documentElement.classList.toggle('dark', next)
+        }}
+          title="Toggle dark mode"
+          className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-xs mr-2">
+          {darkMode ? '☀️' : '🌙'}
+        </button>
 
         {/* Part manager */}
         <div className="flex items-center gap-1.5">
@@ -315,6 +448,15 @@ export default function App() {
           )}
         </div>
 
+        {/* Tie / Slur / Transpose quick buttons */}
+        <button onClick={toggleTie} title="Toggle tie on selected note (T)"
+          className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-2.5 py-1.5 rounded transition-colors">
+          ⌢ Tie
+        </button>
+        <button onClick={toggleSlurStart} title="Toggle slur on selected note (Shift+S)"
+          className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-2.5 py-1.5 rounded transition-colors">
+          ⌣ Slur
+        </button>
         <button onClick={addMeasure}
           className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-3 py-1.5 rounded transition-colors">
           + Bar (M)
@@ -329,9 +471,11 @@ export default function App() {
         {[
           ['N','Note mode'], ['S','Select'], ['A–G','Natural note'],
           ['Enter','Chromatic'], ['1–6','Duration'], ['.','Dot'],
-          ['⇧+A–G','Add chord'], ['J','Chord mode'], ['↑↓','Chromatic'], ['⇧↑↓','Octave'],
-          ['←→','Navigate'], ['Del','Delete note'], ['M','Add bar'],
-          ['Right-click','Bar menu'],
+          ['⇧+A–G','Chord'], ['J','Chord mode'], ['T','Tie'], ['↑↓','Chromatic'], ['⇧↑↓','Octave'],
+          ['←→','Navigate'], ['Del','Delete'], ['M','Add bar'],
+          ['Ctrl+Z','Undo'], ['Ctrl+Y','Redo'], ['Ctrl+C','Copy bar'], ['Ctrl+V','Paste'],
+          ['Ctrl+↑↓','Transpose ½'], ['Ctrl+←→','Transpose 8ve'],
+          ['Ctrl+ +/-','Zoom'],
         ].map(([k,v]) => (
           <span key={k}>
             <kbd className="bg-gray-100 border border-gray-300 px-1 py-0.5 rounded text-gray-600 font-mono">{k}</kbd>
