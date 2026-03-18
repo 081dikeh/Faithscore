@@ -18,9 +18,15 @@ export function clearSavedScore() { localStorage.removeItem(AUTOSAVE_KEY) }
 export const DURATION_BEATS = {
   'w': 4, 'h': 2, 'q': 1, '8': 0.5, '16': 0.25, '32': 0.125,
   'wd': 6, 'hd': 3, 'qd': 1.5, '8d': 0.75, '16d': 0.375,
+  // Triplet durations: multiply by 2/3 (3 notes in space of 2)
+  'qt': 2/3, '8t': 1/3, '16t': 1/6, 'ht': 4/3,
 }
 
 export function noteDuration(note) {
+  if (note.triplet) {
+    // Triplet note: 2/3 of its base duration
+    return (DURATION_BEATS[note.duration] || 1) * 2 / 3
+  }
   const key = note.duration + (note.dots ? 'd' : '')
   return DURATION_BEATS[key] || DURATION_BEATS[note.duration] || 1
 }
@@ -938,6 +944,63 @@ export const useScoreStore = create((set, get) => ({
   },
 
   loadScore: (score) => set({ score }),
+
+  // ── Insert a triplet group ────────────────────────────────────────────────
+  // Inserts 3 notes of duration `baseDuration` as a triplet (each = 2/3 of base)
+  // into the selected measure at the current cursor position.
+  // e.g. baseDuration='q' → 3 quarter-note triplets filling 2 beats
+  insertTriplet: (baseDuration) => {
+    const { selectedPartId, selectedMeasureIndex } = get()
+    if (selectedMeasureIndex === null) return
+    get()._snapshot()
+
+    const part    = get().score.parts.find(p => p.id === selectedPartId)
+    const measure = part?.measures[selectedMeasureIndex]
+    if (!measure) return
+
+    // Each triplet note = 2/3 of the base duration
+    const key = baseDuration + 't'
+    const tripletBeats = DURATION_BEATS[key] || (DURATION_BEATS[baseDuration] * 2/3)
+    const totalBeats   = tripletBeats * 3  // = 2 × base
+
+    // Find a rest slot big enough to fit the triplet group
+    const nonChord = measure.notes.filter(n => !n.chordWith)
+    let targetRest = null
+    for (const n of nonChord) {
+      if (n.isRest && noteDuration(n) >= totalBeats - 0.001) {
+        targetRest = n; break
+      }
+    }
+    if (!targetRest) return  // no space
+
+    const restBeats  = noteDuration(targetRest)
+    const leftover   = restBeats - totalBeats
+    const groupId    = crypto.randomUUID()  // shared ID links the 3 notes as a triplet
+
+    const tripletNotes = [0,1,2].map(i => ({
+      id: crypto.randomUUID(),
+      isRest: true,
+      pitch: null,
+      duration: baseDuration,
+      dots: 0,
+      triplet: true,
+      tripletGroupId: groupId,
+      tripletIndex: i,
+      tripletOf: 3,
+    }))
+
+    get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) => {
+      const idx      = notes.findIndex(n => n.id === targetRest.id)
+      const before   = notes.slice(0, idx)
+      const after    = notes.slice(idx + 1).filter(n => !n.isRest)
+      const leftovers = leftover > 0.001 ? makeRests(leftover, `trip_after`) : []
+      return [...before, ...tripletNotes, ...leftovers, ...after]
+    })
+
+    // Select the first triplet note
+    set({ selectedNoteId: tripletNotes[0].id })
+    saveToStorage(get().score)
+  },
 
   // ── Dynamics ────────────────────────────────────────────────────────────
   addDynamic: (partId, measureIndex, beat, value) => {

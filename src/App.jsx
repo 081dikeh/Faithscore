@@ -33,6 +33,7 @@ export default function App() {
   const setMeasureRange        = useScoreStore(s => s.setMeasureRange)
   const transposeSelection     = useScoreStore(s => s.transposeSelection)
   const toggleTie              = useScoreStore(s => s.toggleTie)
+  const insertTriplet          = useScoreStore(s => s.insertTriplet)
   const toggleSlurStart        = useScoreStore(s => s.toggleSlurStart)
   const zoom                   = useScoreStore(s => s.zoom)
   const setZoom                = useScoreStore(s => s.setZoom)
@@ -230,6 +231,8 @@ export default function App() {
       if (e.key === 's' || e.key === 'S') { setInputMode('select'); return }
       if (e.key === 'Escape')             { clearSelection(); setMeasureRange(null); setInputMode('select'); return }
       if (e.key === 'm' || e.key === 'M') { addMeasure(); return }
+      // T3 or just '3' in note mode = insert triplet of current duration
+      if ((e.key === '3') && inputMode === 'note') { e.preventDefault(); insertTriplet(st().selectedDuration); return }
 
       // Undo / Redo
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return }
@@ -268,7 +271,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [inputMode, selectedDuration, selectedDots, selectedMeasureIndex, selectedPartId, selectedNoteId, selectedOctave, chordMode, addChordNote, undo, redo, copyMeasure, pasteMeasure, transposeSelection, toggleTie, toggleSlurStart, zoom, setZoom, setMeasureRange])
+  }, [inputMode, selectedDuration, selectedDots, selectedMeasureIndex, selectedPartId, selectedNoteId, selectedOctave, chordMode, addChordNote, undo, redo, copyMeasure, pasteMeasure, transposeSelection, toggleTie, toggleSlurStart, zoom, setZoom, setMeasureRange, insertTriplet])
 
   const handleContextMenu = e => {
     e.preventDefault()
@@ -509,24 +512,8 @@ export default function App() {
             )}
           </div>
 
-          {/* Score notation — draggable in note mode so user can drag onto any bar */}
-          <div
-            className="px-6 py-6 overflow-x-visible"
-            draggable={inputMode === 'note'}
-            onDragStart={e => {
-              if (inputMode !== 'note') return
-              // Signal ScoreRenderer that this is a ghost-note drag (not a note move)
-              e.dataTransfer.setData('application/scoreai-toolnote', '1')
-              e.dataTransfer.effectAllowed = 'copy'
-              // Hide the default drag image (ScoreRenderer shows its own ghost)
-              const blank = document.createElement('div')
-              blank.style.cssText = 'width:1px;height:1px;opacity:0;position:fixed;top:-100px'
-              document.body.appendChild(blank)
-              e.dataTransfer.setDragImage(blank, 0, 0)
-              setTimeout(() => document.body.removeChild(blank), 0)
-            }}
-            style={{ cursor: inputMode === 'note' ? 'crosshair' : 'default' }}
-          >
+          {/* Score notation */}
+          <div className="px-6 py-6 overflow-x-visible">
             <ScoreRenderer />
           </div>
         </div>

@@ -124,114 +124,53 @@ export default function Toolbar() {
   }
 
   return (
-    <div className="bg-white border-b border-gray-200 select-none flex-shrink-0 shadow-sm">
+    <div className="bg-white border-b border-gray-200 select-none flex-shrink-0"
+      style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
 
-      {/* ── Row 1: input mode + duration + octave + chord + key + time ── */}
-      <div className="flex items-center gap-1.5 px-3 py-1.5 flex-wrap border-b border-gray-100">
+      {/* ── Single compact row ── */}
+      <div className="flex items-center gap-1 px-2 py-1 overflow-x-auto"
+        style={{ minHeight: 36, scrollbarWidth: 'none' }}>
 
-        {/* Mode */}
-        <TBtn active={inputMode==='select'} onClick={() => setInputMode('select')} title="Select mode (S)">
-          ↖ Select
-        </TBtn>
-        <TBtn active={inputMode==='note'} onClick={() => setInputMode('note')} title="Note input mode (N)" color="green">
-          ♩ Note
-        </TBtn>
-
-        {/* In note mode: show a subtle hint that score is draggable */}
-        {inputMode === 'note' && (
-          <span style={{
-            fontSize: 10, color: '#15803d', fontStyle: 'italic',
-            padding: '0 6px', opacity: 0.8,
-          }}>
-            drag onto staff to place
-          </span>
-        )}
+        {/* Mode toggle */}
+        <TBtn active={inputMode==='select'} onClick={() => setInputMode('select')} title="Select (S)">↖</TBtn>
+        <TBtn active={inputMode==='note'}   onClick={() => setInputMode('note')}   title="Note input (N)" color="green">♩</TBtn>
 
         <Sep />
 
-        {/* Duration buttons */}
-        {hasAnyNote && (
-          <span className="text-xs text-gray-400 mr-0.5 italic">resize:</span>
-        )}
+        {/* Durations */}
         {DURATIONS.map(d => (
           <TBtn key={d.val} active={activeDur===d.val} onClick={() => handleDuration(d.val)}
             title={d.label} color="orange">
-            <span className="text-base leading-none">{d.sym}</span>
+            <span style={{ fontSize: 15, lineHeight: 1 }}>{d.sym}</span>
           </TBtn>
         ))}
-        <TBtn active={!!activeDots} onClick={handleDot} title="Dotted note (·)" color="orange">
-          <span className="text-xl leading-none">·</span>
+        {/* Triplet button */}
+        <TBtn active={false} onClick={() => {}} title="Triplet (3) — select 3 notes then press T3">
+          <span style={{ fontSize: 11, fontWeight: 700 }}>³</span>
+        </TBtn>
+        <TBtn active={!!activeDots} onClick={handleDot} title="Dot (.)">
+          <span style={{ fontSize: 16, lineHeight: 1 }}>·</span>
         </TBtn>
 
         <Sep />
 
-        {/* Octave */}
-        <span className="text-xs text-gray-500">Oct</span>
-        {octaveOptions.map(o => (
-          <TBtn key={o} active={selectedOctave===o} onClick={() => setSelectedOctave(o)}>
-            {o}
-          </TBtn>
-        ))}
-
-        <Sep />
-
-        {/* Chord mode — purple when active, shows how to use it */}
-        <button
-          onClick={() => setChordMode(!chordMode)}
-          title={chordMode
-            ? 'Chord mode ON — next note stacks on selected note. Click or press J to turn off.'
-            : 'Chord mode — press J or click to enable, then press Shift+letter or drag to add notes to a chord'}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 4,
-            padding: '0 10px', height: 28, borderRadius: 6,
-            background: chordMode
-              ? 'linear-gradient(135deg,#6d28d9,#7c3aed)'
-              : 'white',
-            border: chordMode ? '1.5px solid #5b21b6' : '1.5px solid #d1d5db',
-            color: chordMode ? 'white' : '#374151',
-            fontWeight: 700, fontSize: 12, cursor: 'pointer',
-            boxShadow: chordMode ? '0 0 0 3px rgba(124,58,237,0.25)' : 'none',
-            transition: 'all 0.15s',
-            flexShrink: 0,
-          }}>
-          <span style={{ fontSize: 15 }}>𝄪</span>
-          <span>{chordMode ? 'Chord ON' : 'Chord'}</span>
-          {chordMode && <span style={{ fontSize: 9, opacity: 0.85 }}>(J to off)</span>}
-        </button>
-
-        {/* Visual hint when chord mode is active */}
-        {chordMode && (
-          <span style={{ fontSize: 10, color: '#7c3aed', fontStyle: 'italic', padding: '0 4px' }}>
-            select a note → Shift+key or drag to stack
-          </span>
-        )}
-
-        <Sep />
-
-        {/* Tempo */}
-        <span className="text-xs text-gray-500">♩=</span>
-        <input type="number" value={score.tempo} min={20} max={300}
-          onChange={e => setTempo(Number(e.target.value))}
-          className="w-14 border border-gray-300 rounded px-1.5 h-7 text-xs text-center outline-none focus:ring-2 focus:ring-blue-300 bg-white" />
-      </div>
-
-      {/* ── Row 2: chromatic note picker + key + time sig ── */}
-      <div className="flex items-center gap-1.5 px-3 py-1.5 flex-wrap">
-
-        <span className="text-xs text-gray-500 mr-0.5">Note</span>
-
+        {/* Chromatic note picker — compact piano-style */}
         {CHROMATIC_NOTES.map((n, i) => {
           const isSelected = selectedNote?.step === n.step && selectedNote?.accidental === n.accidental
           const isBlack    = n.accidental !== null
           return (
             <button key={i} onClick={() => setSelectedNote(n)} title={n.label}
-              className={`h-7 px-2 rounded border text-sm font-semibold transition-colors flex-shrink-0
-                ${isSelected
-                  ? 'bg-orange-500 text-white border-orange-500'
-                  : isBlack
-                    ? 'bg-gray-800 text-white border-gray-700 hover:bg-gray-700'
-                    : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'
-                }`}>
+              style={{
+                height: 26, minWidth: isBlack ? 22 : 26,
+                padding: '0 3px',
+                fontSize: 11, fontWeight: 700,
+                borderRadius: 3, flexShrink: 0, cursor: 'pointer',
+                transition: 'all 0.1s',
+                border: isSelected ? '2px solid #ea580c' : '1px solid #d1d5db',
+                background: isSelected ? '#ea580c'
+                  : isBlack ? '#1f2937' : 'white',
+                color: isSelected ? 'white' : isBlack ? 'white' : '#374151',
+              }}>
               {n.label}
             </button>
           )
@@ -239,25 +178,62 @@ export default function Toolbar() {
 
         <Sep />
 
-        <span className="text-xs text-gray-500">Key</span>
+        {/* Octave */}
+        <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>Oct</span>
+        {octaveOptions.map(o => (
+          <TBtn key={o} active={selectedOctave===o} onClick={() => setSelectedOctave(o)}>
+            <span style={{ fontSize: 11 }}>{o}</span>
+          </TBtn>
+        ))}
+
+        <Sep />
+
+        {/* Chord */}
+        <TBtn active={chordMode} onClick={() => setChordMode(!chordMode)}
+          title={chordMode ? 'Chord ON — Shift+key to add. J to off' : 'Chord mode (J)'}
+          color="purple">
+          <span style={{ fontSize: 11 }}>𝄪</span>
+          <span style={{ fontSize: 10 }}>{chordMode ? 'ON' : ''}</span>
+        </TBtn>
+
+        <Sep />
+
+        {/* Key signature */}
+        <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>Key</span>
         <select value={currentKey} onChange={e => setGlobalKeySignature(Number(e.target.value))}
-          className="border border-gray-300 rounded px-2 h-7 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-blue-300 bg-white">
+          style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '0 4px',
+            height: 26, fontSize: 11, color: '#374151', background: 'white',
+            outline: 'none', maxWidth: 110 }}>
           {KEY_SIGNATURES.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
         </select>
 
         <Sep />
 
-        <span className="text-xs text-gray-500">Time</span>
-        {TIME_SIGNATURES.map(t => {
-          const active = currentTimeSig.beats===t.beats && currentTimeSig.beatType===t.beatType
-          return (
-            <TBtn key={t.label} active={active}
-              onClick={() => setGlobalTimeSignature({ beats:t.beats, beatType:t.beatType })}>
-              {t.label}
-            </TBtn>
-          )
-        })}
+        {/* Time signature */}
+        <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>Time</span>
+        <select
+          value={`${currentTimeSig.beats}/${currentTimeSig.beatType}`}
+          onChange={e => {
+            const [b, bt] = e.target.value.split('/').map(Number)
+            setGlobalTimeSignature({ beats: b, beatType: bt })
+          }}
+          style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '0 4px',
+            height: 26, fontSize: 11, color: '#374151', background: 'white', outline: 'none' }}>
+          {TIME_SIGNATURES.map(t => (
+            <option key={t.label} value={`${t.beats}/${t.beatType}`}>{t.label}</option>
+          ))}
+        </select>
+
+        <Sep />
+
+        {/* Tempo */}
+        <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>♩=</span>
+        <input type="number" value={score.tempo} min={20} max={300}
+          onChange={e => setTempo(Number(e.target.value))}
+          style={{ width: 48, border: '1px solid #d1d5db', borderRadius: 4,
+            padding: '0 4px', height: 26, fontSize: 11, textAlign: 'center',
+            outline: 'none', background: 'white' }} />
       </div>
     </div>
   )
-} 
+}

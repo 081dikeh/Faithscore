@@ -248,6 +248,11 @@ export function usePlayback() {
       if (!isPlayingRef.current) return
       const elapsed = Tone.now() - transportStart.current
       if (elapsed >= totalSecsRef.current + 0.15) {
+        if (loopRef.current) {
+          // Score looped — reset cursor elapsed calculation
+          transportStart.current = Tone.now()
+          return
+        }
         doStop(false); return
       }
       setPlaybackBeat(Math.max(0, elapsed / secPerBeat))
@@ -383,6 +388,10 @@ export function usePlayback() {
 
   const toggleLoop = useCallback(() => {
     loopRef.current = !loopRef.current
+    // Update transport loop state immediately if playing
+    if (isPlayingRef.current) {
+      Tone.getTransport().loop = loopRef.current
+    }
     return loopRef.current
   }, [])
 
