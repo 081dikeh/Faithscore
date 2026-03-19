@@ -16,8 +16,8 @@ export function hasSavedScore() { return !!localStorage.getItem(AUTOSAVE_KEY) }
 export function clearSavedScore() { localStorage.removeItem(AUTOSAVE_KEY) }
 
 export const DURATION_BEATS = {
-  'w': 4, 'h': 2, 'q': 1, '8': 0.5, '16': 0.25, '32': 0.125,
-  'wd': 6, 'hd': 3, 'qd': 1.5, '8d': 0.75, '16d': 0.375,
+  'w': 4, 'h': 2, 'q': 1, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625,
+  'wd': 6, 'hd': 3, 'qd': 1.5, '8d': 0.75, '16d': 0.375, '32d': 0.1875,
   // Triplet durations: multiply by 2/3 (3 notes in space of 2)
   'qt': 2/3, '8t': 1/3, '16t': 1/6, 'ht': 4/3,
 }
@@ -42,7 +42,8 @@ export function beatsToRest(beats) {
   if (beats >= 0.5)  return { duration: '8',  dots: 0 }
   if (beats >= 0.375)return { duration: '16', dots: 1 }
   if (beats >= 0.25) return { duration: '16', dots: 0 }
-  return { duration: '32', dots: 0 }
+  if (beats >= 0.125) return { duration: '32', dots: 0 }
+  return { duration: '64', dots: 0 }
 }
 
 // Build a minimal chain of rest notes to fill `beats`

@@ -8,7 +8,7 @@ import Sidebar from './components/Sidebar'
 import { exportMusicXML, exportMIDI, printScore } from './utils/exportScore'
 import { usePlayback } from './hooks/usePlayback'
 
-const DURATION_KEYS = { '1':'w','2':'h','3':'q','4':'8','5':'16','6':'32' }
+const DURATION_KEYS = { '1':'w','2':'h','3':'q','4':'8','5':'16','6':'32','7':'64' }
 const KEY_TO_STEP   = { a:'A',b:'B',c:'C',d:'D',e:'E',f:'F',g:'G' }
 
 export default function App() {
@@ -303,7 +303,7 @@ export default function App() {
               {[
                 { label: '📄 Export MusicXML', action: () => { exportMusicXML(score); setShowExportMenu(false) } },
                 { label: '🎹 Export MIDI',      action: () => { exportMIDI(score);     setShowExportMenu(false) } },
-                { label: '🖨️  Print / PDF',      action: () => { printScore();          setShowExportMenu(false) } },
+                { label: '🖨️  Print / PDF',      action: () => { printScore(score);    setShowExportMenu(false) } },
                 { label: '📂 New Score',         action: () => { if(confirm('Discard current score?')) { clearSavedScore(); window.location.reload() } } },
               ].map(item => (
                 <button key={item.label} onClick={item.action}
@@ -494,26 +494,34 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
       <Sidebar />
 
-      {/* ── Score canvas ── */}
-      <main className="flex-1 overflow-auto p-6">
-        <div className="bg-white mx-auto shadow-lg rounded"
-          style={{ maxWidth: 1100, minHeight: 640 }}
-          onContextMenu={handleContextMenu}>
-
-          {/* Score header */}
-          <div className="pt-10 pb-3 px-10 text-center border-b border-gray-100">
-            <h1 className="text-3xl font-bold text-gray-900" style={{ fontFamily: 'Times New Roman, serif' }}>
+      {/* ── Score canvas — A4 page layout ── */}
+      <main className="flex-1 overflow-auto bg-gray-300 p-6" id="score-main">
+        {/* Page 1 always has the title header */}
+        <div
+          className="score-page bg-white mx-auto shadow-lg"
+          style={{
+            width: 794, minHeight: 1123,
+            padding: '40px 37px 40px 37px',
+            marginBottom: 24,
+            boxSizing: 'border-box',
+            position: 'relative',
+          }}
+          onContextMenu={handleContextMenu}
+        >
+          {/* Score header — data-print-header marks elements for print extraction */}
+          <div data-print-header="1" style={{ textAlign: 'center', marginBottom: 20, borderBottom: '1px solid #e5e7eb', paddingBottom: 12 }}>
+            <div style={{ fontSize: 28, fontWeight: 700, fontFamily: 'Times New Roman, serif', color: '#111', margin: 0 }}>
               {score.title || 'Untitled Score'}
-            </h1>
+            </div>
             {score.composer && (
-              <p className="text-sm text-gray-500 mt-1 text-right pr-2" style={{ fontFamily: 'Times New Roman, serif' }}>
+              <div style={{ fontSize: 13, color: '#555', textAlign: 'right', fontFamily: 'Times New Roman, serif', margin: '4px 0 0' }}>
                 {score.composer}
-              </p>
+              </div>
             )}
           </div>
 
-          {/* Score notation */}
-          <div className="px-6 py-6 overflow-x-visible">
+          {/* Score notation — renders into the page */}
+          <div style={{ width: '100%', overflow: 'visible' }}>
             <ScoreRenderer />
           </div>
         </div>

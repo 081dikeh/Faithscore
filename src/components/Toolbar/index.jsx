@@ -8,6 +8,7 @@ const DURATIONS = [
   { sym:'♪',  val:'8',  label:'8th (4)'     },
   { sym:'𝅘𝅥𝅰', val:'16', label:'16th (5)'    },
   { sym:'𝅘𝅥𝅱', val:'32', label:'32nd (6)'    },
+  { sym:'𝅘𝅥𝅱', val:'64', label:'64th (7)'    },
 ]
 
 export const CHROMATIC_NOTES = [

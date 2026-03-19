@@ -7,8 +7,8 @@ import {
 import { useScoreStore, DURATION_BEATS, noteDuration } from '../../store/scoreStore'
 
 const MEASURES_PER_LINE   = 4
-const MEASURE_WIDTH       = 210
-const FIRST_MEASURE_WIDTH = 270
+const MEASURE_WIDTH       = 240
+const FIRST_MEASURE_WIDTH = 300
 const PART_HEIGHT         = 120
 const SYSTEM_GAP          = 60
 const STAVE_TOP           = 55
@@ -81,6 +81,7 @@ export default function ScoreRenderer() {
   // cursor: tracks mouse position in note mode — the "ghost note" that follows the cursor
   // { partId, measureIndex, zKey, beat, pitch, ghostX, ghostY, isChord }
   const [cursor, setCursor]           = useState(null)
+  const cursorRef = useRef(null)  // always-fresh cursor for click handler
 
   const score                = useScoreStore(s => s.score)
   const selectedMeasureIndex = useScoreStore(s => s.selectedMeasureIndex)
@@ -110,8 +111,11 @@ export default function ScoreRenderer() {
     const totalCols  = Math.max(...score.parts.map(p => p.measures.length), 1)
     const totalLines = Math.ceil(totalCols / MEASURES_PER_LINE)
     const systemH    = numParts * PART_HEIGHT + SYSTEM_GAP
-    const canvasW    = FIRST_MEASURE_WIDTH + (MEASURES_PER_LINE - 1) * MEASURE_WIDTH + 60
-    const canvasH    = totalLines * systemH + 80
+
+    // A4 page usable width at screen resolution
+    const PAGE_W       = 720   // px, matches the white page card width
+    const canvasW      = PAGE_W
+    const canvasH      = totalLines * systemH + 80
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG)
     renderer.resize(canvasW, canvasH)
@@ -141,10 +145,24 @@ export default function ScoreRenderer() {
           const measure = part.measures[col]
           if (!measure) continue
 
-          const colInLine = col - startCol
-          const isFirst   = colInLine === 0
-          const width     = isFirst ? FIRST_MEASURE_WIDTH : MEASURE_WIDTH
-          const x         = isFirst ? 20 : 20 + FIRST_MEASURE_WIDTH + (colInLine - 1) * MEASURE_WIDTH
+          const colInLine  = col - startCol
+          const isFirst    = colInLine === 0
+          const numCols    = endCol - startCol
+
+          // Distribute measures evenly across the full page width.
+          // First measure is wider (has clef + key + time sig glyphs).
+          // Remaining measures share the rest of the width equally.
+          const LEFT_MARGIN  = 20
+          const RIGHT_MARGIN = 20
+          const usableW      = PAGE_W - LEFT_MARGIN - RIGHT_MARGIN
+          const FIRST_W      = Math.min(300, usableW * 0.38)  // first bar ~38% of line
+          const restW        = numCols > 1
+            ? (usableW - FIRST_W) / (numCols - 1)
+            : usableW
+          const width = isFirst ? FIRST_W : restW
+          const x     = isFirst
+            ? LEFT_MARGIN
+            : LEFT_MARGIN + FIRST_W + (colInLine - 1) * restW
 
           const stave = new Stave(x, partY, width)
           if (isFirst) {
@@ -216,20 +234,35 @@ export default function ScoreRenderer() {
               beat_value: measure.timeSignature.beatType,
             }).setStrict(false)
             voice.addTickables(vfNotes)
-            new Formatter().joinVoices([voice]).format([voice], width - 48)
+            // Give the formatter enough space for all notes.
+            // Minimum 30px per note slot, use whatever is larger.
+            // Give formatter the full available note area.
+            // Glyph overhead: ~60px for first measure (clef+key+time), ~20px otherwise
+            const glyphOverhead  = isFirst ? 60 : 20
+            const formatterWidth = Math.max(renderSeq.length * 28, width - glyphOverhead)
+            new Formatter().joinVoices([voice]).format([voice], formatterWidth)
             voice.draw(ctx, stave)
 
             // ── Auto-beaming ────────────────────────────────────────────────
-            // Generate beams for 8th/16th notes based on time signature
+            // generateBeams groups flagged notes (8th, 16th, 32nd, 64th) and
+            // draws beams between them. auto_stem lets VexFlow decide stem direction
+            // per group (up for notes below middle line, down for above).
+            // This removes the individual flags on beamed notes — like MuseScore.
             try {
-              const beamGroups = Beam.generateBeams(
-                vfNotes.filter(n => {
-                  const dur = n.getDuration()
-                  return dur === '8' || dur === '16' || dur === '32'
-                }),
-                { stem_direction: 1 }
-              )
-              beamGroups.forEach(b => b.setContext(ctx).draw())
+              const beamable = vfNotes.filter(n => {
+                const dur = n.getDuration()
+                return dur === '8' || dur === '16' || dur === '32' || dur === '64'
+              })
+              if (beamable.length > 0) {
+                // generateBeams with auto_stem=true removes individual flags
+                // and draws proper beams. No groups param — VexFlow handles grouping.
+                const beamGroups = Beam.generateBeams(beamable, {
+                  auto_stem: true,
+                  beam_rests: false,
+                  show_stemlets: false,
+                })
+                beamGroups.forEach(b => b.setContext(ctx).draw())
+              }
             } catch(_) {}
 
             // ── Tuplet brackets ─────────────────────────────────────────────
@@ -285,9 +318,33 @@ export default function ScoreRenderer() {
               } catch(_) {}
             })
 
-            // Measure background zone
+            // Measure background zone — store actual note area X so cursor is accurate
+            // VexFlow formats notes starting after the clef/key/time glyphs.
+            // We store the first and last note X to get a precise mapping.
+            const noteXPositions = []
+            vfNotes.forEach(vn => { try { noteXPositions.push(vn.getAbsoluteX()) } catch(_) {} })
+            const firstNoteX = noteXPositions[0]  ?? (isFirst ? x + 55 : x + 10)
+            const lastNoteX  = noteXPositions[noteXPositions.length - 1] ?? (x + width - 20)
+            // noteAreaStart: pixel X of beat 0 in this measure
+            // noteAreaWidth: total pixel span of the note area
+            const noteAreaStart = firstNoteX - 6
+            const noteAreaWidth = Math.max(20, (x + width - 15) - noteAreaStart)
+
+            // Store actual VexFlow staff line Y positions for pitch mapping
+            let staveTopLineY = partY + 30   // fallback
+            let staveLineSpacing = 10        // VexFlow default
+            try {
+              staveTopLineY  = stave.getYForLine(0)   // top line (line 0)
+              const botLineY = stave.getYForLine(4)   // bottom line (line 4)
+              staveLineSpacing = (botLineY - staveTopLineY) / 4
+            } catch(_) {}
+
             allZones.push({ type: 'measure', partId: part.id, measureIndex: col,
-              x, y: partY, width, height: STAVE_HEIGHT, selected: isMeasureSel })
+              x, y: partY, width, height: STAVE_HEIGHT, selected: isMeasureSel,
+              noteAreaStart, noteAreaWidth,
+              staveTopLineY,      // actual pixel Y of top staff line
+              staveLineSpacing,   // pixel spacing between staff lines (usually 10)
+            })
 
             // Per-note/rest zones — base notes AND individual chord note zones
             vfNotes.forEach((vfNote, ni) => {
@@ -452,18 +509,22 @@ export default function ScoreRenderer() {
     const clef  = part?.clef || 'treble'
     const beats = part?.measures[z.measureIndex]?.timeSignature?.beats ?? 4
 
-    // X → beat (snapped to 16th note)
-    const noteStart = z.measureIndex === 0 ? z.x + 55 : z.x + 10
-    const noteWidth = z.width - (z.measureIndex === 0 ? 60 : 15)
+    // X → beat using actual note area coordinates stored in the zone
+    const noteStart = z.noteAreaStart ?? (z.measureIndex === 0 ? z.x + 55 : z.x + 10)
+    const noteWidth = z.noteAreaWidth ?? (z.width - (z.measureIndex === 0 ? 60 : 15))
     const frac      = Math.max(0, Math.min(1, (mouseX - noteStart) / noteWidth))
     const rawBeat   = frac * beats
     const beat      = Math.round(rawBeat / 0.25) * 0.25
 
-    // Y → pitch — full range from ledger lines above to ledger lines below
-    // Staff top line is ~15px from zone top. Each position = 5px.
-    const topLineY   = z.y + 15
-    const rawPos     = (mouseY - topLineY) / 5
-    const pos        = Math.max(-6, Math.min(14, Math.round(rawPos)))
+    // Y → pitch using actual stave coordinates stored during rendering
+    // staveTopLineY = pixel Y of the top staff line (F5 treble / A3 bass)
+    // staveLineSpacing = pixels between lines (typically 10px)
+    // Each staff position (line OR space) = staveLineSpacing / 2 pixels
+    const topLineY    = z.staveTopLineY    ?? (z.y + 30)
+    const lineSpacing = z.staveLineSpacing ?? 10
+    const posSpacing  = lineSpacing / 2    // pixels per staff position (5px normally)
+    const rawPos      = (mouseY - topLineY) / posSpacing
+    const pos         = Math.max(-6, Math.min(14, Math.round(rawPos)))
 
     const TREBLE_POS = [
       {s:'E',o:6},{s:'D',o:6},{s:'C',o:6},{s:'B',o:5},{s:'A',o:5},{s:'G',o:5},
@@ -481,9 +542,9 @@ export default function ScoreRenderer() {
     const entry = table[Math.max(0, Math.min(table.length - 1, pos + 6))]
     const pitch = { step: entry.s, octave: entry.o, accidental: null }
 
-    // Pixel position of this pitch (for rendering the ghost note dot)
-    const ghostX = noteStart + Math.min(1, beat / beats) * noteWidth
-    const ghostY = topLineY + pos * 5
+    // Pixel X for the ghost note — clamped to actual note area
+    const ghostX = noteStart + Math.max(0, Math.min(1, beat / beats)) * noteWidth
+    const ghostY = topLineY + pos * posSpacing
 
     const isChord = chordMode && selectedNoteId_store
     const zKey    = `${z.partId}-${z.measureIndex}`
@@ -500,19 +561,60 @@ export default function ScoreRenderer() {
         cursor: inputMode === 'note' ? 'none' : 'default',  // hide system cursor in note mode
       }}
       onMouseMove={e => {
-        if (inputMode !== 'note') { if (cursor) setCursor(null); return }
+        if (inputMode !== 'note') { if (cursor) { setCursor(null); cursorRef.current = null } return }
         const result = computeCursorFromEvent(e)
         setCursor(result)
+        cursorRef.current = result
       }}
-      onMouseLeave={() => { if (inputMode === 'note') setCursor(null) }}
+      onMouseLeave={() => { if (inputMode === 'note') { setCursor(null); cursorRef.current = null } }}
+      tabIndex={-1}
+      onKeyDown={e => {
+        if (inputMode !== 'note') return
+        if (e.key === 'Enter' || e.key === ' ') {
+          const cur = cursorRef.current
+          if (!cur) return
+          e.preventDefault()
+          const { partId, measureIndex, beat, pitch } = cur
+          const part    = score.parts.find(p => p.id === partId)
+          const measure = part?.measures[measureIndex]
+          if (!measure) return
+          let beatCursor = 0
+          let noteAtBeat = null
+          for (const n of measure.notes.filter(x => !x.chordWith)) {
+            if (!n.isRest && Math.abs(beatCursor - beat) < 0.13) { noteAtBeat = n; break }
+            beatCursor += noteDuration(n)
+          }
+          if (noteAtBeat) addChordNote(partId, measureIndex, noteAtBeat.id, pitch)
+          else dropNoteAtBeat(partId, measureIndex, pitch, selectedDuration, selectedDots, beat)
+        }
+      }}
       onClick={e => {
-        if (inputMode !== 'note' || !cursor) return
+        const cur = cursorRef.current
+        if (inputMode !== 'note' || !cur) return
         e.stopPropagation()
-        // Place note at cursor position
-        if (cursor.isChord && selectedNoteId_store) {
-          addChordNote(cursor.partId, cursor.measureIndex, selectedNoteId_store, cursor.pitch)
+
+        const { partId, measureIndex, beat, pitch } = cur
+
+        // Walk the measure to find if this beat already has a real note
+        // If yes → auto-chord. If no → place new note.
+        const part    = score.parts.find(p => p.id === partId)
+        const measure = part?.measures[measureIndex]
+        if (!measure) return
+
+        let beatCursor = 0
+        let noteAtBeat = null
+        for (const n of measure.notes.filter(x => !x.chordWith)) {
+          if (!n.isRest && Math.abs(beatCursor - beat) < 0.13) {
+            noteAtBeat = n
+            break
+          }
+          beatCursor += noteDuration(n)
+        }
+
+        if (noteAtBeat) {
+          addChordNote(partId, measureIndex, noteAtBeat.id, pitch)
         } else {
-          dropNoteAtBeat(cursor.partId, cursor.measureIndex, cursor.pitch, selectedDuration, selectedDots, cursor.beat)
+          dropNoteAtBeat(partId, measureIndex, pitch, selectedDuration, selectedDots, beat)
         }
       }}
     >
@@ -546,19 +648,21 @@ export default function ScoreRenderer() {
             style={{
               position: 'absolute',
               left: z.x,
-              top: z.y - 30,        // extend 30px above staff for ledger lines above
+              top: z.y - 35,         // extend above staff for ledger line detection
               width: z.width,
-              height: z.height + 60, // extend 30px below staff for ledger lines below
+              height: z.height + 70, // extend below staff for ledger line detection
               cursor: inputMode === 'note' ? 'none' : 'pointer',
-              borderRadius: 2, boxSizing: 'border-box', zIndex: 1,
-              border: isGhostDrop
-                ? '2px dashed #16a34a'
+              borderRadius: 2, boxSizing: 'border-box',
+              // In note mode: completely invisible — no border, no background
+              // Outer div handles all note placement via mousemove
+              zIndex: inputMode === 'note' ? 0 : 1,
+              border: inputMode === 'note' ? 'none'
                 : isExistDrop ? '2px dashed #ea580c'
                 : z.selected ? '2px solid #1d4ed8' : '2px solid transparent',
-              backgroundColor: isGhostDrop
-                ? 'rgba(22,163,74,0.07)'
+              backgroundColor: inputMode === 'note' ? 'transparent'
                 : isExistDrop ? 'rgba(234,88,12,0.08)'
                 : z.selected ? 'rgba(29,78,216,0.06)' : 'transparent',
+              pointerEvents: inputMode === 'note' ? 'none' : 'auto',
             }}
           />
         )
@@ -599,7 +703,7 @@ export default function ScoreRenderer() {
               <div style={{
                 position: 'absolute',
                 left:   cursor.ghostX + 5,
-                top:    cursor.ghostY > z.y + 30 ? cursor.ghostY - 30 : cursor.ghostY + 4,
+                top:    cursor.ghostY > (z.staveTopLineY ?? z.y + 30) + 20 ? cursor.ghostY - 30 : cursor.ghostY + 4,
                 width:  1.5,
                 height: 28,
                 background: noteColor,
@@ -610,8 +714,8 @@ export default function ScoreRenderer() {
 
             {/* Ledger line — only when outside the staff (pos < 0 or > 8) */}
             {z && (() => {
-              const topLineY    = z.y + 15
-              const botLineY    = z.y + 55
+              const topLineY    = z.staveTopLineY ?? (z.y + 30)
+              const botLineY    = topLineY + (z.staveLineSpacing ?? 10) * 4
               const needsLedger = cursor.ghostY < topLineY - 3 || cursor.ghostY > botLineY + 3
               if (!needsLedger) return null
               return (
@@ -660,7 +764,12 @@ export default function ScoreRenderer() {
             e.dataTransfer.effectAllowed = 'move'
           }}
           onDragEnd={() => setDragState(null)}
-          onClick={e => { e.stopPropagation(); selectNote(z.noteId, z.partId, z.measureIndex) }}
+          onClick={e => {
+            e.stopPropagation()
+            // In note mode the outer div handles note placement — don't select
+            if (inputMode === 'note') return
+            selectNote(z.noteId, z.partId, z.measureIndex)
+          }}
           title={z.isRest
             ? 'Rest — click to select, then press A–G to fill'
             : z.isChordNote
@@ -688,8 +797,8 @@ export default function ScoreRenderer() {
       {dynamics.map(dyn => {
         const z = measureZones.find(mz => mz.partId === dyn.partId && mz.measureIndex === dyn.measureIndex)
         if (!z) return null
-        const noteStart = dyn.measureIndex === 0 ? z.x + 55 : z.x + 10
-        const noteWidth = z.width - (dyn.measureIndex === 0 ? 60 : 15)
+        const noteStart = z.noteAreaStart ?? (dyn.measureIndex === 0 ? z.x + 55 : z.x + 10)
+        const noteWidth = z.noteAreaWidth ?? (z.width - (dyn.measureIndex === 0 ? 60 : 15))
         const part      = score.parts.find(p => p.id === dyn.partId)
         const beats     = part?.measures[dyn.measureIndex]?.timeSignature?.beats ?? 4
         const px        = noteStart + (dyn.beat / beats) * noteWidth
