@@ -219,23 +219,29 @@ export function printScore(score) {
   }
 
   const serializer = new XMLSerializer()
-  let pagesHTML = ''
 
-  pages.forEach((page) => {
-    // Get the SVG element inside this page
-    const svg = page.querySelector('svg')
-    const svgStr = svg ? serializer.serializeToString(svg) : ''
-
-    // Get the header HTML (title, composer)
-    const header = page.querySelector('[data-print-header]')
-    const headerHTML = header ? header.outerHTML : ''
-
-    pagesHTML += `
-    <div class="score-page">
-      ${headerHTML}
-      <div class="score-svg">${svgStr}</div>
-    </div>`
+  // Get all SVGs from the score pages (one per system line rendered)
+  // We only want the actual VexFlow SVG, not the overlay divs
+  const svgElements = []
+  pages.forEach(page => {
+    page.querySelectorAll('svg').forEach(svg => svgElements.push(svg))
   })
+
+  if (!svgElements.length) {
+    alert('No score content found to print.')
+    return
+  }
+
+  // Serialize each SVG to a self-contained string
+  // Add xmlns so it renders correctly as inline SVG in HTML
+  const svgStrings = svgElements.map(svg => {
+    if (!svg.hasAttribute('xmlns')) svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    return serializer.serializeToString(svg)
+  })
+
+  const svgContent = svgStrings.map(s =>
+    `<div class="svg-block">${s}</div>`
+  ).join('\n')
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -244,59 +250,59 @@ export function printScore(score) {
   <title>${title}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { background: white; }
-    body { font-family: 'Times New Roman', serif; }
+    html, body { background: white; font-family: 'Times New Roman', serif; }
 
-    .score-page {
+    .print-page {
       width: 210mm;
-      min-height: 297mm;
       padding: 15mm 13mm 10mm 13mm;
       background: white;
-      page-break-after: always;
-      overflow: hidden;
     }
-    .score-page:last-child { page-break-after: avoid; }
-
-    .score-title {
+    .score-header {
       text-align: center;
+      margin-bottom: 8mm;
+      border-bottom: 0.5pt solid #ccc;
+      padding-bottom: 4mm;
+    }
+    .score-header h1 {
       font-size: 22pt;
       font-weight: bold;
       font-family: 'Times New Roman', serif;
-      margin-bottom: 4mm;
     }
-    .score-composer {
-      text-align: right;
+    .score-header p {
       font-size: 11pt;
-      font-family: 'Times New Roman', serif;
-      margin-bottom: 6mm;
+      text-align: right;
       color: #444;
+      margin-top: 2mm;
     }
-
-    .score-svg svg {
-      width: 184mm !important;  /* 210mm - 26mm margins */
+    .svg-block { margin-bottom: 6mm; }
+    .svg-block svg {
+      width: 184mm !important;
       height: auto !important;
       display: block;
     }
 
+    @media screen {
+      body { background: #e5e5e5; padding: 10mm; }
+      .print-page { box-shadow: 0 2px 8px rgba(0,0,0,0.2); margin: 0 auto; }
+    }
     @media print {
-      html, body { margin: 0; padding: 0; }
-      .score-page { page-break-after: always; }
-      .score-page:last-child { page-break-after: avoid; }
+      html, body { background: white; padding: 0; margin: 0; }
+      .print-page { padding: 15mm 13mm; }
     }
     @page { size: A4 portrait; margin: 0; }
   </style>
 </head>
 <body>
-  <div class="score-page">
-    <div class="score-title" data-print-header>${title}</div>
-    ${composer ? `<div class="score-composer" data-print-header>${composer}</div>` : ''}
-    <div class="score-svg">
-      ${pages[0]?.querySelector('svg') ? serializer.serializeToString(pages[0].querySelector('svg')) : ''}
+  <div class="print-page">
+    <div class="score-header">
+      <h1>${title}</h1>
+      ${composer ? `<p>${composer}</p>` : ''}
     </div>
+    ${svgContent}
   </div>
   <script>
     window.addEventListener('load', function() {
-      setTimeout(function() { window.print(); }, 800)
+      setTimeout(function() { window.print(); window.close(); }, 1000)
     })
   <\/script>
 </body>

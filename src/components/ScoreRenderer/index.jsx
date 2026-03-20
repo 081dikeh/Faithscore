@@ -6,7 +6,7 @@ import {
 } from 'vexflow'
 import { useScoreStore, DURATION_BEATS, noteDuration } from '../../store/scoreStore'
 
-const MEASURES_PER_LINE   = 4
+const MEASURES_PER_LINE   = 6
 const MEASURE_WIDTH       = 240
 const FIRST_MEASURE_WIDTH = 300
 const PART_HEIGHT         = 120
@@ -112,9 +112,21 @@ export default function ScoreRenderer() {
     const totalLines = Math.ceil(totalCols / MEASURES_PER_LINE)
     const systemH    = numParts * PART_HEIGHT + SYSTEM_GAP
 
-    // A4 page usable width at screen resolution
-    const PAGE_W       = 720   // px, matches the white page card width
-    const canvasW      = PAGE_W
+    // Walk up the DOM to find a container with a real non-zero width.
+    // containerRef.current = VexFlow SVG div
+    // parentElement = div wrapper (width:100%)
+    // parentElement.parentElement = .score-page card
+    let PAGE_W = 0
+    let el = containerRef.current?.parentElement
+    while (el && PAGE_W < 50) {
+      PAGE_W = Math.floor(el.clientWidth)
+      el = el.parentElement
+    }
+    if (PAGE_W < 50) PAGE_W = 720   // absolute fallback
+
+    // Subtract horizontal padding of the score-page card (37px each side = 74px)
+    // so the SVG canvas exactly fills the white paper between margins
+    const canvasW = PAGE_W
     const canvasH      = totalLines * systemH + 80
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG)
@@ -155,7 +167,7 @@ export default function ScoreRenderer() {
           const LEFT_MARGIN  = 20
           const RIGHT_MARGIN = 20
           const usableW      = PAGE_W - LEFT_MARGIN - RIGHT_MARGIN
-          const FIRST_W      = Math.min(300, usableW * 0.38)  // first bar ~38% of line
+          const FIRST_W      = Math.min(300, usableW * 0.28)  // first bar ~38% of line
           const restW        = numCols > 1
             ? (usableW - FIRST_W) / (numCols - 1)
             : usableW
@@ -423,6 +435,23 @@ export default function ScoreRenderer() {
 
   useEffect(() => { render() }, [render])
 
+  // Re-render when the score-page card resizes (window resize, zoom, sidebar toggle)
+  useEffect(() => {
+    // Walk up to find the .score-page element
+    let el = containerRef.current?.parentElement
+    while (el && !el.classList?.contains('score-page')) {
+      el = el.parentElement
+    }
+    if (!el) el = containerRef.current?.parentElement
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      // Small delay so layout has settled before we measure
+      setTimeout(() => render(), 10)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [render])
+
   const measureZones = zones.filter(z => z.type === 'measure')
   const noteZones    = zones.filter(z => z.type === 'note' || z.type === 'rest')
 
@@ -556,9 +585,7 @@ export default function ScoreRenderer() {
     <div
       style={{
         position: 'relative', display: 'inline-block', minWidth: '100%', lineHeight: 0,
-        transform: `scale(${zoom})`, transformOrigin: 'top left',
-        marginBottom: zoom !== 1 ? `${(zoom - 1) * 100}%` : 0,
-        cursor: inputMode === 'note' ? 'none' : 'default',  // hide system cursor in note mode
+        cursor: inputMode === 'note' ? 'none' : 'default',
       }}
       onMouseMove={e => {
         if (inputMode !== 'note') { if (cursor) { setCursor(null); cursorRef.current = null } return }

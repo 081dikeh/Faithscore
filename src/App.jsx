@@ -284,8 +284,9 @@ export default function App() {
   return (
     <div className={`min-h-screen flex flex-col ${darkMode ? "bg-gray-900 text-gray-100" : "bg-gray-100"}`}>
 
-      {/* ── Top menu bar ── */}
-      <div className="bg-white border-b border-gray-200 flex items-center h-10 px-3 gap-1 flex-shrink-0 shadow-sm">
+      {/* ── Sticky top chrome: menu + status + toolbar + shortcuts ── */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 50, flexShrink: 0 }}>
+      <div className="bg-white border-b border-gray-200 flex items-center h-10 px-3 gap-1 shadow-sm">
         <span className="text-blue-600 font-bold text-sm mr-3">🎵 ScoreAI</span>
         {/* File menu with export */}
         <div style={{ position: 'relative' }}>
@@ -489,6 +490,7 @@ export default function App() {
 
       {/* ── Note editor panel ── */}
       <NoteEditor />
+      </div>{/* end sticky top chrome */}
 
       {/* ── Main area: Sidebar + Score canvas ── */}
       <div className="flex flex-1 overflow-hidden">
@@ -496,11 +498,30 @@ export default function App() {
 
       {/* ── Score canvas — A4 page layout ── */}
       <main className="flex-1 overflow-auto bg-gray-300 p-6" id="score-main">
+        {/*
+          Zoom wrapper: scales the entire page (white paper + score) together.
+          transform-origin: top center means it grows/shrinks from the top middle,
+          keeping the page centred. The outer div has enough height to avoid clipping.
+        */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          minHeight: `${1123 * zoom}px`,
+        }}>
+          <div style={{
+            transform: `scale(${zoom})`,
+            transformOrigin: 'top center',
+            width: '100%',
+            maxWidth: 794,
+            flexShrink: 0,
+          }}>
         {/* Page 1 always has the title header */}
         <div
           className="score-page bg-white mx-auto shadow-lg"
           style={{
-            width: 794, minHeight: 1123,
+            width: '100%',
+            maxWidth: 794,
+            minHeight: 1123,
             padding: '40px 37px 40px 37px',
             marginBottom: 24,
             boxSizing: 'border-box',
@@ -525,6 +546,8 @@ export default function App() {
             <ScoreRenderer />
           </div>
         </div>
+          </div>{/* end zoom scale wrapper */}
+        </div>{/* end zoom flex centering wrapper */}
       </main>
       </div>{/* end sidebar+canvas flex row */}
 
