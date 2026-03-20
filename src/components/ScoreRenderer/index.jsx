@@ -6,7 +6,7 @@ import {
 } from 'vexflow'
 import { useScoreStore, DURATION_BEATS, noteDuration } from '../../store/scoreStore'
 
-const MEASURES_PER_LINE   = 6
+const MEASURES_PER_LINE   = 5
 const MEASURE_WIDTH       = 240
 const FIRST_MEASURE_WIDTH = 300
 const PART_HEIGHT         = 120
@@ -149,6 +149,58 @@ export default function ScoreRenderer() {
 
       let firstStave = null, lastStave = null
 
+      // ── Pre-compute required width for each column in this line ────────────
+      // For each column, find the measure with the most notes (across all parts)
+      // and calculate the minimum pixel width needed to fit them without overflow.
+      // px per note by duration (empirical VexFlow values):
+      const NOTE_PX = { w:44, h:38, q:32, '8':26, '16':22, '32':18, '64':16 }
+      const LEFT_MARGIN  = 20
+      const RIGHT_MARGIN = 20
+      const GLYPH_REST   = 22   // just the barline padding
+
+      // Calculate actual first-measure glyph overhead based on key signature.
+      // Each accidental (sharp or flat) in the key sig takes ~12px.
+      // Clef glyph ~26px, time signature ~22px, padding ~10px.
+      const firstMeasureKeySig = score.parts[0]?.measures[startCol]?.keySignature ?? 0
+      const numAccidentals = Math.abs(firstMeasureKeySig)
+      const GLYPH_FIRST = 26 + (numAccidentals * 12) + 22 + 10  // clef + key + time + padding
+
+      const numCols = endCol - startCol
+      const colMinWidths = []   // minimum width required per column index
+
+      for (let col = startCol; col < endCol; col++) {
+        const colIdx = col - startCol
+        let maxNotePx = 0
+        for (const part of score.parts) {
+          const m = part.measures[col]
+          if (!m) continue
+          const nonChord = m.notes.filter(n => !n.chordWith)
+          const notePx   = nonChord.reduce((sum, n) => {
+            const px = NOTE_PX[n.duration] || 28
+            return sum + px
+          }, 0)
+          if (notePx > maxNotePx) maxNotePx = notePx
+        }
+        const overhead = colIdx === 0 ? GLYPH_FIRST : GLYPH_REST
+        colMinWidths.push(maxNotePx + overhead + 12)  // +12 px padding each bar
+      }
+
+      // Scale widths up proportionally so they fill the full page width,
+      // but never let any column be smaller than its minimum.
+      const totalMinW = colMinWidths.reduce((a, b) => a + b, 0)
+      const usableW   = PAGE_W - LEFT_MARGIN - RIGHT_MARGIN
+      const scale     = Math.max(1, usableW / totalMinW)  // only scale up, never shrink below min
+      const colWidths = colMinWidths.map(w => Math.floor(w * scale))
+
+      // If there's leftover space due to flooring, add it to the last column
+      const totalAllocated = colWidths.reduce((a, b) => a + b, 0)
+      colWidths[colWidths.length - 1] += (usableW - totalAllocated)
+
+      // Compute X positions from widths
+      const colX = []
+      let cx = LEFT_MARGIN
+      for (const w of colWidths) { colX.push(cx); cx += w }
+
       score.parts.forEach((part, pIdx) => {
         const partY = sysY + pIdx * PART_HEIGHT
         const clef  = part.clef || 'treble'
@@ -157,24 +209,10 @@ export default function ScoreRenderer() {
           const measure = part.measures[col]
           if (!measure) continue
 
-          const colInLine  = col - startCol
-          const isFirst    = colInLine === 0
-          const numCols    = endCol - startCol
-
-          // Distribute measures evenly across the full page width.
-          // First measure is wider (has clef + key + time sig glyphs).
-          // Remaining measures share the rest of the width equally.
-          const LEFT_MARGIN  = 20
-          const RIGHT_MARGIN = 20
-          const usableW      = PAGE_W - LEFT_MARGIN - RIGHT_MARGIN
-          const FIRST_W      = Math.min(300, usableW * 0.28)  // first bar ~38% of line
-          const restW        = numCols > 1
-            ? (usableW - FIRST_W) / (numCols - 1)
-            : usableW
-          const width = isFirst ? FIRST_W : restW
-          const x     = isFirst
-            ? LEFT_MARGIN
-            : LEFT_MARGIN + FIRST_W + (colInLine - 1) * restW
+          const colInLine = col - startCol
+          const isFirst   = colInLine === 0
+          const width     = colWidths[colInLine]
+          const x         = colX[colInLine]
 
           const stave = new Stave(x, partY, width)
           if (isFirst) {
@@ -246,12 +284,10 @@ export default function ScoreRenderer() {
               beat_value: measure.timeSignature.beatType,
             }).setStrict(false)
             voice.addTickables(vfNotes)
-            // Give the formatter enough space for all notes.
-            // Minimum 30px per note slot, use whatever is larger.
-            // Give formatter the full available note area.
-            // Glyph overhead: ~60px for first measure (clef+key+time), ~20px otherwise
-            const glyphOverhead  = isFirst ? 60 : 20
-            const formatterWidth = Math.max(renderSeq.length * 28, width - glyphOverhead)
+            // Formatter width = stave width minus glyph overhead.
+            // Uses same dynamic GLYPH_FIRST that accounts for key sig accidentals.
+            const glyphOverhead  = isFirst ? GLYPH_FIRST : GLYPH_REST
+            const formatterWidth = Math.max(40, width - glyphOverhead)
             new Formatter().joinVoices([voice]).format([voice], formatterWidth)
             voice.draw(ctx, stave)
 

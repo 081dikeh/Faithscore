@@ -520,7 +520,7 @@ export default function App() {
           className="score-page bg-white mx-auto shadow-lg"
           style={{
             width: '100%',
-            maxWidth: 794,
+            maxWidth: 850,
             minHeight: 1123,
             padding: '40px 37px 40px 37px',
             marginBottom: 24,
