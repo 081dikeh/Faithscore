@@ -6,13 +6,17 @@ import {
 } from 'vexflow'
 import { useScoreStore, DURATION_BEATS, noteDuration } from '../../store/scoreStore'
 
-const MEASURES_PER_LINE   = 5
-const MEASURE_WIDTH       = 240
-const FIRST_MEASURE_WIDTH = 300
-const PART_HEIGHT         = 120
-const SYSTEM_GAP          = 60
-const STAVE_TOP           = 55
-const STAVE_HEIGHT        = 80
+const MEASURES_PER_LINE = 4
+
+// SP = pixels per staff space. Increase to make everything bigger, decrease for smaller.
+// 10 = compact, 12 = medium, 14 = large, 16 = very large
+const SP = 10
+
+const STAFF_HEIGHT = SP * 4          // 48px — full staff (4 spaces between 5 lines)
+const PART_HEIGHT  = SP * 9          // 108px — staff + gap to next staff in system
+const SYSTEM_GAP   = SP * 8          // 96px — gap between rows of systems
+const STAVE_TOP    = SP * 3          // 36px — top margin
+const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3  // 84px — click zone includes ledger lines
 
 // Middle of staff for rests — VexFlow places rest glyph at this key position.
 // Bass clef lines (bottom→top): G2 B2 D3 F3 A3 — middle line = D3
@@ -126,15 +130,35 @@ export default function ScoreRenderer() {
 
     // Subtract horizontal padding of the score-page card (37px each side = 74px)
     // so the SVG canvas exactly fills the white paper between margins
-    const canvasW = PAGE_W
-    const canvasH      = totalLines * systemH + 80
+    // Symbol scale factor: SP=10 is VexFlow default size.
+    // At SP=14, symbols are 40% bigger. We scale the drawing context
+    // and adjust the internal coordinate space accordingly.
+    const SCALE   = SP / 10          // e.g. SP=14 → SCALE=1.4
+    const DRAW_W  = Math.round(PAGE_W / SCALE)   // internal drawing width
+    const DRAW_H  = Math.round((totalLines * systemH + 80) / SCALE)
+    const canvasW = PAGE_W           // actual SVG pixel width = container width
+    const canvasH = totalLines * systemH + 80   // actual SVG pixel height
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG)
     renderer.resize(canvasW, canvasH)
     const ctx = renderer.getContext()
+
+    // Scale symbols UP — ctx.scale makes noteheads, clefs, stems all bigger/smaller
+    // The SVG viewBox is set to DRAW_W × DRAW_H so content fills full width
+    const svgEl = containerRef.current.querySelector('svg')
+    if (svgEl) {
+      svgEl.setAttribute('viewBox', `0 0 ${DRAW_W} ${DRAW_H}`)
+      svgEl.setAttribute('preserveAspectRatio', 'xMinYMin meet')
+    }
+
+    ctx.scale(SCALE, SCALE)
     ctx.setFont('Times New Roman', 10)
 
     const allZones = []
+
+    // Inside the drawing loop, use DRAW_W as the effective page width
+    // so staves span the full width of the scaled coordinate space
+    const EFFECTIVE_W = DRAW_W
 
     for (let line = 0; line < totalLines; line++) {
       const sysY     = line * systemH + STAVE_TOP
@@ -153,17 +177,23 @@ export default function ScoreRenderer() {
       // For each column, find the measure with the most notes (across all parts)
       // and calculate the minimum pixel width needed to fit them without overflow.
       // px per note by duration (empirical VexFlow values):
-      const NOTE_PX = { w:44, h:38, q:32, '8':26, '16':22, '32':18, '64':16 }
+      // Pixels per note by duration — generous values to prevent any overflow.
+      // Beamed 8th/16th notes are slightly narrower since they share beam space,
+      // but dots and accidentals add width so we keep values safe.
+      // Note widths scale with SP (staff space).
+      // Based on MuseScore spec: quarter note spacing ≈ 3sp, half ≈ 4sp, whole ≈ 5sp
+      const NOTE_PX = {
+        w: SP*5, h: SP*4, q: SP*3,
+        '8': SP*2.5, '16': SP*2, '32': SP*1.8, '64': SP*1.6
+      }
       const LEFT_MARGIN  = 20
       const RIGHT_MARGIN = 20
-      const GLYPH_REST   = 22   // just the barline padding
+      const GLYPH_REST   = SP * 2   // barline padding scales with SP
 
-      // Calculate actual first-measure glyph overhead based on key signature.
-      // Each accidental (sharp or flat) in the key sig takes ~12px.
-      // Clef glyph ~26px, time signature ~22px, padding ~10px.
+      // First-measure overhead: clef (~3sp) + key sig (1sp per accidental) + time (~2sp) + padding
       const firstMeasureKeySig = score.parts[0]?.measures[startCol]?.keySignature ?? 0
-      const numAccidentals = Math.abs(firstMeasureKeySig)
-      const GLYPH_FIRST = 26 + (numAccidentals * 12) + 22 + 10  // clef + key + time + padding
+      const numAccidentals     = Math.abs(firstMeasureKeySig)
+      const GLYPH_FIRST        = SP*3 + (numAccidentals * SP) + SP*2 + SP*1  // scales with SP
 
       const numCols = endCol - startCol
       const colMinWidths = []   // minimum width required per column index
@@ -177,18 +207,20 @@ export default function ScoreRenderer() {
           const nonChord = m.notes.filter(n => !n.chordWith)
           const notePx   = nonChord.reduce((sum, n) => {
             const px = NOTE_PX[n.duration] || 28
-            return sum + px
+            const dotExtra = n.dots ? 10 : 0          // dotted notes need extra space
+            const accExtra = n.pitch?.accidental ? 8 : 0  // accidentals add width
+            return sum + px + dotExtra + accExtra
           }, 0)
           if (notePx > maxNotePx) maxNotePx = notePx
         }
         const overhead = colIdx === 0 ? GLYPH_FIRST : GLYPH_REST
-        colMinWidths.push(maxNotePx + overhead + 12)  // +12 px padding each bar
+        colMinWidths.push(maxNotePx + overhead + SP*2)  // safety padding scales with SP
       }
 
       // Scale widths up proportionally so they fill the full page width,
       // but never let any column be smaller than its minimum.
       const totalMinW = colMinWidths.reduce((a, b) => a + b, 0)
-      const usableW   = PAGE_W - LEFT_MARGIN - RIGHT_MARGIN
+      const usableW   = EFFECTIVE_W - LEFT_MARGIN - RIGHT_MARGIN
       const scale     = Math.max(1, usableW / totalMinW)  // only scale up, never shrink below min
       const colWidths = colMinWidths.map(w => Math.floor(w * scale))
 
@@ -246,10 +278,13 @@ export default function ScoreRenderer() {
 
           if (isFirst) {
             ctx.save()
-            ctx.setFont('Times New Roman', line === 0 ? 11 : 9)
-            // Full name on first system, abbreviation (first 3 chars + '.') on subsequent
-            const label = line === 0 ? part.name : (part.name.slice(0, 3) + '.')
-            ctx.fillText(label, 24, partY - 6)
+            // Part name sits ABOVE the staff, indented enough to clear the brace
+            // line 0 = full name, subsequent lines = abbreviation
+            const label    = line === 0 ? part.name : (part.name.slice(0, 3) + '.')
+            const fontSize = line === 0 ? 11 : 9
+            ctx.setFont('Times New Roman', fontSize)
+            // Place label above the top staff line, left of the brace
+            ctx.fillText(label, LEFT_MARGIN + 4, partY - 4)
             ctx.restore()
           }
 
@@ -289,29 +324,40 @@ export default function ScoreRenderer() {
             const glyphOverhead  = isFirst ? GLYPH_FIRST : GLYPH_REST
             const formatterWidth = Math.max(40, width - glyphOverhead)
             new Formatter().joinVoices([voice]).format([voice], formatterWidth)
-            voice.draw(ctx, stave)
 
-            // ── Auto-beaming ────────────────────────────────────────────────
-            // generateBeams groups flagged notes (8th, 16th, 32nd, 64th) and
-            // draws beams between them. auto_stem lets VexFlow decide stem direction
-            // per group (up for notes below middle line, down for above).
-            // This removes the individual flags on beamed notes — like MuseScore.
+            // ── Beaming — MUST happen before voice.draw() ───────────────────
+            // Generate beam groups first so we can set stem directions on each
+            // note BEFORE drawing. This prevents VexFlow from drawing individual
+            // flags on notes that will be beamed — exactly like MuseScore.
+            let beamGroups = []
             try {
               const beamable = vfNotes.filter(n => {
                 const dur = n.getDuration()
                 return dur === '8' || dur === '16' || dur === '32' || dur === '64'
               })
               if (beamable.length > 0) {
-                // generateBeams with auto_stem=true removes individual flags
-                // and draws proper beams. No groups param — VexFlow handles grouping.
-                const beamGroups = Beam.generateBeams(beamable, {
+                beamGroups = Beam.generateBeams(beamable, {
                   auto_stem: true,
                   beam_rests: false,
                   show_stemlets: false,
                 })
-                beamGroups.forEach(b => b.setContext(ctx).draw())
+                // Apply stem direction from each beam group to its notes BEFORE draw
+                // This tells VexFlow: these notes are beamed, don't draw flags
+                beamGroups.forEach(beam => {
+                  const dir = beam.getStemDirection()
+                  beam.getNotes().forEach(note => {
+                    try { note.setStemDirection(dir) } catch(_) {}
+                  })
+                })
               }
             } catch(_) {}
+
+            // Draw notes — flags are suppressed on beamed notes because stem
+            // direction was already set by the beam groups above
+            voice.draw(ctx, stave)
+
+            // Now draw the beam lines on top
+            beamGroups.forEach(b => { try { b.setContext(ctx).draw() } catch(_) {} })
 
             // ── Tuplet brackets ─────────────────────────────────────────────
             // Group triplet notes by their tripletGroupId and draw Tuplet bracket
@@ -585,8 +631,8 @@ export default function ScoreRenderer() {
     // staveTopLineY = pixel Y of the top staff line (F5 treble / A3 bass)
     // staveLineSpacing = pixels between lines (typically 10px)
     // Each staff position (line OR space) = staveLineSpacing / 2 pixels
-    const topLineY    = z.staveTopLineY    ?? (z.y + 30)
-    const lineSpacing = z.staveLineSpacing ?? 10
+    const topLineY    = z.staveTopLineY    ?? (z.y + SP)
+    const lineSpacing = z.staveLineSpacing ?? SP
     const posSpacing  = lineSpacing / 2    // pixels per staff position (5px normally)
     const rawPos      = (mouseY - topLineY) / posSpacing
     const pos         = Math.max(-6, Math.min(14, Math.round(rawPos)))
@@ -720,11 +766,11 @@ export default function ScoreRenderer() {
               // Outer div handles all note placement via mousemove
               zIndex: inputMode === 'note' ? 0 : 1,
               border: inputMode === 'note' ? 'none'
-                : isExistDrop ? '2px dashed #ea580c'
-                : z.selected ? '2px solid #1d4ed8' : '2px solid transparent',
+                : isExistDrop ? '1px dashed #ea580c'
+                : z.selected ? '1px solid rgba(29,78,216,0.4)' : 'none',
               backgroundColor: inputMode === 'note' ? 'transparent'
-                : isExistDrop ? 'rgba(234,88,12,0.08)'
-                : z.selected ? 'rgba(29,78,216,0.06)' : 'transparent',
+                : isExistDrop ? 'rgba(234,88,12,0.05)'
+                : z.selected ? 'rgba(29,78,216,0.04)' : 'transparent',
               pointerEvents: inputMode === 'note' ? 'none' : 'auto',
             }}
           />
@@ -841,15 +887,15 @@ export default function ScoreRenderer() {
           style={{
             position: 'absolute', left: z.x, top: z.y, width: z.width, height: z.height,
             cursor: z.isRest ? 'pointer' : (dragState ? 'grabbing' : 'grab'),
-            borderRadius: 3, boxSizing: 'border-box',
-            // Chord note zones sit on top of base note zone
+            boxSizing: 'border-box',
             zIndex: z.isChordNote ? 12 : 10,
-            border: z.selected
+            // MuseScore-style selection: NO big box, just a very subtle underline
+            // The notehead itself is already coloured orange/blue by VexFlow's setStyle
+            border: 'none',
+            borderBottom: z.selected
               ? (z.isRest ? '2px solid #2563eb' : z.isChordNote ? '2px solid #7c3aed' : '2px solid #ea580c')
-              : z.isChordNote ? '1px dashed rgba(124,58,237,0.3)' : '1px solid transparent',
-            backgroundColor: z.selected
-              ? (z.isRest ? 'rgba(37,99,235,0.10)' : z.isChordNote ? 'rgba(124,58,237,0.12)' : 'rgba(234,88,12,0.10)')
-              : 'transparent',
+              : 'none',
+            backgroundColor: 'transparent',
           }}
         />
       ))}

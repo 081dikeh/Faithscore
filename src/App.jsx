@@ -506,13 +506,13 @@ export default function App() {
         <div style={{
           display: 'flex',
           justifyContent: 'center',
-          minHeight: `${1123 * zoom}px`,
+          minHeight: `${1556 * zoom}px`,
         }}>
           <div style={{
             transform: `scale(${zoom})`,
             transformOrigin: 'top center',
             width: '100%',
-            maxWidth: 794,
+            maxWidth: 1100,
             flexShrink: 0,
           }}>
         {/* Page 1 always has the title header */}
@@ -520,9 +520,9 @@ export default function App() {
           className="score-page bg-white mx-auto shadow-lg"
           style={{
             width: '100%',
-            maxWidth: 850,
-            minHeight: 1123,
-            padding: '40px 37px 40px 37px',
+            maxWidth: 1100,   // comfortable screen width for editing
+            minHeight: 1556,  // A4 proportions: 1100 × (297/210) ≈ 1556px
+            padding: '60px 60px 60px 60px',  // 60px = ~15mm at screen scale
             marginBottom: 24,
             boxSizing: 'border-box',
             position: 'relative',
