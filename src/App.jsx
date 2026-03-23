@@ -7,6 +7,7 @@ import { useScoreStore, clearSavedScore } from './store/scoreStore'
 import Sidebar from './components/Sidebar'
 import { exportMusicXML, exportMIDI, printScore } from './utils/exportScore'
 import { usePlayback } from './hooks/usePlayback'
+import PianoKeyboard from './components/PianoKeyboard'
 
 const DURATION_KEYS = { '1':'w','2':'h','3':'q','4':'8','5':'16','6':'32','7':'64' }
 const KEY_TO_STEP   = { a:'A',b:'B',c:'C',d:'D',e:'E',f:'F',g:'G' }
@@ -76,6 +77,7 @@ export default function App() {
   const [metronomeOn, setMetronomeOn]         = useState(false)
   const [loopOn, setLoopOn]                   = useState(false)
   const [showExportMenu, setShowExportMenu]   = useState(false)
+  const [showPiano, setShowPiano]             = useState(false)  // hidden by default, toggle with P
   const [contextMenu, setContextMenu]         = useState(null)
   const [darkMode, setDarkMode]               = useState(() => {
     try { return localStorage.getItem('scoreai_dark') === '1' } catch { return false }
@@ -231,6 +233,7 @@ export default function App() {
       if (e.key === 's' || e.key === 'S') { setInputMode('select'); return }
       if (e.key === 'Escape')             { clearSelection(); setMeasureRange(null); setInputMode('select'); return }
       if (e.key === 'm' || e.key === 'M') { addMeasure(); return }
+      if (e.key === 'p' || e.key === 'P') { setShowPiano(v => !v); return }
       // T3 or just '3' in note mode = insert triplet of current duration
       if ((e.key === '3') && inputMode === 'note') { e.preventDefault(); insertTriplet(st().selectedDuration); return }
 
@@ -370,6 +373,13 @@ export default function App() {
               ${metronomeOn ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
             𝅘
           </button>
+          {/* Piano keyboard toggle */}
+          <button onClick={() => setShowPiano(v => !v)}
+            title="Toggle piano keyboard (P)"
+            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors
+              ${showPiano ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
+            🎹
+          </button>
           {/* Loop */}
           <button onClick={() => { const v = toggleLoop(); setLoopOn(v) }}
             title="Loop playback"
@@ -497,7 +507,7 @@ export default function App() {
       <Sidebar />
 
       {/* ── Score canvas — A4 page layout ── */}
-      <main className="flex-1 overflow-auto bg-gray-300 p-6" id="score-main">
+      <main className="flex-1 overflow-auto bg-gray-300 p-6" id="score-main" style={{ paddingBottom: showPiano ? 180 : 48 }}>
         {/*
           Zoom wrapper: scales the entire page (white paper + score) together.
           transform-origin: top center means it grows/shrinks from the top middle,
@@ -550,6 +560,42 @@ export default function App() {
         </div>{/* end zoom flex centering wrapper */}
       </main>
       </div>{/* end sidebar+canvas flex row */}
+
+      {/* ── Piano keyboard — fixed above the bottom bar ── */}
+      {showPiano && (
+        <div style={{
+          position: 'fixed', bottom: 32, left: 0, right: 0,
+          zIndex: 59,
+          boxShadow: '0 -4px 20px rgba(0,0,0,0.4)',
+        }}>
+          <PianoKeyboard />
+        </div>
+      )}
+
+      {/* ── Bottom bar — fixed at bottom of viewport ── */}
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0,
+        height: 32, background: '#1e293b', borderTop: '1px solid #334155',
+        display: 'flex', alignItems: 'center', padding: '0 12px',
+        zIndex: 60, gap: 8,
+      }}>
+        <button
+          onClick={() => setShowPiano(v => !v)}
+          title="Toggle piano keyboard (P)"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '2px 10px', borderRadius: 4, border: 'none',
+            background: showPiano ? '#3b82f6' : '#334155',
+            color: showPiano ? 'white' : '#94a3b8',
+            fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            transition: 'all 0.15s',
+          }}>
+          🎹 Piano Keyboard {showPiano ? '▲' : '▼'}
+        </button>
+        <span style={{ color: '#475569', fontSize: 10 }}>
+          Press P to toggle · Click key to insert note
+        </span>
+      </div>
 
       {/* ── Context menu ── */}
       {contextMenu && (
