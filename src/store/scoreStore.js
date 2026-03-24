@@ -77,37 +77,35 @@ export function normalizeMeasure(notes, maxBeats) {
   let cursor = 0
 
   for (const n of nonChord) {
-    if (cursor >= maxBeats - 0.001) break  // measure full
+    if (cursor >= maxBeats - 0.001) break
 
-    const dur = noteDuration(n)
+    const dur     = noteDuration(n)
     const allowed = maxBeats - cursor
 
     if (dur > allowed + 0.001) {
-      // Note too long — split into the max that fits + rest
-      // Find the best fitting duration
-      const fit = beatsToRest(allowed)  // reuse logic
-      const fitDur = DURATION_BEATS[fit.duration + (fit.dots ? 'd' : '')] || DURATION_BEATS[fit.duration] || 1
+      // Note too long — truncate to fit, mark tieStart so it visually ties to next bar
+      const fit    = beatsToRest(allowed)
+      const fitDur = DURATION_BEATS[fit.duration + (fit.dots?'d':'')] || DURATION_BEATS[fit.duration] || 1
       if (fitDur > 0.001) {
-        result.push({ ...n, duration: fit.duration, dots: fit.dots })
+        result.push({ ...n, duration: fit.duration, dots: fit.dots, tieStart: true })
         cursor += fitDur
       }
       break
     }
 
+    // Keep the note/rest exactly as-is — preserves rest positions between notes
     result.push(n)
     cursor += dur
   }
 
-  // Fill remaining with rests
+  // Fill any remaining space with rests
   const remaining = maxBeats - cursor
   if (remaining > 0.001) {
     result.push(...makeRests(remaining, `fill_${cursor}`))
   }
 
-  // Re-attach chord notes
-  const finalIds = new Set(result.map(n => n.id))
+  const finalIds    = new Set(result.map(n => n.id))
   const validChords = chords.filter(c => finalIds.has(c.chordWith))
-
   return [...result, ...validChords]
 }
 
@@ -518,7 +516,8 @@ export const useScoreStore = create((set, get) => ({
       const before = notes.slice(0, idx)
       const after  = notes.slice(idx + 1)
       const leftovers = leftover > 0.001 ? makeRests(leftover, `after_${note.id}`) : []
-      return [...before, newNoteObj, ...leftovers, ...after.filter(n => !n.isRest)]
+      // Keep all notes/rests after this position — they stay in place
+      return [...before, newNoteObj, ...leftovers, ...after]
     })
 
     set({ selectedNoteId: newNoteObj.id })
@@ -572,12 +571,36 @@ export const useScoreStore = create((set, get) => ({
       return
     }
 
-    // Apply new duration — normalizeMeasure will consume adjacent rests if
-    // growing, or create new rests if shrinking. Either way the bar stays full.
+    // Apply new duration
     get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) =>
       notes.map(n => n.id === selectedNoteId ? { ...n, duration: newDuration, dots: newDots || 0 } : n)
     )
     set({ selectedDuration: newDuration, selectedDots: newDots || 0 })
+
+    // If the note now overflows (normalizeMeasure truncated it + set tieStart),
+    // insert a continuation note in the next bar for the overflow beats
+    const overflowBeats = newBeats - available
+    if (overflowBeats > 0.001 && note.pitch && !note.isRest) {
+      const nextIdx  = selectedMeasureIndex + 1
+      const nextPart = get().score.parts.find(p => p.id === selectedPartId)
+      const nextM    = nextPart?.measures[nextIdx]
+      if (nextM) {
+        const contDur = beatsToRest(Math.min(overflowBeats, nextM.timeSignature.beats))
+        const contId  = crypto.randomUUID()
+        // Replace the first rest in the next bar with the continuation note
+        get()._applyToMeasure(selectedPartId, nextIdx, (notes) => {
+          const firstRest = notes.find(n => n.isRest)
+          if (!firstRest) return notes
+          const restBeats  = noteDuration(firstRest)
+          const leftover   = restBeats - (DURATION_BEATS[contDur.duration+(contDur.dots?'d':'')] || DURATION_BEATS[contDur.duration] || 1)
+          const contNote   = { id: contId, isRest: false, pitch: note.pitch,
+            duration: contDur.duration, dots: contDur.dots, tieStart: false }
+          const idx        = notes.findIndex(n => n.id === firstRest.id)
+          const leftovers  = leftover > 0.001 ? makeRests(leftover, `cont_${contId}`) : []
+          return [...notes.slice(0, idx), contNote, ...leftovers, ...notes.slice(idx+1)]
+        })
+      }
+    }
   },
 
   // ── Standard note add (appends to end of real notes) ──────────────────────
@@ -746,7 +769,8 @@ export const useScoreStore = create((set, get) => ({
         const leftover = restBeats - noteDuration(newNote)
         const idx = notes.findIndex(n => n.id === firstRest.id)
         const leftovers = leftover > 0.001 ? makeRests(leftover, `adv_${newId}`) : []
-        return [...notes.slice(0, idx), newNote, ...leftovers, ...notes.slice(idx + 1).filter(n => !n.isRest)]
+        // Only remove the specific rest slot we replaced, keep everything else
+        return [...notes.slice(0, idx), newNote, ...leftovers, ...notes.slice(idx + 1)]
       })
       set({ selectedMeasureIndex: nextIdx, selectedNoteId: newId })
       return
@@ -768,7 +792,8 @@ export const useScoreStore = create((set, get) => ({
       const leftover = restBeats - noteDuration(newNote)
       const idx = notes.findIndex(n => n.id === firstRest.id)
       const leftovers = leftover > 0.001 ? makeRests(leftover, `fill2_${newId}`) : []
-      return [...notes.slice(0, idx), newNote, ...leftovers, ...notes.slice(idx + 1).filter(n => !n.isRest)]
+      // Only replace this specific rest slot; keep other notes/rests in place
+      return [...notes.slice(0, idx), newNote, ...leftovers, ...notes.slice(idx + 1)]
     })
     set({ selectedNoteId: newId })
   },
@@ -945,6 +970,27 @@ export const useScoreStore = create((set, get) => ({
   },
 
   loadScore: (score) => set({ score }),
+
+  // ── Move a part up or down in the list ──────────────────────────────────
+  movePartUp: (partId) => {
+    set(s => {
+      const parts = [...s.score.parts]
+      const idx   = parts.findIndex(p => p.id === partId)
+      if (idx <= 0) return s
+      ;[parts[idx-1], parts[idx]] = [parts[idx], parts[idx-1]]
+      return { score: { ...s.score, parts } }
+    })
+  },
+
+  movePartDown: (partId) => {
+    set(s => {
+      const parts = [...s.score.parts]
+      const idx   = parts.findIndex(p => p.id === partId)
+      if (idx < 0 || idx >= parts.length - 1) return s
+      ;[parts[idx], parts[idx+1]] = [parts[idx+1], parts[idx]]
+      return { score: { ...s.score, parts } }
+    })
+  },
 
   // ── Insert a triplet group ────────────────────────────────────────────────
   // Inserts 3 notes of duration `baseDuration` as a triplet (each = 2/3 of base)

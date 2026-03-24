@@ -276,17 +276,8 @@ export default function ScoreRenderer() {
             }
           }
 
-          if (isFirst) {
-            ctx.save()
-            // Part name sits ABOVE the staff, indented enough to clear the brace
-            // line 0 = full name, subsequent lines = abbreviation
-            const label    = line === 0 ? part.name : (part.name.slice(0, 3) + '.')
-            const fontSize = line === 0 ? 11 : 9
-            ctx.setFont('Times New Roman', fontSize)
-            // Place label above the top staff line, left of the brace
-            ctx.fillText(label, LEFT_MARGIN + 4, partY - 4)
-            ctx.restore()
-          }
+          // Part name labels removed — clean score appearance like MuseScore default
+          // (names show in the parts panel/sidebar instead)
 
           if (isFirst && numParts > 1) {
             if (pIdx === 0)            firstStave = stave

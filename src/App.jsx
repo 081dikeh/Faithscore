@@ -47,6 +47,8 @@ export default function App() {
   const deleteNote             = useScoreStore(s => s.deleteNote)
   const addPart                = useScoreStore(s => s.addPart)
   const removePart             = useScoreStore(s => s.removePart)
+  const movePartUp             = useScoreStore(s => s.movePartUp)
+  const movePartDown           = useScoreStore(s => s.movePartDown)
   const clearMeasureColumn     = useScoreStore(s => s.clearMeasureColumn)
   const deleteMeasureColumn    = useScoreStore(s => s.deleteMeasureColumn)
   const setInputMode           = useScoreStore(s => s.setInputMode)
@@ -417,10 +419,20 @@ export default function App() {
           <button onClick={() => addPart('treble')} className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-2.5 py-1 rounded transition-colors">+ Treble</button>
           <button onClick={() => addPart('bass')}   className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-2.5 py-1 rounded transition-colors">+ Bass</button>
           {score.parts.map(p => (
-            <div key={p.id} className="flex items-center gap-1 border border-gray-300 rounded px-2 py-0.5 text-xs bg-white">
-              <span className="text-gray-600">{p.name}</span>
+            <div key={p.id} className="flex items-center gap-0.5 border border-gray-300 rounded px-1.5 py-0.5 text-xs bg-white">
+              <span className="text-gray-600 px-1">{p.name}</span>
               {score.parts.length > 1 && (
-                <button onClick={() => removePart(p.id)} className="text-red-400 hover:text-red-600 ml-1 leading-none">✕</button>
+                <>
+                  <button onClick={() => movePartUp(p.id)}
+                    className="text-gray-400 hover:text-gray-700 leading-none px-0.5"
+                    title="Move part up">↑</button>
+                  <button onClick={() => movePartDown(p.id)}
+                    className="text-gray-400 hover:text-gray-700 leading-none px-0.5"
+                    title="Move part down">↓</button>
+                  <button onClick={() => removePart(p.id)}
+                    className="text-red-400 hover:text-red-600 ml-0.5 leading-none"
+                    title="Remove part">✕</button>
+                </>
               )}
             </div>
           ))}
