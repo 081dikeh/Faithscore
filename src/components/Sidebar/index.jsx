@@ -1,6 +1,5 @@
 // src/components/Sidebar/index.jsx
-// MuseScore-style left sidebar: Palettes / Layout / Properties tabs
-// with collapsible accordion sections and functional palette items.
+// FaithScore — MuseScore-style left sidebar: Palettes / Layout / Properties tabs
 
 import { useState } from 'react'
 import { useScoreStore, DURATION_BEATS } from '../../store/scoreStore'
@@ -38,7 +37,6 @@ function Section({ title, children, defaultOpen = false }) {
   )
 }
 
-// Small grid-style palette item button
 function PaletteItem({ label, symbol, onClick, active, title: tip }) {
   const [hover, setHover] = useState(false)
   return (
@@ -75,7 +73,6 @@ function PaletteGrid({ children }) {
   )
 }
 
-// Wider list-style item (for dynamics, tempo markings etc.)
 function ListItem({ label, symbol, sub, onClick, active }) {
   const [hover, setHover] = useState(false)
   return (
@@ -103,41 +100,101 @@ function ListItem({ label, symbol, sub, onClick, active }) {
   )
 }
 
+// ── helper: get beat of selected note ────────────────────────────────────────
+function getBeatOfSelectedNote(st) {
+  const { selectedPartId, selectedMeasureIndex, selectedNoteId, score } = st
+  if (selectedNoteId === null || selectedMeasureIndex === null) return null
+  const part    = score.parts.find(p => p.id === selectedPartId)
+  const measure = part?.measures[selectedMeasureIndex]
+  if (!measure) return null
+  let beat = 0
+  for (const n of measure.notes.filter(x => !x.chordWith)) {
+    if (n.id === selectedNoteId) return { beat, measure, note: n }
+    beat += (DURATION_BEATS[n.duration + (n.dots ? 'd' : '')] || DURATION_BEATS[n.duration] || 1)
+  }
+  return null
+}
+
 // ── PALETTES TAB ─────────────────────────────────────────────────────────────
 function PalettesTab() {
   const setGlobalKeySignature  = useScoreStore(s => s.setGlobalKeySignature)
   const setGlobalTimeSignature = useScoreStore(s => s.setGlobalTimeSignature)
   const setTempo               = useScoreStore(s => s.setTempo)
   const score                  = useScoreStore(s => s.score)
+  const selectedNoteId         = useScoreStore(s => s.selectedNoteId)
+  const selectedPartId         = useScoreStore(s => s.selectedPartId)
+  const selectedMeasureIndex   = useScoreStore(s => s.selectedMeasureIndex)
+
   const currentKey  = score.parts[0]?.measures[0]?.keySignature ?? 0
-  const currentTime = score.parts[0]?.measures[0]?.timeSignature ?? { beats:4, beatType:4 }
+  const currentTime = score.parts[0]?.measures[0]?.timeSignature ?? { beats: 4, beatType: 4 }
+
+  // ── Apply articulation to selected note ──────────────────────────────────
+  function applyArticulation(articulationType) {
+    if (!selectedNoteId) return
+    useScoreStore.getState()._applyToMeasure(
+      selectedPartId, selectedMeasureIndex, notes =>
+        notes.map(n => {
+          if (n.id !== selectedNoteId) return n
+          // Toggle: if same articulation already set, clear it
+          const current = n.articulation
+          return { ...n, articulation: current === articulationType ? null : articulationType }
+        })
+    )
+  }
+
+  // ── Get current articulation on selected note ────────────────────────────
+  function getSelectedArticulation() {
+    if (!selectedNoteId || selectedMeasureIndex === null) return null
+    const part    = score.parts.find(p => p.id === selectedPartId)
+    const measure = part?.measures[selectedMeasureIndex]
+    return measure?.notes.find(n => n.id === selectedNoteId)?.articulation ?? null
+  }
+
+  // ── Apply barline to selected measure ────────────────────────────────────
+  function applyBarline(barlineType) {
+    if (selectedMeasureIndex === null) return
+    useScoreStore.getState()._applyBarline(selectedMeasureIndex, barlineType)
+  }
+
+  // ── Add staff text to selected note position ──────────────────────────────
+  function addStaffTextAtSelection(text) {
+    const st = useScoreStore.getState()
+    const result = getBeatOfSelectedNote(st)
+    if (!result) {
+      alert('Select a note first, then click a text type to add it at that position.')
+      return
+    }
+    st.addStaffText(st.selectedPartId, st.selectedMeasureIndex, result.beat, text)
+  }
+
+  const currentArticulation = getSelectedArticulation()
 
   const KEY_SIGS = [
-    { label: 'C maj', num: 0,  symbol: '𝄞' },
-    { label: 'G maj', num: 1,  symbol: '𝄞♯' },
-    { label: 'D maj', num: 2,  symbol: '𝄞♯♯' },
-    { label: 'A maj', num: 3,  symbol: '𝄞3♯' },
-    { label: 'E maj', num: 4,  symbol: '𝄞4♯' },
-    { label: 'B maj', num: 5,  symbol: '𝄞5♯' },
-    { label: 'F♯ maj',num: 6,  symbol: '𝄞6♯' },
-    { label: 'F maj', num: -1, symbol: '𝄞♭' },
-    { label: 'B♭ maj',num: -2, symbol: '𝄞2♭' },
-    { label: 'E♭ maj',num: -3, symbol: '𝄞3♭' },
-    { label: 'A♭ maj',num: -4, symbol: '𝄞4♭' },
-    { label: 'D♭ maj',num: -5, symbol: '𝄞5♭' },
-    { label: 'G♭ maj',num: -6, symbol: '𝄞6♭' },
+    { label: 'C maj', num: 0,  symbol: '○'  },
+    { label: 'G maj', num: 1,  symbol: '1♯' },
+    { label: 'D maj', num: 2,  symbol: '2♯' },
+    { label: 'A maj', num: 3,  symbol: '3♯' },
+    { label: 'E maj', num: 4,  symbol: '4♯' },
+    { label: 'B maj', num: 5,  symbol: '5♯' },
+    { label: 'F♯ maj',num: 6,  symbol: '6♯' },
+    { label: 'F maj', num: -1, symbol: '1♭' },
+    { label: 'B♭ maj',num: -2, symbol: '2♭' },
+    { label: 'E♭ maj',num: -3, symbol: '3♭' },
+    { label: 'A♭ maj',num: -4, symbol: '4♭' },
+    { label: 'D♭ maj',num: -5, symbol: '5♭' },
+    { label: 'G♭ maj',num: -6, symbol: '6♭' },
   ]
 
   const TIME_SIGS = [
     { label: '4/4', beats:4, beatType:4, symbol: '𝄴' },
-    { label: '3/4', beats:3, beatType:4, symbol: '¾' },
-    { label: '2/4', beats:2, beatType:4, symbol: '½' },
+    { label: '3/4', beats:3, beatType:4, symbol: '¾'  },
+    { label: '2/4', beats:2, beatType:4, symbol: '½'  },
     { label: '2/2', beats:2, beatType:2, symbol: '𝄵' },
-    { label: '6/8', beats:6, beatType:8, symbol: '⁶⁄₈' },
-    { label: '9/8', beats:9, beatType:8, symbol: '⁹⁄₈' },
-    { label:'12/8',beats:12, beatType:8, symbol: '¹²⁄₈' },
-    { label: '5/4', beats:5, beatType:4, symbol: '⁵⁄₄' },
-    { label: '7/8', beats:7, beatType:8, symbol: '⁷⁄₈' },
+    { label: '6/8', beats:6, beatType:8, symbol: '⁶⁄₈'},
+    { label: '9/8', beats:9, beatType:8, symbol: '⁹⁄₈'},
+    { label:'12/8',beats:12, beatType:8, symbol:'¹²⁄₈'},
+    { label: '5/4', beats:5, beatType:4, symbol: '⁵⁄₄'},
+    { label: '7/8', beats:7, beatType:8, symbol: '⁷⁄₈'},
   ]
 
   const CLEFS = [
@@ -148,12 +205,14 @@ function PalettesTab() {
   ]
 
   const BARLINES = [
-    { label: 'Normal',   symbol: '|'  },
-    { label: 'Double',   symbol: '‖'  },
-    { label: 'Final',    symbol: '𝄂'  },
-    { label: 'Repeat →', symbol: '|:' },
-    { label: 'Repeat ←', symbol: ':|' },
-    { label: '↔ Repeat', symbol: ':|:'},
+    { label: 'Normal',   symbol: '|',    type: 'single'    },
+    { label: 'Double',   symbol: '‖',    type: 'double'    },
+    { label: 'Final',    symbol: '𝄂',    type: 'end'       },
+    { label: 'Repeat →', symbol: '|:',   type: 'repeat-begin' },
+    { label: 'Repeat ←', symbol: ':|',   type: 'repeat-end'   },
+    { label: '↔ Repeat', symbol: ':|:',  type: 'repeat-both'  },
+    { label: 'Dashed',   symbol: '¦',    type: 'dashed'    },
+    { label: 'Dotted',   symbol: '⋮',    type: 'dotted'    },
   ]
 
   const ACCIDENTALS = [
@@ -177,67 +236,67 @@ function PalettesTab() {
     { label: 'fp',   symbol: 'fp',   sub: 'forte-piano' },
   ]
 
+  // Articulations — now functional: stored on note.articulation
   const ARTICULATIONS = [
-    { label: 'Staccato',  symbol: '·'  },
-    { label: 'Tenuto',    symbol: '—'  },
-    { label: 'Accent',    symbol: '>'  },
-    { label: 'Marcato',   symbol: '^'  },
-    { label: 'Fermata',   symbol: '𝄐'  },
-    { label: 'Trill',     symbol: 'tr' },
-    { label: 'Mordent',   symbol: '𝆁'  },
-    { label: 'Turn',      symbol: '𝆃'  },
+    { label: 'Staccato',   symbol: '·',   type: 'staccato'   },
+    { label: 'Staccatiss', symbol: '▲',   type: 'staccatissimo' },
+    { label: 'Tenuto',     symbol: '—',   type: 'tenuto'     },
+    { label: 'Accent',     symbol: '>',   type: 'accent'     },
+    { label: 'Marcato',    symbol: '^',   type: 'marcato'    },
+    { label: 'Fermata',    symbol: '𝄐',   type: 'fermata'    },
+    { label: 'Trill',      symbol: 'tr',  type: 'trill'      },
+    { label: 'Mordent',    symbol: '𝆁',   type: 'mordent'    },
+    { label: 'Turn',       symbol: '𝆃',   type: 'turn'       },
+    { label: 'Portato',    symbol: '—·',  type: 'portato'    },
+    { label: 'Snap pizz', symbol: '⊙',   type: 'snap-pizz'  },
+    { label: 'Harmonic',   symbol: '○',   type: 'harmonic'   },
   ]
 
   const TEMPO_MARKS = [
-    { label: 'Larghissimo', symbol: '♩', sub: '≤24 bpm'  },
-    { label: 'Grave',       symbol: '♩', sub: '25–45'    },
-    { label: 'Largo',       symbol: '♩', sub: '40–60'    },
-    { label: 'Larghetto',   symbol: '♩', sub: '60–66'    },
-    { label: 'Adagio',      symbol: '♩', sub: '66–76'    },
-    { label: 'Andante',     symbol: '♩', sub: '76–108'   },
-    { label: 'Moderato',    symbol: '♩', sub: '108–120'  },
-    { label: 'Allegretto',  symbol: '♩', sub: '112–120'  },
-    { label: 'Allegro',     symbol: '♩', sub: '120–156'  },
-    { label: 'Vivace',      symbol: '♩', sub: '156–176'  },
-    { label: 'Presto',      symbol: '♩', sub: '168–200'  },
-    { label: 'Prestissimo', symbol: '♩', sub: '200+'     },
+    { label: 'Larghissimo', sub: '≤24 bpm',  bpm: 20  },
+    { label: 'Grave',       sub: '25–45',     bpm: 35  },
+    { label: 'Largo',       sub: '40–60',     bpm: 50  },
+    { label: 'Larghetto',   sub: '60–66',     bpm: 63  },
+    { label: 'Adagio',      sub: '66–76',     bpm: 70  },
+    { label: 'Andante',     sub: '76–108',    bpm: 92  },
+    { label: 'Moderato',    sub: '108–120',   bpm: 114 },
+    { label: 'Allegretto',  sub: '112–120',   bpm: 116 },
+    { label: 'Allegro',     sub: '120–156',   bpm: 138 },
+    { label: 'Vivace',      sub: '156–176',   bpm: 166 },
+    { label: 'Presto',      sub: '168–200',   bpm: 184 },
+    { label: 'Prestissimo', sub: '200+',      bpm: 208 },
   ]
-
-  const TEMPO_BPM = { Larghissimo:20, Grave:35, Largo:50, Larghetto:63, Adagio:70,
-    Andante:92, Moderato:114, Allegretto:116, Allegro:138, Vivace:166, Presto:184, Prestissimo:208 }
 
   const REPEATS = [
-    { label: 'Segno',    symbol: '𝄋' },
-    { label: 'Coda',     symbol: '𝄌' },
-    { label: 'D.S.',     symbol: '𝄋.' },
-    { label: 'D.C.',     symbol: 'D.C.' },
-    { label: 'Fine',     symbol: 'Fine' },
-    { label: 'D.C. al Fine', symbol: 'D.C.F' },
-    { label: '1st ending',   symbol: '1.' },
-    { label: '2nd ending',   symbol: '2.' },
+    { label: 'Segno',         symbol: '𝄋'  },
+    { label: 'Coda',          symbol: '𝄌'  },
+    { label: 'D.S.',          symbol: '𝄋.' },
+    { label: 'D.C.',          symbol: 'D.C.' },
+    { label: 'Fine',          symbol: 'Fine' },
+    { label: 'D.C. al Fine',  symbol: 'D.C.F' },
+    { label: '1st ending',    symbol: '1.' },
+    { label: '2nd ending',    symbol: '2.' },
   ]
 
+  // Text palette — clicking adds a staff text annotation at the selected note
   const TEXT_TYPES = [
-    { label: 'Title',       symbol: 'T',   sub: 'Score title' },
-    { label: 'Subtitle',    symbol: 'St',  sub: 'Subtitle' },
-    { label: 'Composer',    symbol: 'C',   sub: 'Composer' },
-    { label: 'Lyricist',    symbol: 'L',   sub: 'Lyricist' },
-    { label: 'Rehearsal',   symbol: 'A',   sub: 'Rehearsal mark' },
-    { label: 'Staff text',  symbol: 'T',   sub: 'Above staff' },
-    { label: 'Chord sym.',  symbol: 'Am',  sub: 'Chord symbol' },
-    { label: 'Fingering',   symbol: '1',   sub: 'Fingering' },
+    { label: 'Tempo text',  symbol: 'T',   text: 'Tempo'       },
+    { label: 'Expression',  symbol: 'Ex',  text: 'expr.'       },
+    { label: 'Technique',   symbol: 'Te',  text: 'pizz.'       },
+    { label: 'Rehearsal',   symbol: 'A',   text: null          }, // handled separately
+    { label: 'Staff text',  symbol: 'T̲',  text: 'Text'        },
+    { label: 'Chord sym.',  symbol: 'Am',  text: 'Am'          },
+    { label: 'Fingering',   symbol: '1',   text: '1'           },
+    { label: 'Bow: down',   symbol: '⊓',   text: '⊓'          },
+    { label: 'Bow: up',     symbol: 'V',   text: 'V'           },
+    { label: 'Pedal',       symbol: '𝄷',   text: '𝄷'          },
+    { label: 'Ped. off',    symbol: '𝄸',   text: '𝄸'          },
+    { label: 'Col legno',   symbol: 'col', text: 'col legno'   },
   ]
-
-  // store the selected accidental for applying to selected note
-  const changeSelectedPitch = useScoreStore(s => s.shiftPitchHalfStep)
-  const selectedNoteId      = useScoreStore(s => s.selectedNoteId)
-  const selectedPartId      = useScoreStore(s => s.selectedPartId)
-  const selectedMeasureIndex= useScoreStore(s => s.selectedMeasureIndex)
-  const score2              = useScoreStore(s => s.score)
 
   function applyAccidental(acc) {
     if (!selectedNoteId) return
-    const part    = score2.parts.find(p => p.id === selectedPartId)
+    const part    = score.parts.find(p => p.id === selectedPartId)
     const measure = part?.measures[selectedMeasureIndex]
     const note    = measure?.notes.find(n => n.id === selectedNoteId)
     if (!note?.pitch) return
@@ -251,19 +310,31 @@ function PalettesTab() {
 
   return (
     <div style={{ overflowY: 'auto', flex: 1 }}>
+
+      {/* ── Clefs ─────────────────────────────────────────── */}
       <Section title="Clefs">
+        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+          Select a part in the score header, then click a clef to change it.
+        </div>
         <PaletteGrid>
           {CLEFS.map(cl => (
             <PaletteItem key={cl.clef} label={cl.label} symbol={cl.symbol}
-              title={`${cl.label} clef`} />
+              title={`${cl.label} clef`}
+              onClick={() => {
+                const st = useScoreStore.getState()
+                if (!st.selectedPartId) return
+                // Update the clef for the selected part
+                st.setPartClef && st.setPartClef(st.selectedPartId, cl.clef)
+              }} />
           ))}
         </PaletteGrid>
       </Section>
 
+      {/* ── Key Signatures ───────────────────────────────── */}
       <Section title="Key Signatures" defaultOpen>
         <PaletteGrid>
           {KEY_SIGS.map(k => (
-            <PaletteItem key={k.num} label={k.label} symbol={k.num === 0 ? '○' : k.num > 0 ? `${k.num}♯` : `${Math.abs(k.num)}♭`}
+            <PaletteItem key={k.num} label={k.label} symbol={k.symbol}
               active={currentKey === k.num}
               onClick={() => setGlobalKeySignature(k.num)}
               title={k.label} />
@@ -271,6 +342,7 @@ function PalettesTab() {
         </PaletteGrid>
       </Section>
 
+      {/* ── Time Signatures ──────────────────────────────── */}
       <Section title="Time Signatures" defaultOpen>
         <PaletteGrid>
           {TIME_SIGS.map(t => (
@@ -282,28 +354,30 @@ function PalettesTab() {
         </PaletteGrid>
       </Section>
 
+      {/* ── Tempo ────────────────────────────────────────── */}
       <Section title="Tempo">
         {TEMPO_MARKS.map(t => (
           <ListItem key={t.label} label={t.label} symbol="♩" sub={t.sub}
-            onClick={() => setTempo(TEMPO_BPM[t.label] || 120)} />
+            onClick={() => setTempo(t.bpm)} />
         ))}
       </Section>
 
+      {/* ── Transpose ────────────────────────────────────── */}
       <Section title="Transpose" defaultOpen>
         <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 6 }}>
           Select a note or measure range, then transpose:
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {[
-            { label: '+½', semi: 1,   title: 'Up half step (Ctrl+↑)' },
-            { label: '−½', semi: -1,  title: 'Down half step (Ctrl+↓)' },
-            { label: '+1', semi: 2,   title: 'Up whole step' },
-            { label: '−1', semi: -2,  title: 'Down whole step' },
-            { label: '+3', semi: 3,   title: 'Up minor third' },
-            { label: '+4', semi: 5,   title: 'Up perfect fourth' },
-            { label: '+5', semi: 7,   title: 'Up perfect fifth' },
-            { label: '+8ve',semi: 12, title: 'Up octave (Ctrl+→)' },
-            { label: '−8ve',semi:-12, title: 'Down octave (Ctrl+←)' },
+            { label: '+½',  semi: 1,   title: 'Up half step (Ctrl+↑)' },
+            { label: '−½',  semi: -1,  title: 'Down half step (Ctrl+↓)' },
+            { label: '+1',  semi: 2,   title: 'Up whole step' },
+            { label: '−1',  semi: -2,  title: 'Down whole step' },
+            { label: '+3',  semi: 3,   title: 'Up minor third' },
+            { label: '+4',  semi: 5,   title: 'Up perfect fourth' },
+            { label: '+5',  semi: 7,   title: 'Up perfect fifth' },
+            { label: '+8ve',semi: 12,  title: 'Up octave (Ctrl+→)' },
+            { label: '−8ve',semi: -12, title: 'Down octave (Ctrl+←)' },
           ].map(t => (
             <button key={t.label} title={t.title}
               onClick={() => useScoreStore.getState().transposeSelection(t.semi)}
@@ -318,7 +392,11 @@ function PalettesTab() {
         </div>
       </Section>
 
+      {/* ── Accidentals ──────────────────────────────────── */}
       <Section title="Accidentals">
+        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+          Select a note, then click to apply:
+        </div>
         <PaletteGrid>
           {ACCIDENTALS.map(a => (
             <PaletteItem key={a.label} label={a.label} symbol={a.symbol}
@@ -328,28 +406,19 @@ function PalettesTab() {
         </PaletteGrid>
       </Section>
 
+      {/* ── Dynamics ─────────────────────────────────────── */}
       <Section title="Dynamics">
         <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
-          Select a note then click a dynamic to apply it at that beat.
+          Select a note, then click to place dynamic marking.
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {DYNAMICS.map(d => (
             <button key={d.label} title={d.sub}
               onClick={() => {
                 const st = useScoreStore.getState()
-                const { selectedPartId, selectedMeasureIndex, selectedNoteId, score } = st
-                if (selectedNoteId === null || selectedMeasureIndex === null) return
-                const part    = score.parts.find(p => p.id === selectedPartId)
-                const measure = part?.measures[selectedMeasureIndex]
-                const note    = measure?.notes.find(n => n.id === selectedNoteId)
-                if (!note) return
-                // Calculate beat of selected note
-                let beat = 0
-                for (const n of measure.notes.filter(x => !x.chordWith)) {
-                  if (n.id === selectedNoteId) break
-                  beat += (DURATION_BEATS[n.duration + (n.dots?'d':'')] || DURATION_BEATS[n.duration] || 1)
-                }
-                st.addDynamic(selectedPartId, selectedMeasureIndex, beat, d.symbol)
+                const result = getBeatOfSelectedNote(st)
+                if (!result) return
+                st.addDynamic(st.selectedPartId, st.selectedMeasureIndex, result.beat, d.symbol)
               }}
               style={{
                 padding: '4px 8px', borderRadius: 4, border: '1px solid #e5e7eb',
@@ -362,25 +431,76 @@ function PalettesTab() {
             >{d.symbol}</button>
           ))}
         </div>
+
+        {/* Hairpins */}
+        <div style={{ marginTop: 8, display: 'flex', gap: 4 }}>
+          {[
+            { label: 'Cresc.', type: 'cresc',   symbol: '<' },
+            { label: 'Decresc.', type: 'decresc', symbol: '>' },
+          ].map(h => (
+            <button key={h.type} title={`Add ${h.label} hairpin`}
+              onClick={() => {
+                const st = useScoreStore.getState()
+                const result = getBeatOfSelectedNote(st)
+                if (!result) return
+                const { selectedPartId, selectedMeasureIndex } = st
+                const endBeat = result.beat + 2  // 2-beat hairpin by default
+                st.addHairpin(selectedPartId, selectedMeasureIndex, result.beat,
+                  selectedMeasureIndex, Math.min(endBeat, (result.measure.timeSignature?.beats ?? 4)), h.type)
+              }}
+              style={{
+                flex: 1, padding: '4px', borderRadius: 4, border: '1px solid #e5e7eb',
+                background: 'white', cursor: 'pointer', fontSize: 13, fontWeight: 700,
+              }}
+              onMouseEnter={e => e.currentTarget.style.background='#f3f4f6'}
+              onMouseLeave={e => e.currentTarget.style.background='white'}
+            >{h.symbol} {h.label}</button>
+          ))}
+        </div>
       </Section>
 
+      {/* ── Articulations — now functional ───────────────── */}
       <Section title="Articulations">
+        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+          Select a note, then click to toggle. Stored on note, rendered above staff.
+        </div>
         <PaletteGrid>
           {ARTICULATIONS.map(a => (
-            <PaletteItem key={a.label} label={a.label} symbol={a.symbol} />
+            <PaletteItem key={a.type} label={a.label} symbol={a.symbol}
+              active={currentArticulation === a.type}
+              onClick={() => applyArticulation(a.type)}
+              title={`${a.label} — click to toggle`} />
           ))}
         </PaletteGrid>
       </Section>
 
+      {/* ── Text ─────────────────────────────────────────── */}
       <Section title="Text">
-        {TEXT_TYPES.map(t => (
-          <ListItem key={t.label} label={t.label} symbol={t.symbol} sub={t.sub} />
-        ))}
+        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+          Select a note then click to add text above the staff.
+        </div>
+        <PaletteGrid>
+          {TEXT_TYPES.map(t => (
+            <PaletteItem key={t.label} label={t.label} symbol={t.symbol}
+              title={`Add ${t.label}`}
+              onClick={() => {
+                if (t.label === 'Rehearsal') {
+                  const { selectedMeasureIndex } = useScoreStore.getState()
+                  if (selectedMeasureIndex === null) return
+                  const letter = prompt('Rehearsal mark letter:', 'A')
+                  if (letter) useScoreStore.getState().addRehearsalMark(selectedMeasureIndex, letter.trim().slice(0, 3))
+                } else {
+                  addStaffTextAtSelection(t.text)
+                }
+              }} />
+          ))}
+        </PaletteGrid>
       </Section>
 
+      {/* ── Rehearsal Marks ──────────────────────────────── */}
       <Section title="Rehearsal Marks">
         <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 6 }}>
-          Select a measure, then click a letter to add a rehearsal mark.
+          Select a measure, then click a letter:
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(letter => (
@@ -391,40 +511,63 @@ function PalettesTab() {
                 useScoreStore.getState().addRehearsalMark(selectedMeasureIndex, letter)
               }}
               style={{
-                width: 26, height: 26, borderRadius: 4, border: '2px solid #1d3a6e',
-                background: '#1d3a6e', color: 'white', cursor: 'pointer',
-                fontSize: 11, fontWeight: 700,
-              }}>
-              {letter}
-            </button>
+                width: 24, height: 24, borderRadius: 4,
+                border: '1px solid #e5e7eb', background: 'white',
+                cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                color: '#374151',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background='#eff6ff'; e.currentTarget.style.borderColor='#93c5fd' }}
+              onMouseLeave={e => { e.currentTarget.style.background='white'; e.currentTarget.style.borderColor='#e5e7eb' }}
+            >{letter}</button>
           ))}
         </div>
       </Section>
 
+      {/* ── Repeats & Jumps ──────────────────────────────── */}
       <Section title="Repeats & Jumps">
+        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+          Select a measure, then click to add a repeat/jump marking as staff text.
+        </div>
         <PaletteGrid>
           {REPEATS.map(r => (
-            <PaletteItem key={r.label} label={r.label} symbol={r.symbol} />
+            <PaletteItem key={r.label} label={r.label} symbol={r.symbol}
+              title={r.label}
+              onClick={() => {
+                const st = useScoreStore.getState()
+                if (st.selectedMeasureIndex === null) return
+                st.addRehearsalMark(st.selectedMeasureIndex, r.label)
+              }} />
           ))}
         </PaletteGrid>
       </Section>
 
+      {/* ── Barlines — now functional ─────────────────────── */}
       <Section title="Barlines">
+        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+          Select a measure, then click a barline style to apply it.
+        </div>
         <PaletteGrid>
           {BARLINES.map(b => (
-            <PaletteItem key={b.label} label={b.label} symbol={b.symbol} />
+            <PaletteItem key={b.type} label={b.label} symbol={b.symbol}
+              title={`${b.label} barline`}
+              onClick={() => applyBarline(b.type)} />
           ))}
         </PaletteGrid>
       </Section>
 
+      {/* ── Brackets ─────────────────────────────────────── */}
       <Section title="Brackets">
+        <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+          Bracket/brace styling for multi-part scores.
+        </div>
         <PaletteGrid>
-          <PaletteItem label="Bracket"  symbol="[" />
-          <PaletteItem label="Brace"    symbol="{" />
-          <PaletteItem label="Line"     symbol="|" />
-          <PaletteItem label="Sq. Brace" symbol="⟦" />
+          <PaletteItem label="Bracket"   symbol="[" title="Square bracket" />
+          <PaletteItem label="Brace"     symbol="{" title="Curly brace (piano)" />
+          <PaletteItem label="Line"      symbol="|" title="Connecting line" />
+          <PaletteItem label="Sq. Brace" symbol="⟦" title="Double square bracket" />
         </PaletteGrid>
       </Section>
+
     </div>
   )
 }
@@ -433,6 +576,8 @@ function PalettesTab() {
 function LayoutTab() {
   const score        = useScoreStore(s => s.score)
   const setTempo     = useScoreStore(s => s.setTempo)
+  const zoom         = useScoreStore(s => s.zoom)
+  const setZoom      = useScoreStore(s => s.setZoom)
   const [spacing, setSpacing] = useState(1.2)
   const [staffSize, setStaffSize] = useState(7)
   const [margins, setMargins]  = useState({ top:10, bottom:10, left:12, right:12 })
@@ -454,8 +599,8 @@ function LayoutTab() {
           style={{ width:20, height:20, border:'1px solid #d1d5db', borderRadius:3,
             background:'white', cursor:'pointer', fontSize:12, display:'flex',
             alignItems:'center', justifyContent:'center' }}>−</button>
-        <span style={{ width:30, textAlign:'center', fontSize:11, fontWeight:600 }}>
-          {value}{unit}
+        <span style={{ width:32, textAlign:'center', fontSize:11, fontWeight:600 }}>
+          {typeof value === 'number' ? (Number.isInteger(value) ? value : value.toFixed(1)) : value}{unit}
         </span>
         <button onClick={() => onChange(Math.min(max, value+step))}
           style={{ width:20, height:20, border:'1px solid #d1d5db', borderRadius:3,
@@ -471,6 +616,9 @@ function LayoutTab() {
         Page Layout
       </div>
 
+      <Row label="Zoom">
+        <NumInput value={Math.round(zoom * 100)} onChange={v => setZoom(v / 100)} min={50} max={200} step={10} unit="%" />
+      </Row>
       <Row label="Staff size">
         <NumInput value={staffSize} onChange={setStaffSize} min={4} max={12} step={0.5} unit="sp" />
       </Row>
@@ -554,7 +702,10 @@ function PropertiesTab() {
 
   if (selectedMeasureIndex !== null && !selectedNoteId) {
     const m = selPart?.measures[selectedMeasureIndex]
-    const noteCount = m?.notes.filter(n => !n.isRest).length ?? 0
+    const noteCount = m?.notes.filter(n => !n.isRest && !n.chordWith).length ?? 0
+    const totalBeats = m?.timeSignature?.beats ?? 4
+    const usedBeats  = m?.notes.filter(n => !n.isRest && !n.chordWith)
+      .reduce((s, n) => s + (DURATION_BEATS[n.duration+(n.dots?'d':'')]||DURATION_BEATS[n.duration]||1), 0) ?? 0
     return (
       <div style={{ overflowY:'auto', flex:1, padding:'8px 12px' }}>
         <div style={{ fontSize:11, fontWeight:700, color:'#374151', marginBottom:8 }}>
@@ -568,7 +719,11 @@ function PropertiesTab() {
           <Tag>{m?.keySignature ?? 0} {(m?.keySignature ?? 0) > 0 ? '♯' : (m?.keySignature ?? 0) < 0 ? '♭' : '(C)'}</Tag>
         </PropRow>
         <PropRow label="Notes"><Tag>{noteCount}</Tag></PropRow>
-        <PropRow label="Rests"><Tag>{(m?.notes.length ?? 0) - noteCount}</Tag></PropRow>
+        <PropRow label="Rests"><Tag>{(m?.notes.filter(n => n.isRest).length ?? 0)}</Tag></PropRow>
+        <PropRow label="Beats used"><Tag color='#f0fdf4' text='#166534'>{usedBeats.toFixed(2)} / {totalBeats}</Tag></PropRow>
+        {m?.barline && m.barline !== 'single' && (
+          <PropRow label="Barline"><Tag color='#fef3c7' text='#92400e'>{m.barline}</Tag></PropRow>
+        )}
       </div>
     )
   }
@@ -583,6 +738,14 @@ function PropertiesTab() {
     {val:'16',label:'16th',sym:'𝅘𝅥𝅰'},
     {val:'32',label:'32nd',sym:'𝅘𝅥𝅱'},
   ]
+
+  const ARTICULATION_LABELS = {
+    staccato: '· Staccato', tenuto: '— Tenuto', accent: '> Accent',
+    marcato: '^ Marcato', fermata: '𝄐 Fermata', trill: 'tr Trill',
+    mordent: '𝆁 Mordent', turn: '𝆃 Turn', portato: '—· Portato',
+    staccatissimo: '▲ Staccatissimo', harmonic: '○ Harmonic',
+    'snap-pizz': '⊙ Snap pizz',
+  }
 
   const chordNotes = measure?.notes.filter(n => n.chordWith === selectedNoteId) || []
 
@@ -659,6 +822,26 @@ function PropertiesTab() {
               </div>
             </PropRow>
           )}
+          {note.articulation && (
+            <PropRow label="Articulation">
+              <Tag color='#fef9c3' text='#713f12'>
+                {ARTICULATION_LABELS[note.articulation] || note.articulation}
+              </Tag>
+              <button
+                onClick={() => useScoreStore.getState()._applyToMeasure(
+                  selectedPartId, selectedMeasureIndex, notes =>
+                    notes.map(n => n.id === selectedNoteId ? { ...n, articulation: null } : n)
+                )}
+                style={{ fontSize:10, padding:'2px 6px', borderRadius:3, border:'1px solid #d1d5db',
+                  background:'white', cursor:'pointer', color:'#6b7280' }}>remove</button>
+            </PropRow>
+          )}
+          {note.tieStart && (
+            <PropRow label="Tie"><Tag color='#f0fdf4' text='#166534'>→ Tied</Tag></PropRow>
+          )}
+          {note.slurStart && (
+            <PropRow label="Slur"><Tag color='#faf5ff' text='#7c3aed'>Slur start</Tag></PropRow>
+          )}
         </>
       )}
 
@@ -684,14 +867,22 @@ function PropertiesTab() {
           {note.dots ? '· On' : '· Off'}
         </button>
       </PropRow>
+      {note.triplet && (
+        <PropRow label="Triplet"><Tag color='#ccfbf1' text='#0d9488'>3-let</Tag></PropRow>
+      )}
       <PropRow label="Voice">
         <div style={{ display:'flex', gap:3 }}>
           {[1,2,3,4].map(v => (
-            <button key={v} style={{ width:24, height:24, borderRadius:4,
-              border:'1px solid #d1d5db',
-              background: v===1 ? '#dbeafe':'white',
-              color: v===1 ? '#1d4ed8':'#6b7280',
-              cursor:'pointer', fontSize:11, fontWeight:700 }}>{v}</button>
+            <button key={v}
+              onClick={() => useScoreStore.getState()._applyToMeasure(
+                selectedPartId, selectedMeasureIndex, notes =>
+                  notes.map(n => n.id === selectedNoteId ? { ...n, voice: v } : n)
+              )}
+              style={{ width:24, height:24, borderRadius:4,
+                border:'1px solid #d1d5db',
+                background: (note.voice ?? 1) === v ? '#dbeafe':'white',
+                color: (note.voice ?? 1) === v ? '#1d4ed8':'#6b7280',
+                cursor:'pointer', fontSize:11, fontWeight:700 }}>{v}</button>
           ))}
         </div>
       </PropRow>
@@ -753,7 +944,6 @@ export default function Sidebar() {
             }}
           >{tab.label}</button>
         ))}
-        {/* Collapse button */}
         <button onClick={() => setCollapsed(true)}
           title="Collapse sidebar"
           style={{ width:28, border:'none', background:'none', cursor:'pointer',
