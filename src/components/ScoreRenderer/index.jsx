@@ -10,7 +10,7 @@ const MEASURES_PER_LINE = 4
 
 // SP = pixels per staff space. Increase to make everything bigger, decrease for smaller.
 // 10 = compact, 12 = medium, 14 = large, 16 = very large
-const SP = 10
+const SP = 14
 
 const STAFF_HEIGHT = SP * 4          // 48px — full staff (4 spaces between 5 lines)
 const PART_HEIGHT  = SP * 9          // 108px — staff + gap to next staff in system
@@ -103,6 +103,8 @@ export default function ScoreRenderer() {
   const selectedDuration     = useScoreStore(s => s.selectedDuration)
   const selectedDots         = useScoreStore(s => s.selectedDots)
   const zoom                 = useScoreStore(s => s.zoom)
+  const measuresPerLine      = useScoreStore(s => s.measuresPerLine ?? 4)
+  const staffSize            = useScoreStore(s => s.staffSize ?? 10)
   const dynamics             = useScoreStore(s => s.score.dynamics || [])
   const hairpins             = useScoreStore(s => s.score.hairpins || [])
   const rehearsalMarks       = useScoreStore(s => s.score.rehearsalMarks || [])
@@ -110,6 +112,15 @@ export default function ScoreRenderer() {
   const render = useCallback(() => {
     if (!containerRef.current) return
     containerRef.current.innerHTML = ''
+
+    // Dynamic layout values from store (user-adjustable in Layout tab)
+    const MEASURES_PER_LINE = measuresPerLine
+    const SP         = staffSize
+    const STAFF_HEIGHT = SP * 4
+    const PART_HEIGHT  = SP * 9
+    const SYSTEM_GAP   = SP * 8
+    const STAVE_TOP    = SP * 3
+    const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3
 
     const numParts   = score.parts.length
     const totalCols  = Math.max(...score.parts.map(p => p.measures.length), 1)
@@ -350,6 +361,75 @@ export default function ScoreRenderer() {
             // Now draw the beam lines on top
             beamGroups.forEach(b => { try { b.setContext(ctx).draw() } catch(_) {} })
 
+            // ── Articulations ────────────────────────────────────────────────
+            // Draw articulation marks above/below noteheads using canvas primitives.
+            // VexFlow 4's Articulation import is unreliable across builds, so we
+            // draw directly on the canvas for maximum compatibility.
+            try {
+              renderSeq.forEach((seqNote, ni) => {
+                if (!seqNote.articulation || seqNote.isRest) return
+                const vfNote = vfNotes[ni]
+                const nx = vfNote.getAbsoluteX() + 4
+                const ny = partY + STAFF_HEIGHT / 2
+
+                ctx.save()
+                ctx.setFont('Times New Roman', 12)
+                ctx.setFillStyle('#1e293b')
+
+                const art = seqNote.articulation
+                // Place above staff
+                const ay = partY - 8
+
+                if (art === 'staccato') {
+                  ctx.beginPath()
+                  ctx.arc(nx, ay, 2.5, 0, Math.PI * 2)
+                  ctx.fill()
+                } else if (art === 'tenuto') {
+                  ctx.fillRect(nx - 6, ay, 12, 2)
+                } else if (art === 'accent') {
+                  ctx.font = 'bold 14px serif'
+                  ctx.fillText('>', nx - 6, ay + 4)
+                } else if (art === 'marcato') {
+                  ctx.font = 'bold 12px serif'
+                  ctx.fillText('^', nx - 4, ay)
+                } else if (art === 'fermata') {
+                  ctx.font = '16px serif'
+                  ctx.fillText('𝄐', nx - 6, ay)
+                } else if (art === 'trill') {
+                  ctx.font = 'italic bold 11px serif'
+                  ctx.fillText('tr', nx - 4, ay)
+                } else if (art === 'mordent') {
+                  ctx.font = '13px serif'
+                  ctx.fillText('𝆁', nx - 4, ay)
+                } else if (art === 'turn') {
+                  ctx.font = '13px serif'
+                  ctx.fillText('𝆃', nx - 4, ay)
+                } else if (art === 'staccatissimo') {
+                  ctx.beginPath()
+                  ctx.moveTo(nx, ay - 4)
+                  ctx.lineTo(nx - 3, ay + 2)
+                  ctx.lineTo(nx + 3, ay + 2)
+                  ctx.closePath()
+                  ctx.fill()
+                } else if (art === 'portato') {
+                  ctx.fillRect(nx - 6, ay + 2, 12, 2)
+                  ctx.beginPath()
+                  ctx.arc(nx, ay - 3, 2, 0, Math.PI * 2)
+                  ctx.fill()
+                } else if (art === 'harmonic') {
+                  ctx.strokeStyle = '#1e293b'
+                  ctx.lineWidth = 1.2
+                  ctx.beginPath()
+                  ctx.arc(nx, ay, 4, 0, Math.PI * 2)
+                  ctx.stroke()
+                } else if (art === 'snap-pizz') {
+                  ctx.font = '12px serif'
+                  ctx.fillText('⊙', nx - 5, ay + 4)
+                }
+                ctx.restore()
+              })
+            } catch(_) {}
+
             // ── Tuplet brackets ─────────────────────────────────────────────
             // Group triplet notes by their tripletGroupId and draw Tuplet bracket
             try {
@@ -504,7 +584,7 @@ export default function ScoreRenderer() {
     }
 
     setZones(allZones)
-  }, [score, selectedMeasureIndex, selectedPartId, selectedNoteId])
+  }, [score, selectedMeasureIndex, selectedPartId, selectedNoteId, measuresPerLine, staffSize])
 
   useEffect(() => { render() }, [render])
 
@@ -622,8 +702,8 @@ export default function ScoreRenderer() {
     // staveTopLineY = pixel Y of the top staff line (F5 treble / A3 bass)
     // staveLineSpacing = pixels between lines (typically 10px)
     // Each staff position (line OR space) = staveLineSpacing / 2 pixels
-    const topLineY    = z.staveTopLineY    ?? (z.y + SP)
-    const lineSpacing = z.staveLineSpacing ?? SP
+    const topLineY    = z.staveTopLineY    ?? (z.y + (staffSize ?? 10))
+    const lineSpacing = z.staveLineSpacing ?? (staffSize ?? 10)
     const posSpacing  = lineSpacing / 2    // pixels per staff position (5px normally)
     const rawPos      = (mouseY - topLineY) / posSpacing
     const pos         = Math.max(-6, Math.min(14, Math.round(rawPos)))

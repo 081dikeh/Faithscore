@@ -1,43 +1,37 @@
 // src/store/scoreStore.js
-// FaithScore — Zustand state store
-
 import { create } from 'zustand'
 
 // ── Auto-save helpers ─────────────────────────────────────────────────────────
-const AUTOSAVE_KEY = 'faithscore_autosave'
+const AUTOSAVE_KEY = 'scoreai_autosave'
 function saveToStorage(score) {
   try { localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(score)) } catch(e) {}
 }
 function loadFromStorage() {
   try {
-    // Support migrating old 'scoreai_autosave' key
     const raw = localStorage.getItem(AUTOSAVE_KEY)
-      || localStorage.getItem('scoreai_autosave')
     return raw ? JSON.parse(raw) : null
   } catch(e) { return null }
 }
-export function hasSavedScore() {
-  return !!(localStorage.getItem(AUTOSAVE_KEY) || localStorage.getItem('scoreai_autosave'))
-}
-export function clearSavedScore() {
-  localStorage.removeItem(AUTOSAVE_KEY)
-  localStorage.removeItem('scoreai_autosave')
-}
+export function hasSavedScore() { return !!localStorage.getItem(AUTOSAVE_KEY) }
+export function clearSavedScore() { localStorage.removeItem(AUTOSAVE_KEY) }
 
 export const DURATION_BEATS = {
   'w': 4, 'h': 2, 'q': 1, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625,
   'wd': 6, 'hd': 3, 'qd': 1.5, '8d': 0.75, '16d': 0.375, '32d': 0.1875,
+  // Triplet durations: multiply by 2/3 (3 notes in space of 2)
   'qt': 2/3, '8t': 1/3, '16t': 1/6, 'ht': 4/3,
 }
 
 export function noteDuration(note) {
   if (note.triplet) {
+    // Triplet note: 2/3 of its base duration
     return (DURATION_BEATS[note.duration] || 1) * 2 / 3
   }
   const key = note.duration + (note.dots ? 'd' : '')
   return DURATION_BEATS[key] || DURATION_BEATS[note.duration] || 1
 }
 
+// Returns best rest {duration, dots} to fill exactly `beats`
 export function beatsToRest(beats) {
   if (beats >= 4)    return { duration: 'w',  dots: 0 }
   if (beats >= 3)    return { duration: 'h',  dots: 1 }
@@ -52,6 +46,7 @@ export function beatsToRest(beats) {
   return { duration: '64', dots: 0 }
 }
 
+// Build a minimal chain of rest notes to fill `beats`
 function makeRests(beats, idPrefix) {
   const rests = []
   let rem = beats, i = 0
@@ -59,6 +54,8 @@ function makeRests(beats, idPrefix) {
     const { duration, dots } = beatsToRest(rem)
     const key = duration + (dots ? 'd' : '')
     const used = DURATION_BEATS[key] || DURATION_BEATS[duration] || 1
+    // Always use a unique ID — prefix is kept for debugging but a random suffix
+    // ensures no duplicate React keys even when normalizing multiple measures
     const uid = typeof crypto !== 'undefined' && crypto.randomUUID
       ? crypto.randomUUID()
       : `${Date.now()}_${Math.random().toString(36).slice(2)}`
@@ -68,16 +65,25 @@ function makeRests(beats, idPrefix) {
   return rests
 }
 
+// CORE: Normalize a measure so notes + rests always fill exactly maxBeats
+// - Removes overflow
+// - Fills gaps with rests
+// - Merges adjacent rests where possible
 export function normalizeMeasure(notes, maxBeats) {
   const nonChord = notes.filter(n => !n.chordWith)
   const chords   = notes.filter(n =>  n.chordWith)
+
   const result = []
   let cursor = 0
+
   for (const n of nonChord) {
     if (cursor >= maxBeats - 0.001) break
+
     const dur     = noteDuration(n)
     const allowed = maxBeats - cursor
+
     if (dur > allowed + 0.001) {
+      // Note too long — truncate to fit, mark tieStart so it visually ties to next bar
       const fit    = beatsToRest(allowed)
       const fitDur = DURATION_BEATS[fit.duration + (fit.dots?'d':'')] || DURATION_BEATS[fit.duration] || 1
       if (fitDur > 0.001) {
@@ -86,18 +92,24 @@ export function normalizeMeasure(notes, maxBeats) {
       }
       break
     }
+
+    // Keep the note/rest exactly as-is — preserves rest positions between notes
     result.push(n)
     cursor += dur
   }
+
+  // Fill any remaining space with rests
   const remaining = maxBeats - cursor
   if (remaining > 0.001) {
     result.push(...makeRests(remaining, `fill_${cursor}`))
   }
+
   const finalIds    = new Set(result.map(n => n.id))
   const validChords = chords.filter(c => finalIds.has(c.chordWith))
   return [...result, ...validChords]
 }
 
+// Annotate notes with _beatStart for rendering
 export function annotateBeats(notes) {
   let cursor = 0
   return notes.filter(n => !n.chordWith).map(n => {
@@ -106,6 +118,8 @@ export function annotateBeats(notes) {
     return annotated
   })
 }
+
+// ─── Data helpers ─────────────────────────────────────────────────────────────
 
 function makeEmptyMeasure(timeSig, keySig) {
   const ts = timeSig || { beats: 4, beatType: 4 }
@@ -116,7 +130,6 @@ function makeEmptyMeasure(timeSig, keySig) {
     timeSignature: ts,
     keySignature: ks,
     notes: rests,
-    barline: 'single',   // NEW: barline type for the right barline of this measure
   }
 }
 
@@ -132,67 +145,52 @@ function padPartsToCount(parts, count) {
   })
 }
 
-// ── Available instruments ─────────────────────────────────────────────────────
-export const INSTRUMENTS = [
-  { id: 'piano',       label: 'Piano',        defaultClef: 'treble' },
-  { id: 'piano-bass',  label: 'Piano (Bass)',  defaultClef: 'bass'   },
-  { id: 'violin',      label: 'Violin',        defaultClef: 'treble' },
-  { id: 'viola',       label: 'Viola',         defaultClef: 'alto'   },
-  { id: 'cello',       label: 'Cello',         defaultClef: 'bass'   },
-  { id: 'contrabass',  label: 'Contrabass',    defaultClef: 'bass'   },
-  { id: 'flute',       label: 'Flute',         defaultClef: 'treble' },
-  { id: 'oboe',        label: 'Oboe',          defaultClef: 'treble' },
-  { id: 'clarinet',    label: 'Clarinet',      defaultClef: 'treble' },
-  { id: 'bassoon',     label: 'Bassoon',       defaultClef: 'bass'   },
-  { id: 'horn',        label: 'French Horn',   defaultClef: 'treble' },
-  { id: 'trumpet',     label: 'Trumpet',       defaultClef: 'treble' },
-  { id: 'trombone',    label: 'Trombone',      defaultClef: 'bass'   },
-  { id: 'tuba',        label: 'Tuba',          defaultClef: 'bass'   },
-  { id: 'guitar',      label: 'Guitar',        defaultClef: 'treble' },
-  { id: 'bass-guitar', label: 'Bass Guitar',   defaultClef: 'bass'   },
-  { id: 'soprano',     label: 'Soprano Voice', defaultClef: 'treble' },
-  { id: 'alto',        label: 'Alto Voice',    defaultClef: 'treble' },
-  { id: 'tenor',       label: 'Tenor Voice',   defaultClef: 'treble' },
-  { id: 'bass-voice',  label: 'Bass Voice',    defaultClef: 'bass'   },
-  { id: 'organ',       label: 'Organ',         defaultClef: 'treble' },
-  { id: 'harp',        label: 'Harp',          defaultClef: 'treble' },
-]
-
 export const EMPTY_SCORE = {
   id: crypto.randomUUID(),
   title: 'Untitled Score',
   composer: '',
   tempo: 120,
   parts: [
-    { id: 'part-treble', name: 'Treble', instrument: 'piano',      clef: 'treble', measures: [makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)] },
-    { id: 'part-bass',   name: 'Bass',   instrument: 'piano-bass', clef: 'bass',   measures: [makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)] },
+    { id: 'part-treble', name: 'Treble', instrument: 'piano', clef: 'treble', measures: [makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)] },
+    { id: 'part-bass',   name: 'Bass',   instrument: 'piano', clef: 'bass',   measures: [makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)] },
   ],
-  dynamics:       [],
-  hairpins:       [],
-  rehearsalMarks: [],
-  staffTexts:     [],
+  // Score-level markings (not attached to parts)
+  // Each: { id, type, partId, measureIndex, beat, value/text }
+  dynamics:         [],   // { id, partId, measureIndex, beat, value } e.g. value:'mf'
+  hairpins:         [],   // { id, partId, startMeasure, startBeat, endMeasure, endBeat, type:'cresc'|'decresc' }
+  rehearsalMarks:   [],   // { id, measureIndex, text } e.g. text:'A'
+  staffTexts:       [],   // { id, partId, measureIndex, beat, text }
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
+
 export const useScoreStore = create((set, get) => ({
   score: (() => {
     const saved = loadFromStorage()
     if (!saved) return EMPTY_SCORE
+    // Ensure legacy saves get the new markings arrays
     return {
       dynamics: [], hairpins: [], rehearsalMarks: [], staffTexts: [],
       ...saved,
     }
   })(),
 
-  _undoStack: [],
+  // ── Undo / Redo history ────────────────────────────────────────────────
+  _undoStack: [],   // array of score snapshots (max 50)
   _redoStack: [],
-  clipboard: null,
-  selectedMeasureRange: null,
-  zoom: 1.0,
+
+  // ── Clipboard ─────────────────────────────────────────────────────────
+  clipboard: null,  // { notes, timeSignature } of copied measure
+
+  // ── Multi-select ──────────────────────────────────────────────────────
+  selectedMeasureRange: null,  // { start, end } column indices
+
+  // ── Zoom ──────────────────────────────────────────────────────────────
+  zoom: 1.0,        // 0.5 – 2.0
 
   selectedPartId: 'part-treble',
   selectedMeasureIndex: null,
-  selectedNoteId: null,
+  selectedNoteId: null,   // can be a real note OR a rest note id
 
   inputMode: 'select',
   selectedDuration: 'q',
@@ -201,22 +199,29 @@ export const useScoreStore = create((set, get) => ({
   selectedNote: { step: 'C', accidental: null, label: 'C' },
   chordMode: false,
 
-  isPlaying:    false,
-  playbackBeat: null,
+  // ── Playback state ──────────────────────────────────────────────────────
+  isPlaying:    false,    // true while Tone.js transport is running
+  playbackBeat: null,     // fractional beat position (null = stopped/not started)
 
-  setTitle:    (t) => set(s => ({ score: { ...s.score, title: t } })),
+  setTitle: (t) => set(s => ({ score: { ...s.score, title: t } })),
   setComposer: (c) => set(s => ({ score: { ...s.score, composer: c } })),
-  setTempo:    (t) => set(s => ({ score: { ...s.score, tempo: t } })),
-  setInputMode:      (m) => set({ inputMode: m }),
-  setDuration:       (d) => set({ selectedDuration: d }),
-  setSelectedDots:   (d) => set({ selectedDots: d }),
+  setTempo: (t) => set(s => ({ score: { ...s.score, tempo: t } })),
+  setInputMode: (m) => set({ inputMode: m }),
+  setDuration: (d) => set({ selectedDuration: d }),
+  setSelectedDots: (d) => set({ selectedDots: d }),
   setSelectedOctave: (o) => set({ selectedOctave: o }),
-  setSelectedNote:   (n) => set({ selectedNote: n }),
-  setChordMode:      (v) => set({ chordMode: v }),
-  setIsPlaying:      (v) => set({ isPlaying: v }),
-  setZoom: (z) => set({ zoom: Math.max(0.5, Math.min(2.0, z)) }),
+  setSelectedNote: (n) => set({ selectedNote: n }),
+  setChordMode: (v) => set({ chordMode: v }),
 
-  // ── Snapshot ───────────────────────────────────────────────────────────────
+  setIsPlaying:    (v)    => set({ isPlaying: v }),
+
+  setZoom: (z) => set({ zoom: Math.max(0.5, Math.min(2.0, z)) }),
+  measuresPerLine: 4,
+  staffSize: 10,
+  setMeasuresPerLine: (v) => set({ measuresPerLine: Math.max(1, Math.min(8, Math.round(v))) }),
+  setStaffSize: (v) => set({ staffSize: Math.max(6, Math.min(20, v)) }),
+
+  // ── Snapshot (call before any mutation that should be undoable) ────────
   _snapshot: () => {
     const { score, _undoStack } = get()
     const stack = [..._undoStack, JSON.parse(JSON.stringify(score))]
@@ -249,7 +254,7 @@ export const useScoreStore = create((set, get) => ({
     saveToStorage(next)
   },
 
-  // ── Copy / Paste ───────────────────────────────────────────────────────────
+  // ── Copy / Paste ───────────────────────────────────────────────────────
   copyMeasure: (partId, measureIndex) => {
     const part    = get().score.parts.find(p => p.id === partId)
     const measure = part?.measures[measureIndex]
@@ -258,6 +263,7 @@ export const useScoreStore = create((set, get) => ({
   },
 
   copyMeasureRange: (startCol, endCol) => {
+    // Copy all parts for all columns in range
     const { score } = get()
     const cols = []
     for (let c = startCol; c <= endCol; c++) {
@@ -280,25 +286,28 @@ export const useScoreStore = create((set, get) => ({
         })
       })
     } else {
-      const newNotes = clipboard.notes.map(n => ({ ...n, id: crypto.randomUUID() }))
+      // Single measure paste — regen IDs to avoid duplicates
+      const newNotes = clipboard.notes.map(n => ({ ...n, id: crypto.randomUUID(),
+        chordWith: n.chordWith ? undefined : undefined }))
       get()._applyToMeasure(partId, measureIndex, () => newNotes)
     }
     saveToStorage(get().score)
   },
 
+  // ── Multi-measure selection ────────────────────────────────────────────
   setMeasureRange: (start, end) => set({
     selectedMeasureRange: start === null ? null : { start, end: end ?? start }
   }),
 
   extendMeasureRange: (colIndex) => {
     const { selectedMeasureRange, selectedMeasureIndex } = get()
-    const base  = selectedMeasureRange?.start ?? selectedMeasureIndex ?? colIndex
+    const base = selectedMeasureRange?.start ?? selectedMeasureIndex ?? colIndex
     const start = Math.min(base, colIndex)
     const end   = Math.max(base, colIndex)
     set({ selectedMeasureRange: { start, end } })
   },
 
-  // ── Transpose ──────────────────────────────────────────────────────────────
+  // ── Transpose ──────────────────────────────────────────────────────────
   transposeSelection: (semitones) => {
     const CHROMATIC = [
       {s:'C',a:null},{s:'C',a:'#'},{s:'D',a:null},{s:'D',a:'#'},{s:'E',a:null},
@@ -320,7 +329,7 @@ export const useScoreStore = create((set, get) => ({
       return { ...note, pitch: { step: CHROMATIC[idx].s, accidental: CHROMATIC[idx].a, octave: oct2 } }
     }
     get()._snapshot()
-    const { score, selectedMeasureRange, selectedMeasureIndex } = get()
+    const { score, selectedMeasureRange, selectedMeasureIndex, selectedPartId } = get()
     const start = selectedMeasureRange?.start ?? selectedMeasureIndex ?? 0
     const end   = selectedMeasureRange?.end   ?? selectedMeasureIndex ?? (score.parts[0]?.measures.length - 1)
     set(s => ({
@@ -339,7 +348,9 @@ export const useScoreStore = create((set, get) => ({
     saveToStorage(get().score)
   },
 
-  // ── Ties ──────────────────────────────────────────────────────────────────
+  // ── Ties ──────────────────────────────────────────────────────────────
+  // A tie links a note to the next note of the same pitch.
+  // We store tieStart:true on the note that starts the tie.
   toggleTie: () => {
     const { selectedNoteId, selectedPartId, selectedMeasureIndex, score } = get()
     if (!selectedNoteId) return
@@ -353,7 +364,21 @@ export const useScoreStore = create((set, get) => ({
     saveToStorage(get().score)
   },
 
-  // ── Slurs ─────────────────────────────────────────────────────────────────
+  // ── Slurs ─────────────────────────────────────────────────────────────
+  toggleSlurEnd: () => {
+    const { selectedNoteId, selectedPartId, selectedMeasureIndex, score } = get()
+    if (!selectedNoteId) return
+    const note = score.parts.find(p => p.id === selectedPartId)
+      ?.measures[selectedMeasureIndex]?.notes.find(n => n.id === selectedNoteId)
+    if (!note || note.isRest) return
+    get()._snapshot()
+    get()._applyToMeasure(selectedPartId, selectedMeasureIndex, notes =>
+      notes.map(n => n.id === selectedNoteId
+        ? { ...n, slurEnd: !n.slurEnd, slurStart: false } : n)
+    )
+    saveToStorage(get().score)
+  },
+
   toggleSlurStart: () => {
     const { selectedNoteId, selectedPartId, selectedMeasureIndex, score } = get()
     if (!selectedNoteId) return
@@ -366,7 +391,6 @@ export const useScoreStore = create((set, get) => ({
     )
     saveToStorage(get().score)
   },
-
   setPlaybackBeat: (beat) => set({ playbackBeat: beat }),
 
   getDefaultOctaveForPart: (partId) => {
@@ -374,7 +398,8 @@ export const useScoreStore = create((set, get) => ({
     return part?.clef === 'bass' ? 3 : 4
   },
 
-  // ── Selection ─────────────────────────────────────────────────────────────
+  // ── Selection ──────────────────────────────────────────────────────────────
+
   selectMeasure: (partId, measureIndex) => {
     const part = get().score.parts.find(p => p.id === partId)
     set({
@@ -385,6 +410,7 @@ export const useScoreStore = create((set, get) => ({
     })
   },
 
+  // Select any note or rest by id
   selectNote: (noteId, partId, measureIndex) => {
     const part = get().score.parts.find(p => p.id === partId)
     const note = part?.measures[measureIndex]?.notes.find(n => n.id === noteId)
@@ -393,6 +419,7 @@ export const useScoreStore = create((set, get) => ({
       selectedNoteId: noteId,
       selectedPartId: partId,
       selectedMeasureIndex: measureIndex,
+      // Sync toolbar to match selected note
       selectedDuration: note.duration,
       selectedDots: note.dots || 0,
     })
@@ -408,11 +435,13 @@ export const useScoreStore = create((set, get) => ({
   },
 
   // ── Global settings ────────────────────────────────────────────────────────
+
   setGlobalKeySignature: (keySignature) => set(s => ({
     score: { ...s.score, parts: s.score.parts.map(p => ({ ...p, measures: p.measures.map(m => ({ ...m, keySignature })) })) },
   })),
 
   setGlobalTimeSignature: (beatsOrObj, beatType) => {
+    // Accept either setGlobalTimeSignature({beats,beatType}) or setGlobalTimeSignature(beats, beatType)
     const ts = (typeof beatsOrObj === 'object' && beatsOrObj !== null)
       ? beatsOrObj
       : { beats: beatsOrObj, beatType }
@@ -425,6 +454,7 @@ export const useScoreStore = create((set, get) => ({
           measures: p.measures.map((m, mIdx) => ({
             ...m,
             timeSignature: ts,
+            // Use unique prefix per measure to prevent duplicate React keys
             notes: normalizeMeasure(m.notes, ts.beats).map((n, ni) =>
               n.isRest && n.id.startsWith('init_')
                 ? { ...n, id: `ts_${ts.beats}_${ts.beatType}_m${mIdx}_r${ni}_${Date.now()}` }
@@ -436,66 +466,17 @@ export const useScoreStore = create((set, get) => ({
     }))
   },
 
-  // ── NEW: Change clef for a specific part ──────────────────────────────────
-  setPartClef: (partId, clef) => {
-    get()._snapshot()
-    set(s => ({
-      score: {
-        ...s.score,
-        parts: s.score.parts.map(p =>
-          p.id !== partId ? p : { ...p, clef }
-        ),
-      },
-    }))
-    saveToStorage(get().score)
-  },
+  // ── Core note mutation: always normalizes after every change ───────────────
 
-  // ── NEW: Change instrument for a specific part ────────────────────────────
-  setPartInstrument: (partId, instrumentId) => {
-    get()._snapshot()
-    const instr = INSTRUMENTS.find(i => i.id === instrumentId)
-    set(s => ({
-      score: {
-        ...s.score,
-        parts: s.score.parts.map(p =>
-          p.id !== partId ? p : {
-            ...p,
-            instrument: instrumentId,
-            name: instr?.label || p.name,
-            clef: instr?.defaultClef || p.clef,
-          }
-        ),
-      },
-    }))
-    saveToStorage(get().score)
-  },
-
-  // ── NEW: Apply a barline type to a measure ────────────────────────────────
-  _applyBarline: (measureIndex, barlineType) => {
-    if (measureIndex === null) return
-    get()._snapshot()
-    set(s => ({
-      score: {
-        ...s.score,
-        parts: s.score.parts.map(p => ({
-          ...p,
-          measures: p.measures.map((m, i) =>
-            i === measureIndex ? { ...m, barline: barlineType } : m
-          ),
-        })),
-      },
-    }))
-    saveToStorage(get().score)
-  },
-
-  // ── Core note mutation ─────────────────────────────────────────────────────
-  _applyToMeasure: (partId, measureIndex, fn) => {
+  _applyToMeasure: (partId, measureIndex, fn, skipNormalize = false) => {
     set(s => {
       const part = s.score.parts.find(p => p.id === partId)
       const measure = part?.measures[measureIndex]
       if (!measure) return s
       const newNotes = fn(measure.notes, measure.timeSignature.beats)
-      const normalized = normalizeMeasure(newNotes, measure.timeSignature.beats)
+      const normalized = skipNormalize
+        ? newNotes
+        : normalizeMeasure(newNotes, measure.timeSignature.beats)
       const newScore = {
         ...s.score,
         parts: s.score.parts.map(p => p.id !== partId ? p : {
@@ -503,40 +484,67 @@ export const useScoreStore = create((set, get) => ({
           measures: p.measures.map((m, i) => i !== measureIndex ? m : { ...m, notes: normalized }),
         }),
       }
+      // Auto-save on every mutation
       saveToStorage(newScore)
       return { score: newScore }
     })
   },
 
+  // ── Place a note at a selected rest position ───────────────────────────────
+  // When user selects a rest then presses a note key or clicks chromatic
   fillSelectedRest: (pitch) => {
     get()._snapshot()
-    const { selectedNoteId, selectedPartId, selectedMeasureIndex, selectedDuration, selectedDots } = get()
+        const { selectedNoteId, selectedPartId, selectedMeasureIndex, selectedDuration, selectedDots } = get()
     if (!selectedNoteId || selectedMeasureIndex === null) return
+
     const part = get().score.parts.find(p => p.id === selectedPartId)
     const note = part?.measures[selectedMeasureIndex]?.notes.find(n => n.id === selectedNoteId)
     if (!note?.isRest) return
+
     const restBeats = noteDuration(note)
     const newDurKey = selectedDuration + (selectedDots ? 'd' : '')
     const newBeats  = DURATION_BEATS[newDurKey] || DURATION_BEATS[selectedDuration] || 1
+
     if (newBeats > restBeats + 0.001) {
+      // Can't fit — try to use the rest's own duration instead
       const fit = beatsToRest(restBeats)
-      const newNote = { ...note, isRest: false, pitch, duration: fit.duration, dots: fit.dots }
+      // Use the whole rest slot
+      const newNote = {
+        ...note,
+        isRest: false,
+        pitch,
+        duration: fit.duration,
+        dots: fit.dots,
+      }
       get()._replaceNote(selectedNoteId, selectedPartId, selectedMeasureIndex, newNote)
       return
     }
-    const newNoteObj = { id: note.id, isRest: false, pitch, duration: selectedDuration, dots: selectedDots || 0 }
+
+    // Replace the rest: new note + leftover rest
+    const newNoteObj = {
+      id: note.id,
+      isRest: false,
+      pitch,
+      duration: selectedDuration,
+      dots: selectedDots || 0,
+    }
+
     const leftover = restBeats - newBeats
+    // skipNormalize=true: the leftover rest must stay RIGHT AFTER the new note,
+    // not be moved to the end of the bar by normalizeMeasure
     get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) => {
       const idx = notes.findIndex(n => n.id === selectedNoteId)
       if (idx === -1) return notes
-      const before = notes.slice(0, idx)
-      const after  = notes.slice(idx + 1)
+      const before    = notes.slice(0, idx)
+      const after     = notes.slice(idx + 1)
       const leftovers = leftover > 0.001 ? makeRests(leftover, `after_${note.id}`) : []
       return [...before, newNoteObj, ...leftovers, ...after]
-    })
+    }, true) // <-- skipNormalize
+
     set({ selectedNoteId: newNoteObj.id })
   },
 
+  // Replace a specific note in-place (used internally)
   _replaceNote: (noteId, partId, measureIndex, newNote) => {
     get()._applyToMeasure(partId, measureIndex, (notes) =>
       notes.map(n => n.id === noteId ? newNote : n)
@@ -544,83 +552,135 @@ export const useScoreStore = create((set, get) => ({
     set({ selectedNoteId: newNote.id })
   },
 
+  // ── Change duration of selected note/rest ──────────────────────────────────
+  // This is the key feature: resize any note or rest
   changeSelectedDuration: (newDuration, newDots) => {
     const { selectedNoteId, selectedPartId, selectedMeasureIndex } = get()
     if (!selectedNoteId || selectedMeasureIndex === null) return
+
     const part = get().score.parts.find(p => p.id === selectedPartId)
     const measure = part?.measures[selectedMeasureIndex]
     if (!measure) return
+
     const note = measure.notes.find(n => n.id === selectedNoteId)
     if (!note) return
+
     const newKey   = newDuration + (newDots ? 'd' : '')
     const newBeats = DURATION_BEATS[newKey] || DURATION_BEATS[newDuration] || 1
-    const otherRealNotes = measure.notes.filter(n => !n.chordWith && !n.isRest && n.id !== selectedNoteId)
+
+    // CRITICAL FIX: Only count real NOTES (non-rests) as occupied beats.
+    // Rests are free space — if we counted them, a note could never grow
+    // back after being shrunk (e.g. whole → quarter → whole would be blocked).
+    // normalizeMeasure will automatically absorb or recreate rests around
+    // the resized note to keep the measure exactly full.
+    const otherRealNotes = measure.notes.filter(n =>
+      !n.chordWith && !n.isRest && n.id !== selectedNoteId
+    )
     const othersBeats = otherRealNotes.reduce((sum, n) => sum + noteDuration(n), 0)
     const available = measure.timeSignature.beats - othersBeats
+
     if (newBeats > available + 0.001) {
-      const fit = beatsToRest(available)
-      const fitKey = fit.duration + (fit.dots ? 'd' : '')
+      // Note overflows the bar.
+      // Step 1: fit what we can into this bar (with tieStart so VexFlow draws the tie)
+      const fit      = beatsToRest(available)
+      const fitKey   = fit.duration + (fit.dots ? 'd' : '')
       const fitBeats = DURATION_BEATS[fitKey] || DURATION_BEATS[fit.duration] || 1
       if (fitBeats < 0.001) return
+
       get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) =>
-        notes.map(n => n.id === selectedNoteId ? { ...n, duration: fit.duration, dots: fit.dots } : n)
+        notes.map(n => n.id === selectedNoteId
+          ? { ...n, duration: fit.duration, dots: fit.dots, tieStart: true }
+          : n)
       )
-      set({ selectedDuration: fit.duration, selectedDots: fit.dots })
+      set({ selectedDuration: newDuration, selectedDots: newDots || 0 })
+
+      // Step 2: insert continuation note in the next bar (the overflow beats)
+      const overflowBeats = newBeats - fitBeats
+      if (overflowBeats > 0.001 && note.pitch && !note.isRest) {
+        const nextIdx  = selectedMeasureIndex + 1
+        const nextPart = get().score.parts.find(p => p.id === selectedPartId)
+        const nextM    = nextPart?.measures[nextIdx]
+        if (nextM) {
+          const contBeats = Math.min(overflowBeats, nextM.timeSignature.beats)
+          const contDur   = beatsToRest(contBeats)
+          const contId    = crypto.randomUUID()
+          get()._applyToMeasure(selectedPartId, nextIdx, (notes) => {
+            const firstRestIdx = notes.findIndex(n => n.isRest && !n.chordWith)
+            if (firstRestIdx < 0) return notes
+            const firstRest = notes[firstRestIdx]
+            const restBeats = noteDuration(firstRest)
+            const contNote  = {
+              id: contId, isRest: false, pitch: note.pitch,
+              duration: contDur.duration, dots: contDur.dots,
+            }
+            const leftover  = restBeats - contBeats
+            const leftovers = leftover > 0.001 ? makeRests(leftover, `cont_${contId}`) : []
+            return [
+              ...notes.slice(0, firstRestIdx),
+              contNote,
+              ...leftovers,
+              ...notes.slice(firstRestIdx + 1),
+            ]
+          }, true) // skipNormalize so continuation note stays in position
+        }
+      }
       return
     }
+
+    // Normal case: note fits — just apply the new duration
     get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) =>
       notes.map(n => n.id === selectedNoteId ? { ...n, duration: newDuration, dots: newDots || 0 } : n)
     )
     set({ selectedDuration: newDuration, selectedDots: newDots || 0 })
-    const overflowBeats = newBeats - available
-    if (overflowBeats > 0.001 && note.pitch && !note.isRest) {
-      const nextIdx  = selectedMeasureIndex + 1
-      const nextPart = get().score.parts.find(p => p.id === selectedPartId)
-      const nextM    = nextPart?.measures[nextIdx]
-      if (nextM) {
-        const contDur = beatsToRest(Math.min(overflowBeats, nextM.timeSignature.beats))
-        const contId  = crypto.randomUUID()
-        get()._applyToMeasure(selectedPartId, nextIdx, (notes) => {
-          const firstRest = notes.find(n => n.isRest)
-          if (!firstRest) return notes
-          const restBeats  = noteDuration(firstRest)
-          const leftover   = restBeats - (DURATION_BEATS[contDur.duration+(contDur.dots?'d':'')] || DURATION_BEATS[contDur.duration] || 1)
-          const contNote   = { id: contId, isRest: false, pitch: note.pitch,
-            duration: contDur.duration, dots: contDur.dots, tieStart: false }
-          const idx        = notes.findIndex(n => n.id === firstRest.id)
-          const leftovers  = leftover > 0.001 ? makeRests(leftover, `cont_${contId}`) : []
-          return [...notes.slice(0, idx), contNote, ...leftovers, ...notes.slice(idx+1)]
-        })
-      }
-    }
   },
 
+  // ── Standard note add (appends to end of real notes) ──────────────────────
+
+  // ── Drop note at specific beat position (drag-and-drop from toolbar) ────────
+  // beatPosition = fractional beat index within the measure (0 = start, 1 = after beat 1, etc.)
+  // The note is inserted at the rest slot whose beat range contains beatPosition.
   dropNoteAtBeat: (partId, measureIndex, pitch, duration, dots, beatPosition) => {
     get()._snapshot()
-    const part    = get().score.parts.find(p => p.id === partId)
+        const part    = get().score.parts.find(p => p.id === partId)
     const measure = part?.measures[measureIndex]
     if (!measure) return
-    const maxBeats    = measure.timeSignature.beats
+
+    const maxBeats  = measure.timeSignature.beats
     const clampedBeat = Math.max(0, Math.min(beatPosition, maxBeats - 0.001))
-    const nonChord    = measure.notes.filter(n => !n.chordWith)
-    let cursor = 0, targetRest = null
+
+    // Find which rest slot the drop position falls into
+    // Walk through non-chord notes, tracking beat cursor, find the rest at clampedBeat
+    const nonChord = measure.notes.filter(n => !n.chordWith)
+    let cursor = 0
+    let targetRest = null
+
     for (const n of nonChord) {
       const dur = noteDuration(n)
       if (n.isRest && clampedBeat >= cursor - 0.001 && clampedBeat < cursor + dur - 0.001) {
-        targetRest = n; break
+        targetRest = n
+        break
       }
       cursor += dur
     }
-    if (!targetRest) targetRest = nonChord.find(n => n.isRest)
-    if (!targetRest) return
-    const restBeats   = noteDuration(targetRest)
-    const durKey      = duration + (dots ? 'd' : '')
-    const newBeats    = DURATION_BEATS[durKey] || DURATION_BEATS[duration] || 1
-    const actualBeats = Math.min(newBeats, restBeats)
-    const fitDur      = actualBeats === newBeats ? { duration, dots: dots || 0 } : beatsToRest(restBeats)
+
+    // If no rest found at that position (it's occupied by a note), find the next rest
+    if (!targetRest) {
+      targetRest = nonChord.find(n => n.isRest)
+    }
+    if (!targetRest) return  // measure is completely full of real notes
+
+    const restBeats  = noteDuration(targetRest)
+    const durKey     = duration + (dots ? 'd' : '')
+    const newBeats   = DURATION_BEATS[durKey] || DURATION_BEATS[duration] || 1
+    const actualBeats = Math.min(newBeats, restBeats)  // clamp to fit
+    const fitDur     = actualBeats === newBeats
+      ? { duration, dots: dots || 0 }
+      : beatsToRest(restBeats)
+
     const newId   = crypto.randomUUID()
     const newNote = { id: newId, isRest: false, pitch, duration: fitDur.duration, dots: fitDur.dots }
     const leftover = restBeats - noteDuration(newNote)
+
     get()._applyToMeasure(partId, measureIndex, (notes) => {
       const idx      = notes.findIndex(n => n.id === targetRest.id)
       const before   = notes.slice(0, idx)
@@ -628,16 +688,28 @@ export const useScoreStore = create((set, get) => ({
       const leftovers = leftover > 0.001 ? makeRests(leftover, `drop_${newId}`) : []
       return [...before, newNote, ...leftovers, ...after]
     })
-    set({ selectedPartId: partId, selectedMeasureIndex: measureIndex, selectedNoteId: newId })
+
+    set({
+      selectedPartId:       partId,
+      selectedMeasureIndex: measureIndex,
+      selectedNoteId:       newId,
+    })
   },
 
+
+  // ── Add a note as a chord companion to an existing note ──────────────────
+  // baseNoteId must be a real (non-rest) note. The new pitch is stacked on
+  // the same beat with the same duration. Works regardless of chordMode.
   addChordNote: (partId, measureIndex, baseNoteId, pitch) => {
     get()._snapshot()
-    const part    = get().score.parts.find(p => p.id === partId)
+        const part    = get().score.parts.find(p => p.id === partId)
     const measure = part?.measures[measureIndex]
     if (!measure || !pitch) return
+
     const base = measure.notes.find(n => n.id === baseNoteId && !n.isRest)
     if (!base) return
+
+    // Don't add duplicate pitch
     const existingChords = measure.notes.filter(n => n.chordWith === baseNoteId)
     const allPitches = [base, ...existingChords]
     const alreadyExists = allPitches.some(n =>
@@ -646,9 +718,10 @@ export const useScoreStore = create((set, get) => ({
       (n.pitch?.accidental ?? null) === (pitch.accidental ?? null)
     )
     if (alreadyExists) return
+
     const newId = crypto.randomUUID()
     set(s => ({
-      selectedNoteId: baseNoteId,
+      selectedNoteId: baseNoteId,  // keep selection on the BASE note for continued chording
       score: {
         ...s.score,
         parts: s.score.parts.map(p => p.id !== partId ? p : {
@@ -656,8 +729,11 @@ export const useScoreStore = create((set, get) => ({
           measures: p.measures.map((m, i) => i !== measureIndex ? m : {
             ...m,
             notes: [...m.notes, {
-              id: newId, isRest: false, pitch,
-              duration: base.duration, dots: base.dots,
+              id: newId,
+              isRest: false,
+              pitch,
+              duration: base.duration,
+              dots: base.dots,
               chordWith: baseNoteId,
             }],
           }),
@@ -668,31 +744,51 @@ export const useScoreStore = create((set, get) => ({
 
   addNote: (partId, measureIndex, noteData) => {
     get()._snapshot()
-    const state = get()
+        const state = get()
     const { chordMode, selectedNoteId } = state
+
+    // Ensure column exists
     const totalCols = Math.max(...state.score.parts.map(p => p.measures.length))
     if (measureIndex >= totalCols) {
       set(s => ({ score: { ...s.score, parts: padPartsToCount(s.score.parts, measureIndex + 1) } }))
     }
+
     const part = get().score.parts.find(p => p.id === partId)
     const measure = part?.measures[measureIndex]
     if (!measure) return
+
+    // Chord mode: if chordMode is on AND a real note is selected in this measure,
+    // stack the new note on top of the selected one (same beat, same duration)
     if (chordMode && selectedNoteId) {
       const base = measure.notes.find(n => n.id === selectedNoteId && !n.isRest)
-      if (base) { get().addChordNote(partId, measureIndex, selectedNoteId, noteData.pitch); return }
+      if (base) {
+        get().addChordNote(partId, measureIndex, selectedNoteId, noteData.pitch)
+        return
+      }
     }
+
+    // Check if the selected note is a rest — fill it instead
     const selNote = measure.notes.find(n => n.id === selectedNoteId)
-    if (selNote?.isRest) { get().fillSelectedRest(noteData.pitch); return }
+    if (selNote?.isRest) {
+      get().fillSelectedRest(noteData.pitch)
+      return
+    }
+
+    // Find how many beats are already used by real (non-rest, non-chord) notes
     const realNotes = measure.notes.filter(n => !n.chordWith && !n.isRest)
     const usedBeats = realNotes.reduce((sum, n) => sum + noteDuration(n), 0)
     const available = measure.timeSignature.beats - usedBeats
+
     if (available < 0.001) {
+      // Measure full — advance to next
       const nextIdx = measureIndex + 1
       const newTotal = Math.max(...get().score.parts.map(p => p.measures.length), nextIdx + 1)
       set(s => ({ score: { ...s.score, parts: padPartsToCount(s.score.parts, newTotal) } }))
+
       const newPart = get().score.parts.find(p => p.id === partId)
       const nextMeasure = newPart?.measures[nextIdx]
       if (!nextMeasure) return
+
       const newId = crypto.randomUUID()
       get()._applyToMeasure(partId, nextIdx, (notes) => {
         const rests = notes.filter(n => n.isRest)
@@ -704,37 +800,48 @@ export const useScoreStore = create((set, get) => ({
         const leftover = restBeats - noteDuration(newNote)
         const idx = notes.findIndex(n => n.id === firstRest.id)
         const leftovers = leftover > 0.001 ? makeRests(leftover, `adv_${newId}`) : []
+        // Only remove the specific rest slot we replaced, keep everything else
         return [...notes.slice(0, idx), newNote, ...leftovers, ...notes.slice(idx + 1)]
       })
       set({ selectedMeasureIndex: nextIdx, selectedNoteId: newId })
       return
     }
+
+    // Insert into current measure — replaces the first rest slot
     const newId = crypto.randomUUID()
     get()._applyToMeasure(partId, measureIndex, (notes) => {
       const firstRest = notes.find(n => n.isRest)
       if (!firstRest) return notes
+
       const restBeats = noteDuration(firstRest)
       const durKey = noteData.duration + (noteData.dots ? 'd' : '')
       let nb = DURATION_BEATS[durKey] || DURATION_BEATS[noteData.duration] || 1
-      if (nb > restBeats + 0.001) nb = restBeats
+      if (nb > restBeats + 0.001) nb = restBeats  // clamp
+
       const fit = nb === restBeats ? noteData : { ...noteData, ...beatsToRest(restBeats) }
       const newNote = { id: newId, ...fit, isRest: false, pitch: noteData.pitch }
       const leftover = restBeats - noteDuration(newNote)
       const idx = notes.findIndex(n => n.id === firstRest.id)
       const leftovers = leftover > 0.001 ? makeRests(leftover, `fill2_${newId}`) : []
+      // Only replace this specific rest slot; keep other notes/rests in place
       return [...notes.slice(0, idx), newNote, ...leftovers, ...notes.slice(idx + 1)]
     })
     set({ selectedNoteId: newId })
   },
 
+  // ── Update note properties ─────────────────────────────────────────────────
   updateNote: (partId, measureIndex, noteId, changes) => {
+    // If duration is changing, use changeSelectedDuration for safety
     if (changes.duration !== undefined || changes.dots !== undefined) {
       const note = get().score.parts.find(p => p.id === partId)?.measures[measureIndex]?.notes.find(n => n.id === noteId)
       if (note) {
         const newDur  = changes.duration !== undefined ? changes.duration : note.duration
         const newDots = changes.dots !== undefined ? changes.dots : (note.dots || 0)
+        // Temporarily select this note, change duration, then restore selection
+        const prev = { partId: get().selectedPartId, idx: get().selectedMeasureIndex, noteId: get().selectedNoteId }
         set({ selectedNoteId: noteId, selectedPartId: partId, selectedMeasureIndex: measureIndex })
         get().changeSelectedDuration(newDur, newDots)
+        // Apply remaining non-duration changes
         const otherChanges = Object.fromEntries(Object.entries(changes).filter(([k]) => k !== 'duration' && k !== 'dots'))
         if (Object.keys(otherChanges).length > 0) {
           get()._applyToMeasure(partId, measureIndex, (notes) =>
@@ -749,17 +856,20 @@ export const useScoreStore = create((set, get) => ({
     )
   },
 
+  // ── Delete note → becomes a rest ──────────────────────────────────────────
   deleteNote: (partId, measureIndex, noteId) => {
     get()._snapshot()
-    get()._applyToMeasure(partId, measureIndex, (notes) => {
+        get()._applyToMeasure(partId, measureIndex, (notes) => {
       const note = notes.find(n => n.id === noteId)
       if (!note || note.isRest) return notes
+      // Replace with rest of same duration
       const rest = { ...beatsToRest(noteDuration(note)), id: noteId, isRest: true, pitch: null }
       return notes.map(n => n.id === noteId ? rest : n).filter(n => n.chordWith !== noteId)
     })
     set({ selectedNoteId: null })
   },
 
+  // ── Delete last real note in measure ──────────────────────────────────────
   deleteLastNote: (partId, measureIndex) => {
     get()._applyToMeasure(partId, measureIndex, (notes) => {
       const realNotes = notes.filter(n => !n.isRest && !n.chordWith)
@@ -771,6 +881,8 @@ export const useScoreStore = create((set, get) => ({
     set({ selectedNoteId: null })
   },
 
+  // ── Measure operations ─────────────────────────────────────────────────────
+
   clearMeasureColumn: (colIndex) => set(s => ({
     selectedNoteId: null,
     score: {
@@ -778,7 +890,8 @@ export const useScoreStore = create((set, get) => ({
       parts: s.score.parts.map(p => ({
         ...p,
         measures: p.measures.map((m, i) => i !== colIndex ? m : {
-          ...m, notes: normalizeMeasure([], m.timeSignature.beats),
+          ...m,
+          notes: normalizeMeasure([], m.timeSignature.beats),
         }),
       })),
     },
@@ -809,12 +922,10 @@ export const useScoreStore = create((set, get) => ({
     }))
   },
 
-  addPart: (clef = 'treble', name, instrumentId) => {
+  addPart: (clef = 'treble', name) => {
     const state = get()
     const count = Math.max(...state.score.parts.map(p => p.measures.length), 1)
     const lastM = state.score.parts[0]?.measures[count - 1]
-    const instr = INSTRUMENTS.find(i => i.id === instrumentId)
-    const effectiveClef = instr?.defaultClef || clef
     const measures = Array.from({ length: count }, () =>
       makeEmptyMeasure(lastM?.timeSignature, lastM?.keySignature)
     )
@@ -823,10 +934,8 @@ export const useScoreStore = create((set, get) => ({
         ...s.score,
         parts: [...s.score.parts, {
           id: crypto.randomUUID(),
-          name: name || instr?.label || (effectiveClef === 'bass' ? 'Bass' : 'Treble'),
-          instrument: instrumentId || (effectiveClef === 'bass' ? 'piano-bass' : 'piano'),
-          clef: effectiveClef,
-          measures,
+          name: name || (clef === 'bass' ? 'Bass' : 'Treble'),
+          instrument: 'piano', clef, measures,
         }],
       },
     }))
@@ -874,8 +983,12 @@ export const useScoreStore = create((set, get) => ({
     )
   },
 
-  shiftPitchStep: (dir) => { get().shiftPitchHalfStep(dir) },
+  // Plain ↑↓ = chromatic half-step (same logic as shiftPitchHalfStep)
+  shiftPitchStep: (dir) => {
+    get().shiftPitchHalfStep(dir)
+  },
 
+  // Shift+↑↓ = octave jump
   shiftPitchOctave: (dir) => {
     const { score, selectedNoteId, selectedPartId, selectedMeasureIndex } = get()
     const note = score.parts.find(p => p.id === selectedPartId)
@@ -887,20 +1000,9 @@ export const useScoreStore = create((set, get) => ({
     )
   },
 
-  moveNote: (noteId, fromPartId, fromMeasureIndex, toPartId, toMeasureIndex) => {
-    const { score } = get()
-    const fromPart = score.parts.find(p => p.id === fromPartId)
-    const note     = fromPart?.measures[fromMeasureIndex]?.notes.find(n => n.id === noteId)
-    if (!note || note.isRest) return
-    get()._snapshot()
-    get().deleteNote(fromPartId, fromMeasureIndex, noteId)
-    get().addNote(toPartId, toMeasureIndex, {
-      pitch: note.pitch, duration: note.duration, dots: note.dots || 0
-    })
-  },
-
   loadScore: (score) => set({ score }),
 
+  // ── Move a part up or down in the list ──────────────────────────────────
   movePartUp: (partId) => {
     set(s => {
       const parts = [...s.score.parts]
@@ -921,30 +1023,50 @@ export const useScoreStore = create((set, get) => ({
     })
   },
 
+  // ── Insert a triplet group ────────────────────────────────────────────────
+  // Inserts 3 notes of duration `baseDuration` as a triplet (each = 2/3 of base)
+  // into the selected measure at the current cursor position.
+  // e.g. baseDuration='q' → 3 quarter-note triplets filling 2 beats
   insertTriplet: (baseDuration) => {
     const { selectedPartId, selectedMeasureIndex } = get()
     if (selectedMeasureIndex === null) return
     get()._snapshot()
+
     const part    = get().score.parts.find(p => p.id === selectedPartId)
     const measure = part?.measures[selectedMeasureIndex]
     if (!measure) return
+
+    // Each triplet note = 2/3 of the base duration
     const key = baseDuration + 't'
     const tripletBeats = DURATION_BEATS[key] || (DURATION_BEATS[baseDuration] * 2/3)
-    const totalBeats   = tripletBeats * 3
+    const totalBeats   = tripletBeats * 3  // = 2 × base
+
+    // Find a rest slot big enough to fit the triplet group
     const nonChord = measure.notes.filter(n => !n.chordWith)
     let targetRest = null
     for (const n of nonChord) {
-      if (n.isRest && noteDuration(n) >= totalBeats - 0.001) { targetRest = n; break }
+      if (n.isRest && noteDuration(n) >= totalBeats - 0.001) {
+        targetRest = n; break
+      }
     }
-    if (!targetRest) return
+    if (!targetRest) return  // no space
+
     const restBeats  = noteDuration(targetRest)
     const leftover   = restBeats - totalBeats
-    const groupId    = crypto.randomUUID()
+    const groupId    = crypto.randomUUID()  // shared ID links the 3 notes as a triplet
+
     const tripletNotes = [0,1,2].map(i => ({
-      id: crypto.randomUUID(), isRest: true, pitch: null,
-      duration: baseDuration, dots: 0,
-      triplet: true, tripletGroupId: groupId, tripletIndex: i, tripletOf: 3,
+      id: crypto.randomUUID(),
+      isRest: true,
+      pitch: null,
+      duration: baseDuration,
+      dots: 0,
+      triplet: true,
+      tripletGroupId: groupId,
+      tripletIndex: i,
+      tripletOf: 3,
     }))
+
     get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) => {
       const idx      = notes.findIndex(n => n.id === targetRest.id)
       const before   = notes.slice(0, idx)
@@ -952,11 +1074,13 @@ export const useScoreStore = create((set, get) => ({
       const leftovers = leftover > 0.001 ? makeRests(leftover, `trip_after`) : []
       return [...before, ...tripletNotes, ...leftovers, ...after]
     })
+
+    // Select the first triplet note
     set({ selectedNoteId: tripletNotes[0].id })
     saveToStorage(get().score)
   },
 
-  // ── Dynamics ──────────────────────────────────────────────────────────────
+  // ── Dynamics ────────────────────────────────────────────────────────────
   addDynamic: (partId, measureIndex, beat, value) => {
     get()._snapshot()
     const id = crypto.randomUUID()
@@ -972,7 +1096,7 @@ export const useScoreStore = create((set, get) => ({
     saveToStorage(get().score)
   },
 
-  // ── Hairpins ──────────────────────────────────────────────────────────────
+  // ── Hairpins ────────────────────────────────────────────────────────────
   addHairpin: (partId, startMeasure, startBeat, endMeasure, endBeat, type) => {
     get()._snapshot()
     const id = crypto.randomUUID()
@@ -986,7 +1110,7 @@ export const useScoreStore = create((set, get) => ({
     saveToStorage(get().score)
   },
 
-  // ── Rehearsal marks ───────────────────────────────────────────────────────
+  // ── Rehearsal marks ──────────────────────────────────────────────────────
   addRehearsalMark: (measureIndex, text) => {
     get()._snapshot()
     const id = crypto.randomUUID()
@@ -1008,10 +1132,6 @@ export const useScoreStore = create((set, get) => ({
     set(s => ({ score: { ...s.score,
       staffTexts: [...(s.score.staffTexts||[]), { id, partId, measureIndex, beat, text }]
     }}))
-    saveToStorage(get().score)
-  },
-  removeStaffText: (id) => {
-    set(s => ({ score: { ...s.score, staffTexts: (s.score.staffTexts||[]).filter(t => t.id !== id) }}))
     saveToStorage(get().score)
   },
 }))

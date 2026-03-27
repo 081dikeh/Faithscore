@@ -146,7 +146,7 @@ export default function Toolbar() {
           </TBtn>
         ))}
         {/* Triplet button */}
-        <TBtn active={false} onClick={() => {}} title="Triplet (3) — select 3 notes then press T3">
+        <TBtn active={false} onClick={() => selectedMeasureIndex !== null && insertTriplet(activeDur)} title="Insert triplet (current duration)">
           <span style={{ fontSize: 11, fontWeight: 700 }}>³</span>
         </TBtn>
         <TBtn active={!!activeDots} onClick={handleDot} title="Dot (.)">
