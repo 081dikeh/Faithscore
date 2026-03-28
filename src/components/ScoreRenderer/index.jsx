@@ -451,35 +451,78 @@ export default function ScoreRenderer() {
               })
             } catch(_) {}
 
-            // ── Ties ────────────────────────────────────────────────────────
-            // Draw a tie from each note with tieStart=true to the next note
-            // with the same pitch (in this measure or the next)
+            // ── TIES ──────────────────────────────────────────────────────
+            // Per the spec: ties connect same-pitch notes to extend duration.
+            // tieStart on a note = draw arc from that note to the NEXT SAME-PITCH note.
+            // If no same-pitch note exists in this measure, draw a half-arc off the
+            // right barline (the arriving half is drawn when rendering the next measure).
+            const samePitch = (a, b) =>
+              a?.pitch && b?.pitch &&
+              a.pitch.step === b.pitch.step &&
+              a.pitch.octave === b.pitch.octave &&
+              (a.pitch.accidental ?? null) === (b.pitch.accidental ?? null)
+
             renderSeq.forEach((seqNote, ni) => {
               if (!seqNote.tieStart || seqNote.isRest) return
-              const nextNote = renderSeq[ni + 1]
-              if (!nextNote || nextNote.isRest) return
+              // Find next same-pitch note in this measure
+              const targetIdx = renderSeq.findIndex((n, i) => i > ni && !n.isRest && samePitch(seqNote, n))
               try {
-                const tie = new StaveTie({
-                  first_note:    vfNotes[ni],
-                  last_note:     vfNotes[ni + 1],
-                  first_indices: [0],
-                  last_indices:  [0],
-                })
-                tie.setContext(ctx).draw()
+                if (targetIdx >= 0) {
+                  // Within-measure tie to same-pitch note
+                  new StaveTie({
+                    first_note: vfNotes[ni], last_note: vfNotes[targetIdx],
+                    first_indices: [0], last_indices: [0],
+                  }).setContext(ctx).draw()
+                } else {
+                  // Half-tie off the right barline — continues in next measure
+                  new StaveTie({
+                    first_note: vfNotes[ni], last_note: null,
+                    first_indices: [0], last_indices: [0],
+                  }).setContext(ctx).draw()
+                }
               } catch(_) {}
             })
 
-            // ── Slurs ────────────────────────────────────────────────────────
-            // Draw a slur arc from slurStart note to the next real note
+            // ── Arriving tie from previous measure ────────────────────────────
+            // If the previous measure's last real note had tieStart=true,
+            // draw the arriving half-arc to the first same-pitch note here.
+            try {
+              const prevM = part.measures[col - 1]
+              if (prevM) {
+                const prevSeq = prevM.notes.filter(n => !n.chordWith)
+                const prevTied = prevSeq.slice().reverse().find(n => !n.isRest && n.tieStart)
+                if (prevTied) {
+                  const arrIdx = renderSeq.findIndex(n => !n.isRest && samePitch(prevTied, n))
+                  const fallback = renderSeq.findIndex(n => !n.isRest)
+                  const target = arrIdx >= 0 ? arrIdx : fallback
+                  if (target >= 0) {
+                    new StaveTie({
+                      first_note: null, last_note: vfNotes[target],
+                      first_indices: [0], last_indices: [0],
+                    }).setContext(ctx).draw()
+                  }
+                }
+              }
+            } catch(_) {}
+
+            // ── SLURS ──────────────────────────────────────────────────────
+            // Per the spec: slurs connect DIFFERENT-pitch notes for legato phrasing.
+            // slurStart marks the first note; slurEnd marks the last note of the group.
+            // The slur arc spans from slurStart to slurEnd (or to last real note if no slurEnd).
             renderSeq.forEach((seqNote, ni) => {
               if (!seqNote.slurStart || seqNote.isRest) return
-              const nextIdx = renderSeq.findIndex((n, i) => i > ni && !n.isRest)
-              if (nextIdx < 0) return
+              // Find the slurEnd note, or fall back to last real note in measure
+              let endIdx = renderSeq.findIndex((n, i) => i > ni && n.slurEnd && !n.isRest)
+              if (endIdx < 0) {
+                for (let k = renderSeq.length - 1; k > ni; k--) {
+                  if (!renderSeq[k].isRest) { endIdx = k; break }
+                }
+              }
+              if (endIdx < 0) return
               try {
-                const curve = new Curve(vfNotes[ni], vfNotes[nextIdx], {
-                  cps: [{ x: 0, y: 12 }, { x: 0, y: 12 }],
-                })
-                curve.setContext(ctx).draw()
+                new Curve(vfNotes[ni], vfNotes[endIdx], {
+                  cps: [{ x: 0, y: 18 }, { x: 0, y: 18 }],
+                }).setContext(ctx).draw()
               } catch(_) {}
             })
 

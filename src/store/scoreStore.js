@@ -627,10 +627,75 @@ export const useScoreStore = create((set, get) => ({
       return
     }
 
-    // Normal case: note fits — just apply the new duration
-    get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) =>
-      notes.map(n => n.id === selectedNoteId ? { ...n, duration: newDuration, dots: newDots || 0 } : n)
-    )
+    // Normal case: note fits within bar.
+    // Use skipNormalize=true and manually manage the rest(s) around the note
+    // so the freed/consumed space stays RIGHT NEXT TO the changed note.
+    const oldBeats = noteDuration(note)
+    const delta    = newBeats - oldBeats  // positive = growing, negative = shrinking
+
+    get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) => {
+      const idx = notes.findIndex(n => n.id === selectedNoteId)
+      if (idx < 0) return notes
+
+      // Apply new duration to the note itself
+      const newNote = { ...notes[idx], duration: newDuration, dots: newDots || 0, tieStart: false }
+      const result  = [...notes]
+      result[idx]   = newNote
+
+      if (delta < -0.001) {
+        // ── Shrinking: insert freed rest immediately after the note ──────────
+        const freed = -delta
+        const newRests = makeRests(freed, `shrink_${selectedNoteId}`)
+        result.splice(idx + 1, 0, ...newRests)
+
+        // Remove any duplicate rests that normalizeMeasure would have left
+        // (there shouldn't be any since we're using skipNormalize, but trim
+        //  if total beats now exceed maxBeats)
+        let total = 0
+        const trimmed = []
+        for (const n of result.filter(x => !x.chordWith)) {
+          const d = noteDuration(n)
+          if (total + d > measure.timeSignature.beats + 0.001) {
+            // Trim this rest to fit
+            const rem = measure.timeSignature.beats - total
+            if (rem > 0.001) trimmed.push(...makeRests(rem, `trim_${n.id}`))
+            break
+          }
+          trimmed.push(n)
+          total += d
+        }
+        // Re-attach chords
+        const chords = result.filter(x => x.chordWith)
+        const ids    = new Set(trimmed.map(n => n.id))
+        return [...trimmed, ...chords.filter(c => ids.has(c.chordWith))]
+
+      } else if (delta > 0.001) {
+        // ── Growing: consume rests immediately after the note ────────────────
+        let toAbsorb = delta
+        let i = idx + 1
+        while (toAbsorb > 0.001 && i < result.length) {
+          const n = result[i]
+          if (n.chordWith) { i++; continue }
+          if (!n.isRest) break  // hit a real note — can't absorb
+          const rd = noteDuration(n)
+          if (rd <= toAbsorb + 0.001) {
+            result.splice(i, 1)  // remove entire rest
+            toAbsorb -= rd
+          } else {
+            // Partially consume this rest
+            const remaining = rd - toAbsorb
+            const newRests  = makeRests(remaining, `grow_${n.id}`)
+            result.splice(i, 1, ...newRests)
+            toAbsorb = 0
+          }
+        }
+        return result
+
+      } else {
+        return result  // no change in duration
+      }
+    }, true)  // skipNormalize — we managed positions manually above
+
     set({ selectedDuration: newDuration, selectedDots: newDots || 0 })
   },
 
