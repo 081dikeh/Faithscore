@@ -451,79 +451,140 @@ export default function ScoreRenderer() {
               })
             } catch(_) {}
 
-            // ── TIES ──────────────────────────────────────────────────────
-            // Per the spec: ties connect same-pitch notes to extend duration.
-            // tieStart on a note = draw arc from that note to the NEXT SAME-PITCH note.
-            // If no same-pitch note exists in this measure, draw a half-arc off the
-            // right barline (the arriving half is drawn when rendering the next measure).
+            // ── Helper: two notes have the same pitch? ─────────────────────
             const samePitch = (a, b) =>
               a?.pitch && b?.pitch &&
-              a.pitch.step === b.pitch.step &&
-              a.pitch.octave === b.pitch.octave &&
+              a.pitch.step   === b.pitch.step   &&
+              a.pitch.octave === b.pitch.octave  &&
               (a.pitch.accidental ?? null) === (b.pitch.accidental ?? null)
+
+            // ── TIES ──────────────────────────────────────────────────────────
+            // Rule: tieStart on a note → draw curved arc to next SAME-PITCH note.
+            // Within a bar: StaveTie(first, last).
+            // Crossing a barline: draw a departing arc (right half) from this bar,
+            //   and an arriving arc (left half) in the next bar.
+            // We use raw SVG bezier curves for the cross-bar arcs so VexFlow
+            // version differences don't cause silent failures.
+
+            const drawTieArc = (x1, y1, x2, y2) => {
+              // Draw a smooth curved arc between two points using canvas bezier
+              try {
+                const mx = (x1 + x2) / 2
+                const cy = Math.min(y1, y2) - 14   // arc bows upward
+                ctx.save()
+                ctx.beginPath()
+                ctx.moveTo(x1 + 4, y1)
+                ctx.bezierCurveTo(x1 + (mx - x1) * 0.5, cy, x2 - (x2 - mx) * 0.5, cy, x2 - 4, y2)
+                ctx.strokeStyle = '#1e293b'
+                ctx.lineWidth   = 1.5
+                ctx.stroke()
+                // Second line for thickness (like professional ties)
+                ctx.beginPath()
+                ctx.moveTo(x1 + 4, y1 + 1.5)
+                ctx.bezierCurveTo(x1 + (mx - x1) * 0.5, cy + 2, x2 - (x2 - mx) * 0.5, cy + 2, x2 - 4, y2 + 1.5)
+                ctx.lineWidth = 0.8
+                ctx.stroke()
+                ctx.restore()
+              } catch(_) {}
+            }
 
             renderSeq.forEach((seqNote, ni) => {
               if (!seqNote.tieStart || seqNote.isRest) return
-              // Find next same-pitch note in this measure
+
+              // Y position: just above the notehead
+              const noteY = (() => { try { return vfNotes[ni].getYs()[0] - 2 } catch(_) { return partY + STAFF_HEIGHT / 2 } })()
+              const noteX = (() => { try { return vfNotes[ni].getAbsoluteX() } catch(_) { return colX[colInLine] + 20 } })()
+
+              // Find next same-pitch note in THIS measure
               const targetIdx = renderSeq.findIndex((n, i) => i > ni && !n.isRest && samePitch(seqNote, n))
-              try {
-                if (targetIdx >= 0) {
-                  // Within-measure tie to same-pitch note
+
+              if (targetIdx >= 0) {
+                // ── Within-measure tie ─────────────────────────────────────
+                try {
                   new StaveTie({
-                    first_note: vfNotes[ni], last_note: vfNotes[targetIdx],
-                    first_indices: [0], last_indices: [0],
+                    first_note:    vfNotes[ni],
+                    last_note:     vfNotes[targetIdx],
+                    first_indices: [0],
+                    last_indices:  [0],
                   }).setContext(ctx).draw()
-                } else {
-                  // Half-tie off the right barline — continues in next measure
-                  new StaveTie({
-                    first_note: vfNotes[ni], last_note: null,
-                    first_indices: [0], last_indices: [0],
-                  }).setContext(ctx).draw()
+                } catch(_) {
+                  // Fallback: draw with canvas
+                  const tx = (() => { try { return vfNotes[targetIdx].getAbsoluteX() } catch(_) { return noteX + 60 } })()
+                  const ty = (() => { try { return vfNotes[targetIdx].getYs()[0] - 2 } catch(_) { return noteY } })()
+                  drawTieArc(noteX, noteY, tx, ty)
                 }
-              } catch(_) {}
+              } else {
+                // ── Departing half-arc to right barline ────────────────────
+                const barRight = x + width - 6
+                drawTieArc(noteX, noteY, barRight, noteY)
+              }
             })
 
-            // ── Arriving tie from previous measure ────────────────────────────
-            // If the previous measure's last real note had tieStart=true,
-            // draw the arriving half-arc to the first same-pitch note here.
+            // ── Arriving tie arc from previous measure ──────────────────────
+            // Check if the previous measure had a note with tieStart that
+            // has no same-pitch continuation within THAT measure.
             try {
               const prevM = part.measures[col - 1]
               if (prevM) {
-                const prevSeq = prevM.notes.filter(n => !n.chordWith)
-                const prevTied = prevSeq.slice().reverse().find(n => !n.isRest && n.tieStart)
+                const prevSeq   = prevM.notes.filter(n => !n.chordWith)
+                // Find last tied note in previous measure
+                const prevTied  = [...prevSeq].reverse().find(n => n.tieStart && !n.isRest)
                 if (prevTied) {
-                  const arrIdx = renderSeq.findIndex(n => !n.isRest && samePitch(prevTied, n))
-                  const fallback = renderSeq.findIndex(n => !n.isRest)
-                  const target = arrIdx >= 0 ? arrIdx : fallback
-                  if (target >= 0) {
-                    new StaveTie({
-                      first_note: null, last_note: vfNotes[target],
-                      first_indices: [0], last_indices: [0],
-                    }).setContext(ctx).draw()
+                  // Was the tie resolved within the previous measure?
+                  const prevTiedIdx  = prevSeq.findIndex(n => n.id === prevTied.id)
+                  const resolvedPrev = prevSeq.findIndex((n, i) => i > prevTiedIdx && !n.isRest && samePitch(prevTied, n))
+                  if (resolvedPrev < 0) {
+                    // Not resolved — draw arriving arc from left barline
+                    const barLeft = x + 6
+                    // Find first same-pitch note in this measure
+                    const arrIdx = renderSeq.findIndex(n => !n.isRest && samePitch(prevTied, n))
+                    const tgt    = arrIdx >= 0 ? arrIdx : renderSeq.findIndex(n => !n.isRest)
+                    if (tgt >= 0) {
+                      const tx = (() => { try { return vfNotes[tgt].getAbsoluteX() } catch(_) { return barLeft + 40 } })()
+                      const ty = (() => { try { return vfNotes[tgt].getYs()[0] - 2 } catch(_) { return partY + STAFF_HEIGHT / 2 } })()
+                      drawTieArc(barLeft, ty, tx, ty)
+                    }
                   }
                 }
               }
             } catch(_) {}
 
-            // ── SLURS ──────────────────────────────────────────────────────
-            // Per the spec: slurs connect DIFFERENT-pitch notes for legato phrasing.
-            // slurStart marks the first note; slurEnd marks the last note of the group.
-            // The slur arc spans from slurStart to slurEnd (or to last real note if no slurEnd).
+            // ── SLURS ──────────────────────────────────────────────────────────
+            // Rule: slurStart note → slurEnd note (or last real note in measure).
+            // Slur arcs over a group of DIFFERENT-pitch notes indicating legato phrasing.
+            // Drawn as a wider, rounder arc above the notes.
             renderSeq.forEach((seqNote, ni) => {
               if (!seqNote.slurStart || seqNote.isRest) return
-              // Find the slurEnd note, or fall back to last real note in measure
+
+              // Find slurEnd in this measure, or use last real note
               let endIdx = renderSeq.findIndex((n, i) => i > ni && n.slurEnd && !n.isRest)
               if (endIdx < 0) {
                 for (let k = renderSeq.length - 1; k > ni; k--) {
                   if (!renderSeq[k].isRest) { endIdx = k; break }
                 }
               }
-              if (endIdx < 0) return
+              if (endIdx < 0 || endIdx <= ni) return
+
               try {
                 new Curve(vfNotes[ni], vfNotes[endIdx], {
-                  cps: [{ x: 0, y: 18 }, { x: 0, y: 18 }],
+                  cps: [{ x: 0, y: 22 }, { x: 0, y: 22 }],
                 }).setContext(ctx).draw()
-              } catch(_) {}
+              } catch(_) {
+                // Canvas fallback for slur
+                const x1 = (() => { try { return vfNotes[ni].getAbsoluteX() } catch(_) { return x + 20 } })()
+                const x2 = (() => { try { return vfNotes[endIdx].getAbsoluteX() } catch(_) { return x + 80 } })()
+                const sy = partY + 2  // slur goes above staff
+                try {
+                  ctx.save()
+                  ctx.beginPath()
+                  ctx.moveTo(x1 + 4, sy)
+                  ctx.bezierCurveTo(x1 + (x2-x1)*0.3, sy - 20, x1 + (x2-x1)*0.7, sy - 20, x2 - 4, sy)
+                  ctx.strokeStyle = '#1e293b'
+                  ctx.lineWidth   = 1.5
+                  ctx.stroke()
+                  ctx.restore()
+                } catch(_) {}
+              }
             })
 
             // Measure background zone — store actual note area X so cursor is accurate

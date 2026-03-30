@@ -350,17 +350,54 @@ export const useScoreStore = create((set, get) => ({
 
   // ── Ties ──────────────────────────────────────────────────────────────
   // A tie links a note to the next note of the same pitch.
-  // We store tieStart:true on the note that starts the tie.
   toggleTie: () => {
     const { selectedNoteId, selectedPartId, selectedMeasureIndex, score } = get()
     if (!selectedNoteId) return
-    const note = score.parts.find(p => p.id === selectedPartId)
-      ?.measures[selectedMeasureIndex]?.notes.find(n => n.id === selectedNoteId)
+    const part    = score.parts.find(p => p.id === selectedPartId)
+    const measure = part?.measures[selectedMeasureIndex]
+    const note    = measure?.notes.find(n => n.id === selectedNoteId)
     if (!note || note.isRest) return
     get()._snapshot()
+
+    const turningOn = !note.tieStart
+    // Toggle tieStart on the selected note
     get()._applyToMeasure(selectedPartId, selectedMeasureIndex, notes =>
-      notes.map(n => n.id === selectedNoteId ? { ...n, tieStart: !n.tieStart } : n)
+      notes.map(n => n.id === selectedNoteId ? { ...n, tieStart: turningOn } : n)
     )
+
+    // If turning ON: check if same-pitch note already follows in this bar
+    if (turningOn && note.pitch) {
+      const nonChord  = measure.notes.filter(n => !n.chordWith)
+      const noteIdx   = nonChord.findIndex(n => n.id === selectedNoteId)
+      const sameAfter = nonChord.slice(noteIdx + 1).find(n =>
+        !n.isRest &&
+        n.pitch?.step   === note.pitch.step &&
+        n.pitch?.octave === note.pitch.octave
+      )
+      // No same-pitch note in this bar → insert continuation in next bar
+      if (!sameAfter) {
+        const nextIdx = selectedMeasureIndex + 1
+        const nextM   = part?.measures[nextIdx]
+        if (nextM) {
+          const firstRest = nextM.notes.find(n => n.isRest)
+          if (firstRest) {
+            const restBeats = noteDuration(firstRest)
+            const fitBts    = Math.min(noteDuration(note), restBeats)
+            const fitDur    = beatsToRest(fitBts)
+            const fitActual = DURATION_BEATS[fitDur.duration+(fitDur.dots?'d':'')] || DURATION_BEATS[fitDur.duration] || 1
+            const contId    = crypto.randomUUID()
+            get()._applyToMeasure(selectedPartId, nextIdx, (notes) => {
+              const idx      = notes.findIndex(n => n.id === firstRest.id)
+              const leftover = restBeats - fitActual
+              const cont     = { id: contId, isRest: false, pitch: note.pitch,
+                duration: fitDur.duration, dots: fitDur.dots }
+              const leftovers = leftover > 0.001 ? makeRests(leftover, `tie_${contId}`) : []
+              return [...notes.slice(0, idx), cont, ...leftovers, ...notes.slice(idx + 1)]
+            }, true)
+          }
+        }
+      }
+    }
     saveToStorage(get().score)
   },
 
