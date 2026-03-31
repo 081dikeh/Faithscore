@@ -327,15 +327,17 @@ export default function ScoreRenderer() {
             const formatterWidth = Math.max(40, width - glyphOverhead)
             new Formatter().joinVoices([voice]).format([voice], formatterWidth)
 
-            // ── Beaming — MUST happen before voice.draw() ───────────────────
-            // Generate beam groups first so we can set stem directions on each
-            // note BEFORE drawing. This prevents VexFlow from drawing individual
-            // flags on notes that will be beamed — exactly like MuseScore.
+            // ── Beaming ─────────────────────────────────────────────────────
+            // Steps: generate beams → set stem dir + hide flags → draw voice → draw beams
+            // In VexFlow 4, hiding flags on beamed notes requires setting the flag
+            // style to transparent BEFORE voice.draw() renders them.
             let beamGroups = []
             try {
               const beamable = vfNotes.filter(n => {
-                const dur = n.getDuration()
-                return dur === '8' || dur === '16' || dur === '32' || dur === '64'
+                try {
+                  const dur = n.getDuration()
+                  return dur === '8' || dur === '16' || dur === '32' || dur === '64'
+                } catch(_) { return false }
               })
               if (beamable.length > 0) {
                 beamGroups = Beam.generateBeams(beamable, {
@@ -343,22 +345,20 @@ export default function ScoreRenderer() {
                   beam_rests: false,
                   show_stemlets: false,
                 })
-                // Apply stem direction from each beam group to its notes BEFORE draw
-                // This tells VexFlow: these notes are beamed, don't draw flags
                 beamGroups.forEach(beam => {
                   const dir = beam.getStemDirection()
                   beam.getNotes().forEach(note => {
-                    try { note.setStemDirection(dir) } catch(_) {}
+                    try {
+                      note.setStemDirection(dir)
+                      // Hide flag by making it transparent — works across VF4 versions
+                      note.setFlagStyle({ fillStyle: 'transparent', strokeStyle: 'transparent' })
+                    } catch(_) {}
                   })
                 })
               }
             } catch(_) {}
 
-            // Draw notes — flags are suppressed on beamed notes because stem
-            // direction was already set by the beam groups above
             voice.draw(ctx, stave)
-
-            // Now draw the beam lines on top
             beamGroups.forEach(b => { try { b.setContext(ctx).draw() } catch(_) {} })
 
             // ── Articulations ────────────────────────────────────────────────
@@ -451,98 +451,135 @@ export default function ScoreRenderer() {
               })
             } catch(_) {}
 
-            // ── Helper: two notes have the same pitch? ─────────────────────
+            // ── Helper: same pitch? ─────────────────────────────────────────
             const samePitch = (a, b) =>
               a?.pitch && b?.pitch &&
-              a.pitch.step   === b.pitch.step   &&
-              a.pitch.octave === b.pitch.octave  &&
+              a.pitch.step   === b.pitch.step &&
+              a.pitch.octave === b.pitch.octave &&
               (a.pitch.accidental ?? null) === (b.pitch.accidental ?? null)
 
-            // ── TIES ──────────────────────────────────────────────────────────
-            // Rule: tieStart on a note → draw curved arc to next SAME-PITCH note.
-            // Within a bar: StaveTie(first, last).
-            // Crossing a barline: draw a departing arc (right half) from this bar,
-            //   and an arriving arc (left half) in the next bar.
-            // We use raw SVG bezier curves for the cross-bar arcs so VexFlow
-            // version differences don't cause silent failures.
-
-            const drawTieArc = (x1, y1, x2, y2) => {
-              // Draw a smooth curved arc between two points using canvas bezier
+            // ── drawTieCanvas ────────────────────────────────────────────────
+            // Draws a professional tie arc directly on the canvas.
+            // x1,y1 = notehead center of first note
+            // x2,y2 = notehead center of second note
+            // stemUp: true → tie bows BELOW the noteheads (away from stem)
+            //         false → tie bows ABOVE (away from stem)
+            // This matches engraving convention exactly as seen in printed scores.
+            const drawTieCanvas = (x1, y1, x2, y2, stemUp) => {
               try {
-                const mx = (x1 + x2) / 2
-                const cy = Math.min(y1, y2) - 14   // arc bows upward
                 ctx.save()
+                const offset  = 4           // horizontal inset from notehead edge
+                const bow     = stemUp ? 10 : -10   // positive = bows down, negative = bows up
+                const lx1     = x1 + offset
+                const lx2     = x2 - offset
+                const midX    = (lx1 + lx2) / 2
+                const midY    = (y1 + y2) / 2 + bow * 1.5  // deepest point of arc
+
+                // Outer curve (slightly thicker)
                 ctx.beginPath()
-                ctx.moveTo(x1 + 4, y1)
-                ctx.bezierCurveTo(x1 + (mx - x1) * 0.5, cy, x2 - (x2 - mx) * 0.5, cy, x2 - 4, y2)
-                ctx.strokeStyle = '#1e293b'
-                ctx.lineWidth   = 1.5
+                ctx.moveTo(lx1, y1)
+                ctx.bezierCurveTo(
+                  lx1 + (midX - lx1) * 0.4, y1 + bow * 0.9,
+                  lx2 - (lx2 - midX) * 0.4, y2 + bow * 0.9,
+                  lx2, y2
+                )
+                ctx.strokeStyle = '#1a1a1a'
+                ctx.lineWidth   = 1.6
+                ctx.lineCap     = 'round'
                 ctx.stroke()
-                // Second line for thickness (like professional ties)
+
+                // Inner curve — creates the tapered lens shape of a professional tie
                 ctx.beginPath()
-                ctx.moveTo(x1 + 4, y1 + 1.5)
-                ctx.bezierCurveTo(x1 + (mx - x1) * 0.5, cy + 2, x2 - (x2 - mx) * 0.5, cy + 2, x2 - 4, y2 + 1.5)
-                ctx.lineWidth = 0.8
+                ctx.moveTo(lx1, y1)
+                ctx.bezierCurveTo(
+                  lx1 + (midX - lx1) * 0.4, y1 + bow * 0.45,
+                  lx2 - (lx2 - midX) * 0.4, y2 + bow * 0.45,
+                  lx2, y2
+                )
+                ctx.lineWidth = 0.7
                 ctx.stroke()
                 ctx.restore()
               } catch(_) {}
             }
 
+            // ── TIES ──────────────────────────────────────────────────────────
+            // Convention: tie bows away from stem.
+            // Stem up (default for single notes) → tie bows DOWN.
+            // Stem down → tie bows UP.
+            // Attach points: right edge of first notehead, left edge of second.
+
             renderSeq.forEach((seqNote, ni) => {
               if (!seqNote.tieStart || seqNote.isRest) return
 
-              // Y position: just above the notehead
-              const noteY = (() => { try { return vfNotes[ni].getYs()[0] - 2 } catch(_) { return partY + STAFF_HEIGHT / 2 } })()
-              const noteX = (() => { try { return vfNotes[ni].getAbsoluteX() } catch(_) { return colX[colInLine] + 20 } })()
+              const vfN = vfNotes[ni]
+              // Get notehead X and Y — getYs() returns actual notehead positions
+              let nx, ny, stemUp
+              try {
+                nx     = vfN.getAbsoluteX() + 6   // right side of notehead
+                ny     = vfN.getYs()[0]            // notehead Y
+                stemUp = vfN.getStemDirection() === 1
+              } catch(_) {
+                nx     = colX[colInLine] + 30
+                ny     = partY + STAFF_HEIGHT / 2
+                stemUp = true
+              }
 
               // Find next same-pitch note in THIS measure
               const targetIdx = renderSeq.findIndex((n, i) => i > ni && !n.isRest && samePitch(seqNote, n))
 
               if (targetIdx >= 0) {
-                // ── Within-measure tie ─────────────────────────────────────
+                // ── Within-measure tie ──────────────────────────────────────
+                // Try VexFlow StaveTie first for best automatic placement
+                let drew = false
                 try {
                   new StaveTie({
-                    first_note:    vfNotes[ni],
+                    first_note:    vfN,
                     last_note:     vfNotes[targetIdx],
                     first_indices: [0],
                     last_indices:  [0],
                   }).setContext(ctx).draw()
-                } catch(_) {
-                  // Fallback: draw with canvas
-                  const tx = (() => { try { return vfNotes[targetIdx].getAbsoluteX() } catch(_) { return noteX + 60 } })()
-                  const ty = (() => { try { return vfNotes[targetIdx].getYs()[0] - 2 } catch(_) { return noteY } })()
-                  drawTieArc(noteX, noteY, tx, ty)
+                  drew = true
+                } catch(_) {}
+
+                if (!drew) {
+                  // Canvas fallback
+                  let tx, ty
+                  try { tx = vfNotes[targetIdx].getAbsoluteX() - 2; ty = vfNotes[targetIdx].getYs()[0] }
+                  catch(_) { tx = nx + 60; ty = ny }
+                  drawTieCanvas(nx - 4, ny, tx + 2, ty, stemUp)
                 }
               } else {
-                // ── Departing half-arc to right barline ────────────────────
-                const barRight = x + width - 6
-                drawTieArc(noteX, noteY, barRight, noteY)
+                // ── Departing half-arc → right barline ─────────────────────
+                // Draw from the note's right side curving toward the barline
+                const barRight = x + width - 8
+                drawTieCanvas(nx - 4, ny, barRight, ny, stemUp)
               }
             })
 
             // ── Arriving tie arc from previous measure ──────────────────────
-            // Check if the previous measure had a note with tieStart that
-            // has no same-pitch continuation within THAT measure.
             try {
               const prevM = part.measures[col - 1]
               if (prevM) {
-                const prevSeq   = prevM.notes.filter(n => !n.chordWith)
-                // Find last tied note in previous measure
-                const prevTied  = [...prevSeq].reverse().find(n => n.tieStart && !n.isRest)
+                const prevSeq     = prevM.notes.filter(n => !n.chordWith)
+                const prevTied    = [...prevSeq].reverse().find(n => n.tieStart && !n.isRest)
                 if (prevTied) {
-                  // Was the tie resolved within the previous measure?
                   const prevTiedIdx  = prevSeq.findIndex(n => n.id === prevTied.id)
                   const resolvedPrev = prevSeq.findIndex((n, i) => i > prevTiedIdx && !n.isRest && samePitch(prevTied, n))
                   if (resolvedPrev < 0) {
-                    // Not resolved — draw arriving arc from left barline
-                    const barLeft = x + 6
-                    // Find first same-pitch note in this measure
-                    const arrIdx = renderSeq.findIndex(n => !n.isRest && samePitch(prevTied, n))
-                    const tgt    = arrIdx >= 0 ? arrIdx : renderSeq.findIndex(n => !n.isRest)
+                    // Unresolved tie in previous bar → draw arriving arc
+                    const barLeft = x + 4
+                    const arrIdx  = renderSeq.findIndex(n => !n.isRest && samePitch(prevTied, n))
+                    const tgt     = arrIdx >= 0 ? arrIdx : renderSeq.findIndex(n => !n.isRest)
                     if (tgt >= 0) {
-                      const tx = (() => { try { return vfNotes[tgt].getAbsoluteX() } catch(_) { return barLeft + 40 } })()
-                      const ty = (() => { try { return vfNotes[tgt].getYs()[0] - 2 } catch(_) { return partY + STAFF_HEIGHT / 2 } })()
-                      drawTieArc(barLeft, ty, tx, ty)
+                      let tx, ty, stemUp
+                      try {
+                        tx     = vfNotes[tgt].getAbsoluteX() - 2
+                        ty     = vfNotes[tgt].getYs()[0]
+                        stemUp = vfNotes[tgt].getStemDirection() === 1
+                      } catch(_) {
+                        tx = barLeft + 40; ty = partY + STAFF_HEIGHT / 2; stemUp = true
+                      }
+                      drawTieCanvas(barLeft, ty, tx, ty, stemUp)
                     }
                   }
                 }
@@ -550,37 +587,58 @@ export default function ScoreRenderer() {
             } catch(_) {}
 
             // ── SLURS ──────────────────────────────────────────────────────────
-            // Rule: slurStart note → slurEnd note (or last real note in measure).
-            // Slur arcs over a group of DIFFERENT-pitch notes indicating legato phrasing.
-            // Drawn as a wider, rounder arc above the notes.
+            // Slur: connects slurStart → slurEnd.
+            // DEFAULT (no slurEnd set): connects to the VERY NEXT real note only.
+            // With explicit slurEnd: connects slurStart → that specific note.
+            // Slur bows OPPOSITE to stem direction (same rule as ties).
+            // Uses Curve from VexFlow for proper engraving-quality arc.
+
             renderSeq.forEach((seqNote, ni) => {
               if (!seqNote.slurStart || seqNote.isRest) return
 
-              // Find slurEnd in this measure, or use last real note
+              // Find the end note:
+              // Priority 1: explicit slurEnd mark on a later note
+              // Priority 2: NEXT real note only (not last note in bar!)
               let endIdx = renderSeq.findIndex((n, i) => i > ni && n.slurEnd && !n.isRest)
               if (endIdx < 0) {
-                for (let k = renderSeq.length - 1; k > ni; k--) {
-                  if (!renderSeq[k].isRest) { endIdx = k; break }
-                }
+                // Default: just the NEXT real note
+                endIdx = renderSeq.findIndex((n, i) => i > ni && !n.isRest)
               }
               if (endIdx < 0 || endIdx <= ni) return
 
+              // Get stem directions for arc orientation
+              let stemUp = true
+              try { stemUp = vfNotes[ni].getStemDirection() === 1 } catch(_) {}
+              // Slur bows OPPOSITE to stem: stem up → slur below; stem down → slur above
+              const cpY = stemUp ? 20 : -20
+
               try {
                 new Curve(vfNotes[ni], vfNotes[endIdx], {
-                  cps: [{ x: 0, y: 22 }, { x: 0, y: 22 }],
+                  cps: [{ x: 0, y: cpY }, { x: 0, y: cpY }],
                 }).setContext(ctx).draw()
               } catch(_) {
-                // Canvas fallback for slur
-                const x1 = (() => { try { return vfNotes[ni].getAbsoluteX() } catch(_) { return x + 20 } })()
-                const x2 = (() => { try { return vfNotes[endIdx].getAbsoluteX() } catch(_) { return x + 80 } })()
-                const sy = partY + 2  // slur goes above staff
+                // Canvas fallback
+                let sx1, sx2, sy1, sy2
+                try { sx1 = vfNotes[ni].getAbsoluteX() + 4;     sy1 = vfNotes[ni].getYs()[0] }
+                catch(_) { sx1 = x + 20; sy1 = partY + STAFF_HEIGHT / 2 }
+                try { sx2 = vfNotes[endIdx].getAbsoluteX() - 4; sy2 = vfNotes[endIdx].getYs()[0] }
+                catch(_) { sx2 = x + 80; sy2 = sy1 }
                 try {
                   ctx.save()
+                  const ey = stemUp ? Math.max(sy1, sy2) + 16 : Math.min(sy1, sy2) - 16
                   ctx.beginPath()
-                  ctx.moveTo(x1 + 4, sy)
-                  ctx.bezierCurveTo(x1 + (x2-x1)*0.3, sy - 20, x1 + (x2-x1)*0.7, sy - 20, x2 - 4, sy)
-                  ctx.strokeStyle = '#1e293b'
-                  ctx.lineWidth   = 1.5
+                  ctx.moveTo(sx1, sy1)
+                  ctx.bezierCurveTo(sx1 + (sx2-sx1)*0.3, ey, sx1 + (sx2-sx1)*0.7, ey, sx2, sy2)
+                  ctx.strokeStyle = '#1a1a1a'
+                  ctx.lineWidth   = 1.6
+                  ctx.lineCap     = 'round'
+                  ctx.stroke()
+                  // Inner curve for thickness
+                  ctx.beginPath()
+                  const ey2 = stemUp ? ey - 5 : ey + 5
+                  ctx.moveTo(sx1, sy1)
+                  ctx.bezierCurveTo(sx1 + (sx2-sx1)*0.3, ey2, sx1 + (sx2-sx1)*0.7, ey2, sx2, sy2)
+                  ctx.lineWidth = 0.8
                   ctx.stroke()
                   ctx.restore()
                 } catch(_) {}

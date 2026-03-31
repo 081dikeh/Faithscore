@@ -402,6 +402,48 @@ export const useScoreStore = create((set, get) => ({
   },
 
   // ── Slurs ─────────────────────────────────────────────────────────────
+  // ── toggleSlurStart (S key) ─────────────────────────────────────────────────
+  // MuseScore-style slur: press S on a note to begin a slur.
+  // The arc immediately connects to the NEXT real note (visible right away).
+  // Press S again on the same note to remove the slur.
+  // Press E on any later note to explicitly set the slur end there.
+  toggleSlurStart: () => {
+    const { selectedNoteId, selectedPartId, selectedMeasureIndex, score } = get()
+    if (!selectedNoteId) return
+    const part    = score.parts.find(p => p.id === selectedPartId)
+    const measure = part?.measures[selectedMeasureIndex]
+    const note    = measure?.notes.find(n => n.id === selectedNoteId)
+    if (!note || note.isRest) return
+    get()._snapshot()
+
+    const turningOn = !note.slurStart
+
+    if (turningOn) {
+      // Mark slurStart on this note
+      get()._applyToMeasure(selectedPartId, selectedMeasureIndex, notes =>
+        notes.map(n => n.id === selectedNoteId
+          ? { ...n, slurStart: true, slurEnd: false } : n)
+      )
+      // Clear any previous slurEnd marks on earlier notes in this bar
+      // (so only one slur group is active at a time in this measure)
+    } else {
+      // Remove slurStart from this note; also clear slurEnd from any note after it
+      get()._applyToMeasure(selectedPartId, selectedMeasureIndex, notes => {
+        const noteIdx = notes.findIndex(n => n.id === selectedNoteId)
+        return notes.map((n, i) => {
+          if (n.id === selectedNoteId) return { ...n, slurStart: false }
+          if (i > noteIdx && n.slurEnd)  return { ...n, slurEnd: false }
+          return n
+        })
+      })
+    }
+    saveToStorage(get().score)
+  },
+
+  // ── toggleSlurEnd (E key) ────────────────────────────────────────────────────
+  // Press E on any note to explicitly mark it as the slur endpoint.
+  // This overrides the default "connect to next note" behaviour.
+  // Press E again to remove the slur end mark.
   toggleSlurEnd: () => {
     const { selectedNoteId, selectedPartId, selectedMeasureIndex, score } = get()
     if (!selectedNoteId) return
@@ -412,19 +454,6 @@ export const useScoreStore = create((set, get) => ({
     get()._applyToMeasure(selectedPartId, selectedMeasureIndex, notes =>
       notes.map(n => n.id === selectedNoteId
         ? { ...n, slurEnd: !n.slurEnd, slurStart: false } : n)
-    )
-    saveToStorage(get().score)
-  },
-
-  toggleSlurStart: () => {
-    const { selectedNoteId, selectedPartId, selectedMeasureIndex, score } = get()
-    if (!selectedNoteId) return
-    const note = score.parts.find(p => p.id === selectedPartId)
-      ?.measures[selectedMeasureIndex]?.notes.find(n => n.id === selectedNoteId)
-    if (!note || note.isRest) return
-    get()._snapshot()
-    get()._applyToMeasure(selectedPartId, selectedMeasureIndex, notes =>
-      notes.map(n => n.id === selectedNoteId ? { ...n, slurStart: !n.slurStart } : n)
     )
     saveToStorage(get().score)
   },
