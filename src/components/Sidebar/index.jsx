@@ -974,6 +974,7 @@ export default function Sidebar() {
         {activeTab === 'palettes'   && <PalettesTab />}
         {activeTab === 'layout'     && <LayoutTab />}
         {activeTab === 'properties' && <PropertiesTab />}
+
       </div>
     </div>
   )
