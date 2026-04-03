@@ -560,12 +560,32 @@ export const useScoreStore = create((set, get) => ({
   // When user selects a rest then presses a note key or clicks chromatic
   fillSelectedRest: (pitch) => {
     get()._snapshot()
-        const { selectedNoteId, selectedPartId, selectedMeasureIndex, selectedDuration, selectedDots } = get()
+    const { selectedNoteId, selectedPartId, selectedMeasureIndex, selectedDuration, selectedDots } = get()
     if (!selectedNoteId || selectedMeasureIndex === null) return
 
     const part = get().score.parts.find(p => p.id === selectedPartId)
     const note = part?.measures[selectedMeasureIndex]?.notes.find(n => n.id === selectedNoteId)
     if (!note?.isRest) return
+
+    // ── Triplet rest: replace in-place preserving triplet structure ───────────
+    // Triplet notes must not be resized or moved — only the pitch changes.
+    if (note.triplet) {
+      const filled = { ...note, isRest: false, pitch }
+      get()._applyToMeasure(selectedPartId, selectedMeasureIndex,
+        notes => notes.map(n => n.id === selectedNoteId ? filled : n),
+        true   // skipNormalize — triplet structure is fixed
+      )
+      // Auto-advance to the next triplet slot in the group
+      const measure  = part.measures[selectedMeasureIndex]
+      const nonChord = measure.notes.filter(n => !n.chordWith)
+      const curIdx   = nonChord.findIndex(n => n.id === selectedNoteId)
+      const nextTriplet = nonChord.find((n, i) =>
+        i > curIdx && n.triplet && n.tripletGroupId === note.tripletGroupId && n.isRest
+      )
+      set({ selectedNoteId: nextTriplet ? nextTriplet.id : filled.id })
+      saveToStorage(get().score)
+      return
+    }
 
     const restBeats = noteDuration(note)
     const newDurKey = selectedDuration + (selectedDots ? 'd' : '')
@@ -1081,12 +1101,52 @@ export const useScoreStore = create((set, get) => ({
   // ── Navigation ─────────────────────────────────────────────────────────────
   navigateNote: (dir) => {
     const { score, selectedNoteId, selectedPartId, selectedMeasureIndex } = get()
-    const notes = score.parts.find(p => p.id === selectedPartId)
-      ?.measures[selectedMeasureIndex]?.notes.filter(n => !n.chordWith) || []
-    const idx = notes.findIndex(n => n.id === selectedNoteId)
+    const part     = score.parts.find(p => p.id === selectedPartId)
+    const measures = part?.measures
+    if (!measures || selectedMeasureIndex === null) return
+
+    const curNotes = measures[selectedMeasureIndex]?.notes.filter(n => !n.chordWith) || []
+    const idx      = curNotes.findIndex(n => n.id === selectedNoteId)
     if (idx === -1) return
-    const next = notes[idx + dir]
-    if (next) set({ selectedNoteId: next.id, selectedDuration: next.duration, selectedDots: next.dots || 0 })
+
+    const nextInBar = curNotes[idx + dir]
+    if (nextInBar) {
+      // Normal case: move within this bar
+      set({
+        selectedNoteId:       nextInBar.id,
+        selectedMeasureIndex,
+        selectedDuration:     nextInBar.duration,
+        selectedDots:         nextInBar.dots || 0,
+      })
+      return
+    }
+
+    // Reached end/start of bar — cross into adjacent bar
+    if (dir > 0 && selectedMeasureIndex < measures.length - 1) {
+      const nextM     = measures[selectedMeasureIndex + 1]
+      const nextNotes = nextM?.notes.filter(n => !n.chordWith) || []
+      const first     = nextNotes[0]
+      if (first) {
+        set({
+          selectedNoteId:       first.id,
+          selectedMeasureIndex: selectedMeasureIndex + 1,
+          selectedDuration:     first.duration,
+          selectedDots:         first.dots || 0,
+        })
+      }
+    } else if (dir < 0 && selectedMeasureIndex > 0) {
+      const prevM     = measures[selectedMeasureIndex - 1]
+      const prevNotes = prevM?.notes.filter(n => !n.chordWith) || []
+      const last      = prevNotes[prevNotes.length - 1]
+      if (last) {
+        set({
+          selectedNoteId:       last.id,
+          selectedMeasureIndex: selectedMeasureIndex - 1,
+          selectedDuration:     last.duration,
+          selectedDots:         last.dots || 0,
+        })
+      }
+    }
   },
 
   // ── Pitch operations ───────────────────────────────────────────────────────

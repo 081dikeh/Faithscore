@@ -169,8 +169,8 @@ export default function App() {
           if (!e.shiftKey && e.key === 'ArrowDown') { e.preventDefault(); shiftPitchStep(-1); return }
         }
 
-        if (e.key === 'ArrowLeft')  { navigateNote(-1); return }
-        if (e.key === 'ArrowRight') { navigateNote(1);  return }
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); navigateNote(-1); return }
+        if (e.key === 'ArrowRight') { e.preventDefault(); navigateNote(1);  return }
 
         if ((e.key === 'Delete' || e.key === 'Backspace') && !selNote?.isRest) {
           deleteNote(selectedPartId, selectedMeasureIndex, selectedNoteId)
@@ -178,25 +178,42 @@ export default function App() {
         }
         if (e.key === 'Escape') { clearNoteSelection(); return }
 
-        // Rest selected + note key → fill it
-        if (selNote?.isRest && inputMode === 'note') {
-          const step = KEY_TO_STEP[e.key.toLowerCase()]
-          if (step) {
-            fillSelectedRest({ step, octave: st().selectedOctave, accidental: null })
-            return
-          }
-          if (e.key === 'Enter' && st().selectedNote) {
-            const n = st().selectedNote
-            fillSelectedRest({ step: n.step, octave: st().selectedOctave, accidental: n.accidental })
-            return
-          }
+        // Rest selected + note key → fill it (works in both select and note mode)
+        const step = KEY_TO_STEP[e.key.toLowerCase()]
+        if (step && selNote?.isRest) {
+          fillSelectedRest({ step, octave: st().selectedOctave, accidental: null })
+          return
+        }
+        if (e.key === 'Enter' && st().selectedNote && selNote?.isRest) {
+          const n = st().selectedNote
+          fillSelectedRest({ step: n.step, octave: st().selectedOctave, accidental: n.accidental })
+          return
         }
       }
 
-      // ── No note selected, measure selected ──
+      // ── Measure selected but no note — arrows enter the measure ──
       if (selectedMeasureIndex !== null && !selectedNoteId) {
         if (e.key === 'Delete')    { clearMeasureColumn(selectedMeasureIndex); return }
         if (e.key === 'Backspace') { deleteLastNote(selectedPartId, selectedMeasureIndex); return }
+        if (e.key === 'ArrowRight' && !e.ctrlKey && !e.metaKey) {
+          // Enter measure by selecting its first note
+          e.preventDefault()
+          const cur = st()
+          const part = cur.score.parts.find(p => p.id === selectedPartId)
+          const notes = part?.measures[selectedMeasureIndex]?.notes.filter(n => !n.chordWith)
+          const first = notes?.[0]
+          if (first) cur.selectNote(first.id, selectedPartId, selectedMeasureIndex)
+          return
+        }
+        if (e.key === 'ArrowLeft' && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault()
+          const cur = st()
+          const part = cur.score.parts.find(p => p.id === selectedPartId)
+          const notes = part?.measures[selectedMeasureIndex]?.notes.filter(n => !n.chordWith)
+          const last = notes?.[notes.length - 1]
+          if (last) cur.selectNote(last.id, selectedPartId, selectedMeasureIndex)
+          return
+        }
       }
 
       // ── Note input: A–G ──
@@ -311,7 +328,7 @@ export default function App() {
               {[
                 { label: '📄 Export MusicXML', action: () => { exportMusicXML(score); setShowExportMenu(false) } },
                 { label: '🎹 Export MIDI',      action: () => { exportMIDI(score);     setShowExportMenu(false) } },
-                { label: '🖨️  Print / PDF',      action: () => { printScore(score);    setShowExportMenu(false) } },
+                { label: '🖨️  Print / PDF',      action: async () => { setShowExportMenu(false); await printScore(score) } },
                 { label: '📂 New Score',         action: () => { if(confirm('Discard current score?')) { clearSavedScore(); window.location.reload() } } },
               ].map(item => (
                 <button key={item.label} onClick={item.action}

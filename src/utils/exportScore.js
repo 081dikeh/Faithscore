@@ -205,42 +205,80 @@ function pitchToMidi(pitch) {
 }
 
 // ── Print / PDF ────────────────────────────────────────────────────────────────
-// Serializes the score SVG(s) to self-contained HTML and opens a print dialog.
-// Uses XMLSerializer so VexFlow glyphs render correctly in the print window.
-export function printScore(score) {
-  const title = score?.title || 'Untitled Score'
+// printScore — rasterizes the VexFlow SVGs to PNG via canvas, then opens print window.
+// Rasterization happens in the original window (where the Bravura music font IS loaded),
+// so all glyphs render correctly. The PNG data URLs are then embedded in the print HTML.
+export async function printScore(score) {
+  const title    = score?.title    || 'Untitled Score'
   const composer = score?.composer || ''
 
-  // Find the VexFlow SVG(s) inside .score-page divs
   const pages = document.querySelectorAll('.score-page')
   if (!pages.length) {
     alert('Nothing to print yet. Add some notes first.')
     return
   }
 
-  const serializer = new XMLSerializer()
-
-  // Get all SVGs from the score pages (one per system line rendered)
-  // We only want the actual VexFlow SVG, not the overlay divs
+  // Collect all SVG elements from all score pages
   const svgElements = []
   pages.forEach(page => {
     page.querySelectorAll('svg').forEach(svg => svgElements.push(svg))
   })
-
   if (!svgElements.length) {
     alert('No score content found to print.')
     return
   }
 
-  // Serialize each SVG to a self-contained string
-  // Add xmlns so it renders correctly as inline SVG in HTML
-  const svgStrings = svgElements.map(svg => {
-    if (!svg.hasAttribute('xmlns')) svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
-    return serializer.serializeToString(svg)
-  })
+  // Rasterize each SVG → canvas → PNG dataURL
+  // We must do this in the original window so the Bravura font is available.
+  const serializer = new XMLSerializer()
+  const pngDataUrls = await Promise.all(svgElements.map(svg => {
+    return new Promise(resolve => {
+      try {
+        // Get the SVG's natural pixel size
+        const svgRect = svg.getBoundingClientRect()
+        const W = Math.max(svgRect.width  || svg.width?.baseVal?.value  || 800, 100)
+        const H = Math.max(svgRect.height || svg.height?.baseVal?.value || 200, 50)
 
-  const svgContent = svgStrings.map(s =>
-    `<div class="svg-block">${s}</div>`
+        // Serialize to string (font is already applied via CSS in this window)
+        if (!svg.hasAttribute('xmlns')) svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+        // Inline the computed styles so the PNG captures them
+        const svgString = serializer.serializeToString(svg)
+        const blob      = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
+        const url       = URL.createObjectURL(blob)
+        const img       = new Image()
+
+        img.onload = () => {
+          const scale  = window.devicePixelRatio || 2   // HiDPI
+          const canvas = document.createElement('canvas')
+          canvas.width  = W * scale
+          canvas.height = H * scale
+          const ctx2 = canvas.getContext('2d')
+          ctx2.scale(scale, scale)
+          ctx2.fillStyle = 'white'
+          ctx2.fillRect(0, 0, W, H)
+          ctx2.drawImage(img, 0, 0, W, H)
+          URL.revokeObjectURL(url)
+          resolve(canvas.toDataURL('image/png', 1.0))
+        }
+        img.onerror = () => {
+          URL.revokeObjectURL(url)
+          resolve(null)
+        }
+        img.src = url
+      } catch(e) {
+        resolve(null)
+      }
+    })
+  }))
+
+  const validPngs = pngDataUrls.filter(Boolean)
+  if (!validPngs.length) {
+    alert('Could not rasterize the score. Try the MusicXML export instead.')
+    return
+  }
+
+  const imgTags = validPngs.map(dataUrl =>
+    `<div class="score-img"><img src="${dataUrl}" alt="score" /></div>`
   ).join('\n')
 
   const html = `<!DOCTYPE html>
@@ -250,21 +288,20 @@ export function printScore(score) {
   <title>${title}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { background: white; font-family: 'Times New Roman', serif; }
-
+    html, body { background: white; }
     .print-page {
       width: 210mm;
-      padding: 15mm 13mm 10mm 13mm;
+      padding: 14mm 12mm 10mm 12mm;
       background: white;
     }
     .score-header {
       text-align: center;
-      margin-bottom: 8mm;
+      margin-bottom: 6mm;
       border-bottom: 0.5pt solid #ccc;
       padding-bottom: 4mm;
     }
     .score-header h1 {
-      font-size: 22pt;
+      font-size: 20pt;
       font-weight: bold;
       font-family: 'Times New Roman', serif;
     }
@@ -273,21 +310,24 @@ export function printScore(score) {
       text-align: right;
       color: #444;
       margin-top: 2mm;
+      font-family: 'Times New Roman', serif;
     }
-    .svg-block { margin-bottom: 6mm; }
-    .svg-block svg {
-      width: 184mm !important;
-      height: auto !important;
+    .score-img { margin-bottom: 4mm; }
+    .score-img img {
+      width: 100%;
+      height: auto;
       display: block;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: crisp-edges;
     }
-
     @media screen {
-      body { background: #e5e5e5; padding: 10mm; }
-      .print-page { box-shadow: 0 2px 8px rgba(0,0,0,0.2); margin: 0 auto; }
+      body { background: #ccc; padding: 10mm; }
+      .print-page { box-shadow: 0 2px 12px rgba(0,0,0,0.25); margin: 0 auto; }
     }
     @media print {
       html, body { background: white; padding: 0; margin: 0; }
-      .print-page { padding: 15mm 13mm; }
+      .print-page { padding: 14mm 12mm; }
+      .score-img { break-inside: avoid; }
     }
     @page { size: A4 portrait; margin: 0; }
   </style>
@@ -298,11 +338,19 @@ export function printScore(score) {
       <h1>${title}</h1>
       ${composer ? `<p>${composer}</p>` : ''}
     </div>
-    ${svgContent}
+    ${imgTags}
   </div>
   <script>
+    // Wait for all images to load before printing
     window.addEventListener('load', function() {
-      setTimeout(function() { window.print(); window.close(); }, 1000)
+      const imgs = document.querySelectorAll('img')
+      let loaded = 0
+      const tryPrint = () => { if (++loaded >= imgs.length) { setTimeout(() => { window.print() }, 400) } }
+      if (imgs.length === 0) { setTimeout(() => { window.print() }, 400) }
+      imgs.forEach(img => {
+        if (img.complete) tryPrint()
+        else { img.onload = tryPrint; img.onerror = tryPrint }
+      })
     })
   <\/script>
 </body>
