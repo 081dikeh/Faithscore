@@ -80,7 +80,12 @@ export default function App() {
   const [metronomeOn, setMetronomeOn]         = useState(false)
   const [loopOn, setLoopOn]                   = useState(false)
   const [showExportMenu, setShowExportMenu]   = useState(false)
-  const [showPiano, setShowPiano]             = useState(false)  // hidden by default, toggle with P
+  const [showEditMenu, setShowEditMenu]       = useState(false)
+  const [showAddMenu, setShowAddMenu]         = useState(false)
+  const [showFormatMenu, setShowFormatMenu]   = useState(false)
+  const [showViewMenu, setShowViewMenu]       = useState(false)
+  const [showToolsMenu, setShowToolsMenu]     = useState(false)
+  const [showPiano, setShowPiano]             = useState(false)
   const [contextMenu, setContextMenu]         = useState(null)
   const [darkMode, setDarkMode]               = useState(() => {
     try { return localStorage.getItem('scoreai_dark') === '1' } catch { return false }
@@ -103,9 +108,16 @@ export default function App() {
   }
   const ctxRef = useRef(null)
 
-  // Close context menu on outside click
+  // Close context menu + all dropdown menus on outside click
   useEffect(() => {
-    const h = e => { if (ctxRef.current && !ctxRef.current.contains(e.target)) setContextMenu(null) }
+    const h = e => {
+      if (ctxRef.current && !ctxRef.current.contains(e.target)) setContextMenu(null)
+      // Close menus if clicking outside the menu bar area
+      if (!e.target.closest?.('[data-menubar]')) {
+        setShowExportMenu(false); setShowEditMenu(false); setShowAddMenu(false)
+        setShowFormatMenu(false); setShowViewMenu(false); setShowToolsMenu(false)
+      }
+    }
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
   }, [])
@@ -310,42 +322,175 @@ export default function App() {
 
       {/* ── Sticky top chrome: menu + status + toolbar + shortcuts ── */}
       <div style={{ position: 'sticky', top: 0, zIndex: 50, flexShrink: 0 }}>
-      <div className="bg-white border-b border-gray-200 flex items-center h-10 px-3 gap-1 shadow-sm">
-        <span className="text-blue-600 font-bold text-sm mr-3">🎵 ScoreAI</span>
-        {/* File menu with export */}
-        <div style={{ position: 'relative' }}>
-          <button onClick={() => setShowExportMenu(v => !v)}
-            className="px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded transition-colors">
-            File ▾
-          </button>
-          {showExportMenu && (
-            <div style={{
-              position: 'absolute', top: '100%', left: 0, zIndex: 100,
-              background: 'white', border: '1px solid #e5e7eb', borderRadius: 6,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: 180, padding: 4,
-            }}
-              onMouseLeave={() => setShowExportMenu(false)}>
-              {[
-                { label: '📄 Export MusicXML', action: () => { exportMusicXML(score); setShowExportMenu(false) } },
-                { label: '🎹 Export MIDI',      action: () => { exportMIDI(score);     setShowExportMenu(false) } },
-                { label: '🖨️  Print / PDF',      action: async () => { setShowExportMenu(false); await printScore(score) } },
-                { label: '📂 New Score',         action: () => { if(confirm('Discard current score?')) { clearSavedScore(); window.location.reload() } } },
-              ].map(item => (
-                <button key={item.label} onClick={item.action}
-                  style={{ display: 'block', width: '100%', textAlign: 'left',
-                    padding: '6px 12px', fontSize: 12, border: 'none', background: 'none',
-                    cursor: 'pointer', borderRadius: 4 }}
-                  onMouseEnter={e => e.currentTarget.style.background='#f3f4f6'}
-                  onMouseLeave={e => e.currentTarget.style.background='none'}>
-                  {item.label}
-                </button>
-              ))}
+      <div data-menubar className="bg-white border-b border-gray-200 flex items-center h-10 px-3 gap-1 shadow-sm">
+        {/* ── Logo ─────────────────────────────────────── */}
+        <span style={{ display:'flex', alignItems:'center', gap:5, fontWeight:700,
+          fontSize:13, color:'#2563eb', marginRight:8, letterSpacing:'-0.3px' }}>
+          🎵 FaithScore
+        </span>
+
+        {/* ── Reusable menu helper ─────────────────────────────────────── */}
+        {(() => {
+          const closeAll = () => {
+            setShowExportMenu(false); setShowEditMenu(false); setShowAddMenu(false)
+            setShowFormatMenu(false); setShowViewMenu(false); setShowToolsMenu(false)
+          }
+
+          const Sep = () => (
+            <div style={{ height:1, background:'#e5e7eb', margin:'3px 0' }} />
+          )
+
+          const Item = ({ label, shortcut, onClick, disabled, danger }) => (
+            <button
+              disabled={disabled}
+              onClick={() => { closeAll(); onClick?.() }}
+              style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+                gap:16, width:'100%', textAlign:'left', padding:'5px 14px',
+                fontSize:12, border:'none', background:'none', cursor: disabled ? 'default' : 'pointer',
+                borderRadius:3, color: danger ? '#dc2626' : disabled ? '#9ca3af' : '#111827',
+                opacity: disabled ? 0.5 : 1 }}
+              onMouseEnter={e => { if (!disabled) e.currentTarget.style.background='#eff6ff' }}
+              onMouseLeave={e => { e.currentTarget.style.background='none' }}>
+              <span>{label}</span>
+              {shortcut && <span style={{ fontSize:10, color:'#9ca3af', whiteSpace:'nowrap' }}>{shortcut}</span>}
+            </button>
+          )
+
+          const MenuTitle = ({ children, w=190, open, toggle, id }) => (
+            <div style={{ position:'relative' }}>
+              <button
+                onClick={() => { closeAll(); if (!open) toggle(true) }}
+                onMouseEnter={() => {
+                  // Fly-open if another menu is already open
+                  const anyOpen = [showExportMenu,showEditMenu,showAddMenu,showFormatMenu,showViewMenu,showToolsMenu].some(Boolean)
+                  if (anyOpen) { closeAll(); toggle(true) }
+                }}
+                style={{ padding:'3px 8px', fontSize:12, fontWeight:500,
+                  border:'none', background: open ? '#eff6ff' : 'none',
+                  borderRadius:4, cursor:'pointer', color: open ? '#2563eb' : '#374151' }}>
+                {children}
+              </button>
+              {open && (
+                <div style={{ position:'absolute', top:'100%', left:0, zIndex:200,
+                  background:'white', border:'1px solid #e5e7eb', borderRadius:6,
+                  boxShadow:'0 8px 24px rgba(0,0,0,0.13)', minWidth:w, padding:'4px 0',
+                  marginTop:2 }}
+                  onMouseLeave={() => toggle(false)}>
+                  {id}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        {['Edit','Add','Format','View','Tools'].map(m => (
-          <button key={m} className="px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded transition-colors">{m}</button>
-        ))}
+          )
+
+          // ── FILE ─────────────────────────────────────────────────────────
+          const fileMenu = <>
+            <Item label="New Score"         shortcut="Ctrl+N" onClick={() => { if(confirm('Start a new score? Unsaved work will be lost.')) { clearSavedScore(); window.location.reload() }}} />
+            <Sep />
+            <Item label="Export MusicXML"   shortcut="Ctrl+Shift+X" onClick={() => exportMusicXML(score)} />
+            <Item label="Export MIDI"        shortcut="Ctrl+Shift+M" onClick={() => exportMIDI(score)} />
+            <Item label="Print / Save PDF"   shortcut="Ctrl+P"       onClick={async () => { await printScore(score) }} />
+          </>
+
+          // ── EDIT ─────────────────────────────────────────────────────────
+          const editMenu = <>
+            <Item label="Undo"              shortcut="Ctrl+Z"   onClick={undo}   disabled={_undoStack.length === 0} />
+            <Item label="Redo"              shortcut="Ctrl+Y"   onClick={redo} />
+            <Sep />
+            <Item label="Copy Measure"      shortcut="Ctrl+C"   onClick={() => { if(selectedMeasureIndex!==null) copyMeasure(selectedPartId, selectedMeasureIndex) }} />
+            <Item label="Paste Measure"     shortcut="Ctrl+V"   onClick={() => { if(selectedMeasureIndex!==null) pasteMeasure(selectedPartId, selectedMeasureIndex) }} />
+            <Sep />
+            <Item label="Select All"        shortcut="Ctrl+A"   onClick={() => {}} disabled />
+            <Item label="Delete Note"       shortcut="Del"      onClick={() => { if(selectedNoteId) deleteNote(selectedPartId, selectedMeasureIndex, selectedNoteId) }} />
+            <Item label="Clear Measure"     shortcut=""         onClick={() => { if(selectedMeasureIndex!==null) clearMeasureColumn(selectedMeasureIndex) }} />
+          </>
+
+          // ── ADD ──────────────────────────────────────────────────────────
+          const addMenu = <>
+            <Item label="Add Measure"       shortcut="M"        onClick={addMeasure} />
+            <Item label="Add Measure Before" shortcut=""        onClick={() => {}} disabled />
+            <Sep />
+            <Item label="Insert Note"       shortcut="N"        onClick={() => setInputMode('note')} />
+            <Item label="Insert Rest"       shortcut="0"        onClick={() => {}} disabled />
+            <Sep />
+            <Item label="Add Triplet"       shortcut="Ctrl+3"   onClick={() => insertTriplet(selectedDuration)} />
+            <Item label="Add Tie"           shortcut="T"        onClick={toggleTie} />
+            <Item label="Add Slur"          shortcut="S"        onClick={toggleSlurStart} />
+            <Sep />
+            <Item label="Add Dynamic"       shortcut=""         onClick={() => {}} disabled />
+            <Item label="Add Hairpin ＜"    shortcut=""         onClick={() => {}} disabled />
+            <Item label="Add Hairpin ＞"    shortcut=""         onClick={() => {}} disabled />
+            <Sep />
+            <Item label="Add Rehearsal Mark" shortcut=""        onClick={() => {
+              const idx = selectedMeasureIndex
+              if (idx===null) return
+              const letter = prompt('Rehearsal mark letter:', 'A')
+              if (letter) useScoreStore.getState().addRehearsalMark(idx, letter.trim().slice(0,3))
+            }} />
+            <Item label="Add Text"          shortcut=""         onClick={() => {}} disabled />
+          </>
+
+          // ── FORMAT ───────────────────────────────────────────────────────
+          const formatMenu = <>
+            <Item label="Staff Properties…" shortcut=""         onClick={() => {}} disabled />
+            <Item label="Page Settings…"    shortcut=""         onClick={() => {}} disabled />
+            <Sep />
+            <Item label="Transpose…"        shortcut="Ctrl+↑"  onClick={() => transposeSelection(1)} />
+            <Item label="Transpose Up ½"    shortcut="Ctrl+↑"  onClick={() => transposeSelection(1)} />
+            <Item label="Transpose Down ½"  shortcut="Ctrl+↓"  onClick={() => transposeSelection(-1)} />
+            <Item label="Transpose Up 8ve"  shortcut="Ctrl+→"  onClick={() => transposeSelection(12)} />
+            <Item label="Transpose Down 8ve" shortcut="Ctrl+←" onClick={() => transposeSelection(-12)} />
+            <Sep />
+            <Item label="Reset to Default Layout" shortcut=""   onClick={() => {}} disabled />
+            <Item label="Apply Staff Style…" shortcut=""        onClick={() => {}} disabled />
+          </>
+
+          // ── VIEW ─────────────────────────────────────────────────────────
+          const viewMenu = <>
+            <Item label="Zoom In"           shortcut="Ctrl++"   onClick={() => setZoom(zoom + 0.1)} />
+            <Item label="Zoom Out"          shortcut="Ctrl+−"   onClick={() => setZoom(zoom - 0.1)} />
+            <Item label="Reset Zoom"        shortcut="Ctrl+0"   onClick={() => setZoom(1.0)} />
+            <Sep />
+            <Item label={`Piano Keyboard  ${showPiano ? '✓' : ''}`} shortcut="P"
+              onClick={() => setShowPiano(v => !v)} />
+            <Item label={`Dark Mode  ${darkMode ? '✓' : ''}`}   shortcut=""
+              onClick={() => { const n=!darkMode; setDarkMode(n); localStorage.setItem('faithscore_dark',n?'1':'0') }} />
+            <Sep />
+            <Item label="Show Sidebar"      shortcut=""         onClick={() => {}} disabled />
+            <Item label="Show Mixer"        shortcut=""         onClick={() => {}} disabled />
+            <Item label="Show Palettes"     shortcut="F9"       onClick={() => {}} disabled />
+            <Item label="Show Navigator"    shortcut=""         onClick={() => {}} disabled />
+            <Sep />
+            <Item label="Full Screen"       shortcut="F11"
+              onClick={() => { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen() }} />
+          </>
+
+          // ── TOOLS ────────────────────────────────────────────────────────
+          const toolsMenu = <>
+            <Item label="Preferences…"      shortcut=""         onClick={() => {}} disabled />
+            <Sep />
+            <Item label="Regroup Rhythms"   shortcut=""         onClick={() => {}} disabled />
+            <Item label="Resequence Rehearsal Marks" shortcut=""onClick={() => {}} disabled />
+            <Item label="Unroll Repeats"    shortcut=""         onClick={() => {}} disabled />
+            <Sep />
+            <Item label="Score Comparison"  shortcut=""         onClick={() => {}} disabled />
+            <Item label="Plugin Manager…"   shortcut=""         onClick={() => {}} disabled />
+            <Sep />
+            <Item label="AI: Generate Melody"   shortcut=""     onClick={() => alert('AI features coming soon — stay tuned!')} />
+            <Item label="AI: Harmonize…"        shortcut=""     onClick={() => alert('AI features coming soon — stay tuned!')} />
+            <Item label="AI: Generate Lyrics"   shortcut=""     onClick={() => alert('AI features coming soon — stay tuned!')} />
+          </>
+
+          return (
+            <>
+              <MenuTitle open={showExportMenu} toggle={setShowExportMenu} w={210} id={fileMenu}>File</MenuTitle>
+              <MenuTitle open={showEditMenu}   toggle={setShowEditMenu}   w={220} id={editMenu}>Edit</MenuTitle>
+              <MenuTitle open={showAddMenu}    toggle={setShowAddMenu}    w={220} id={addMenu}>Add</MenuTitle>
+              <MenuTitle open={showFormatMenu} toggle={setShowFormatMenu} w={220} id={formatMenu}>Format</MenuTitle>
+              <MenuTitle open={showViewMenu}   toggle={setShowViewMenu}   w={210} id={viewMenu}>View</MenuTitle>
+              <MenuTitle open={showToolsMenu}  toggle={setShowToolsMenu}  w={220} id={toolsMenu}>Tools</MenuTitle>
+            </>
+          )
+        })()}
 
         <div className="w-px h-4 bg-gray-200 mx-1" />
 
