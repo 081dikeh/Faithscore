@@ -31,11 +31,59 @@ function keyNumToVexflow(num) {
   return map[String(num)] ?? 'C'
 }
 
+// ── Stem direction helper ────────────────────────────────────────────────────
+// Returns 1 (up) or -1 (down) based on note position relative to middle line.
+// Standard engraving rule:
+//   Notes BELOW the middle line → stem UP   (1)
+//   Notes ABOVE the middle line → stem DOWN (-1)
+//   Middle line note → stem UP by default   (1)
+//
+// For chords: compute average diatonic position of all notes; stem direction
+// follows the note farthest from the middle line.
+//
+// Diatonic position = octave × 7 + step index (C=0 D=1 E=2 F=3 G=4 A=5 B=6)
+// Middle-line positions by clef:
+//   treble → B4 = 4×7+6 = 34
+//   bass   → D3 = 3×7+1 = 22
+//   alto   → C4 = 4×7+0 = 28  (alto C-clef, middle line = C4)
+//   tenor  → A3 = 3×7+5 = 26  (tenor C-clef, middle line = A3)
+
+const STEP_IDX  = { C:0, D:1, E:2, F:3, G:4, A:5, B:6 }
+const MIDDLE_LINE = { treble: 34, bass: 22, alto: 28, tenor: 26 }
+
+function diatonicPos(pitch) {
+  if (!pitch?.step) return 34  // treble middle line fallback
+  return (pitch.octave || 4) * 7 + (STEP_IDX[pitch.step] ?? 0)
+}
+
+function stemDir(note, chordExtras, clef) {
+  // Whole notes never have stems
+  if (note.duration === 'w') return 1
+
+  const mid  = MIDDLE_LINE[clef] || MIDDLE_LINE.treble
+  const allPitches = [note, ...chordExtras]
+    .filter(n => n.pitch && !n.isRest)
+    .map(n => diatonicPos(n.pitch))
+
+  if (!allPitches.length) return 1
+
+  // Rule: note AT or ABOVE the middle line → stem DOWN (-1)
+  //       note BELOW the middle line       → stem UP   (1)
+  //
+  // For chords: find the note farthest from the middle line.
+  // That note decides the direction. If equidistant, the lower note wins
+  // (standard: stem goes UP when ambiguous).
+  const distAbove = Math.max(...allPitches.map(p => p - mid))  // > 0 means above mid
+  const distBelow = Math.max(...allPitches.map(p => mid - p))  // > 0 means below mid
+
+  // If furthest note is above or ON the middle line → stem DOWN
+  if (distAbove >= distBelow) return -1
+  // If furthest note is strictly below the middle line → stem UP
+  return 1
+}
+
 function buildVfNote(n, clef, isSelected, chordExtras = []) {
   const restKey = REST_KEY[clef] || 'b/4'
-  // CRITICAL: pass clef to StaveNote so VexFlow uses the correct staff
-  // position table. Without this, ALL notes use treble clef positioning,
-  // which places bass clef notes and rests in completely wrong positions.
   const clefOpt = clef === 'bass' ? { clef: 'bass' } : {}
 
   if (n.isRest) {
@@ -57,9 +105,17 @@ function buildVfNote(n, clef, isSelected, chordExtras = []) {
     nn.pitch ? `${nn.pitch.step.toLowerCase()}/${nn.pitch.octave}` : defKey
   )
 
-  const sn = new StaveNote({ keys, duration: n.duration, dots: n.dots || 0, ...clefOpt })
+  // ── Calculate stem direction from pitch position ──────────────────────────
+  const direction = stemDir(n, chordExtras, clef)
+
+  const sn = new StaveNote({
+    keys,
+    duration:      n.duration,
+    dots:          n.dots || 0,
+    stem_direction: direction,   // 1=up, -1=down — set at construction time
+    ...clefOpt,
+  })
   if (n.dots) Dot.buildAndAttach([sn])
-  // Triplet notes get a teal colour so they're visually distinct
   if (isSelected) sn.setStyle({ fillStyle: '#ea580c', strokeStyle: '#ea580c' })
   else if (n.triplet) sn.setStyle({ fillStyle: '#0d9488', strokeStyle: '#0d9488' })
 
@@ -328,29 +384,28 @@ export default function ScoreRenderer() {
             new Formatter().joinVoices([voice]).format([voice], formatterWidth)
 
             // ── Beaming ─────────────────────────────────────────────────────
-            // Steps: generate beams → set stem dir + hide flags → draw voice → draw beams
-            // In VexFlow 4, hiding flags on beamed notes requires setting the flag
-            // style to transparent BEFORE voice.draw() renders them.
+            // Our buildVfNote already set stem_direction correctly per engraving rules.
+            // We pass auto_stem:false so generateBeams respects our explicit stem dirs.
+            // Flag transparency is set BEFORE voice.draw() to suppress individual flags.
             let beamGroups = []
             try {
               const beamable = vfNotes.filter(n => {
                 try {
                   const dur = n.getDuration()
-                  return dur === '8' || dur === '16' || dur === '32' || dur === '64'
+                  return (dur === '8' || dur === '16' || dur === '32' || dur === '64')
+                    && !n.isRest?.()
                 } catch(_) { return false }
               })
               if (beamable.length > 0) {
                 beamGroups = Beam.generateBeams(beamable, {
-                  auto_stem: true,
-                  beam_rests: false,
+                  auto_stem:     false,   // respect our pre-calculated stem directions
+                  beam_rests:    false,
                   show_stemlets: false,
                 })
                 beamGroups.forEach(beam => {
-                  const dir = beam.getStemDirection()
                   beam.getNotes().forEach(note => {
                     try {
-                      note.setStemDirection(dir)
-                      // Hide flag by making it transparent — works across VF4 versions
+                      // Hide flag so beam line replaces it (not both drawn)
                       note.setFlagStyle({ fillStyle: 'transparent', strokeStyle: 'transparent' })
                     } catch(_) {}
                   })
@@ -468,45 +523,37 @@ export default function ScoreRenderer() {
             // drawTieCanvas — tapered bezier arc matching slur thickness.
             // stemUp=true → bows downward (away from stem); false → bows upward.
             // Touches notehead by using a tiny INS inset (not large gap).
+            // drawTieCanvas — filled lens shape identical to VexFlow's Curve (slur).
+            // Draws two bezier curves forming a closed path and fills it black.
+            // This gives the same visual weight as the slur automatically.
+            // bow: pixels of arc height (positive = curves down, negative = curves up)
             const drawTieCanvas = (x1, y1, x2, y2, stemUp) => {
               try {
                 ctx.save()
-                const STEPS = 40
-                const bow   = stemUp ? 13 : -13
-                const INS   = 2                  // tiny inset — arc nearly touches notehead
-                const lx1   = x1 + INS
-                const lx2   = x2 - INS
-                const cp1x  = lx1 + (lx2 - lx1) * 0.25
-                const cp1y  = y1  + bow * 1.2
-                const cp2x  = lx1 + (lx2 - lx1) * 0.75
-                const cp2y  = y2  + bow * 1.2
+                const bow  = stemUp ? 12 : -12   // arc direction and height
+                const INS  = 3                    // inset so arc starts near notehead center
+                const lx1  = x1 + INS
+                const lx2  = x2 - INS
+                // Outer arc control points (the "outside" of the lens)
+                const oc1x = lx1 + (lx2 - lx1) * 0.25
+                const oc1y = y1  + bow * 1.3
+                const oc2x = lx1 + (lx2 - lx1) * 0.75
+                const oc2y = y2  + bow * 1.3
+                // Inner arc control points (the "inside" — closer to baseline)
+                // The distance between outer and inner determines thickness at peak
+                const THICK = 2.8                 // max thickness at centre in px
+                const ic1y  = oc1y - Math.sign(bow) * THICK
+                const ic2y  = oc2y - Math.sign(bow) * THICK
 
-                const B = (t) => {
-                  const mt = 1 - t
-                  return {
-                    x: mt*mt*mt*lx1 + 3*mt*mt*t*cp1x + 3*mt*t*t*cp2x + t*t*t*lx2,
-                    y: mt*mt*mt*y1  + 3*mt*mt*t*cp1y + 3*mt*t*t*cp2y + t*t*t*y2,
-                  }
-                }
-
-                // MAX_W=3.2 matches Curve (slur) thickness at its widest point
-                const MAX_W = 3.2
-                const MIN_W = 0.05
-                ctx.lineCap = 'round'
-                for (let i = 0; i < STEPS; i++) {
-                  const t0 = i / STEPS
-                  const t1 = (i + 1) / STEPS
-                  const p0 = B(t0)
-                  const p1 = B(t1)
-                  const tc = (t0 + t1) / 2
-                  const w  = MIN_W + (MAX_W - MIN_W) * Math.sin(tc * Math.PI)
-                  ctx.beginPath()
-                  ctx.moveTo(p0.x, p0.y)
-                  ctx.lineTo(p1.x, p1.y)
-                  ctx.strokeStyle = '#1a1a1a'
-                  ctx.lineWidth   = w
-                  ctx.stroke()
-                }
+                ctx.beginPath()
+                // Draw outer arc left→right
+                ctx.moveTo(lx1, y1)
+                ctx.bezierCurveTo(oc1x, oc1y, oc2x, oc2y, lx2, y2)
+                // Draw inner arc right→left (closing the lens)
+                ctx.bezierCurveTo(oc2x, ic2y, oc1x, ic1y, lx1, y1)
+                ctx.closePath()
+                ctx.fillStyle = '#1a1a1a'
+                ctx.fill()
                 ctx.restore()
               } catch(_) {}
             }

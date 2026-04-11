@@ -919,3 +919,18 @@ export default function App() {
     </div>
   )
 }
+
+
+
+
+// import { useState, useEffect } from 'react'
+
+function useFetch(url){
+  const [data, setdata] = useState(null)
+  const [loading, setloading] = useState(true)
+  const [error, seterror] = useState(null)
+
+  useEffect(() => {
+
+  }, [url])
+}
