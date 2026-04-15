@@ -431,7 +431,7 @@ export default function App() {
             <Item icon=""   label="Export…"           arrow               disabled />
             <Sep />
             <Item icon="🖨️" label="Print…"            shortcut="Ctrl+P"
-              onClick={async () => { await printScore(score) }} />
+              onClick={() => { printScore(score) }} />
             <Sep />
             <Item icon=""   label="Score properties…"                     disabled />
             <Item icon="🚪" label="Quit"              shortcut="Ctrl+Q"   danger
@@ -918,19 +918,4 @@ export default function App() {
       )}
     </div>
   )
-}
-
-
-
-
-// import { useState, useEffect } from 'react'
-
-function useFetch(url){
-  const [data, setdata] = useState(null)
-  const [loading, setloading] = useState(true)
-  const [error, seterror] = useState(null)
-
-  useEffect(() => {
-
-  }, [url])
 }

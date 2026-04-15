@@ -205,213 +205,148 @@ function pitchToMidi(pitch) {
 }
 
 // ── Print / PDF ────────────────────────────────────────────────────────────────
-// printScore — embeds font-face rules into SVG so it renders correctly in print.
-// The Bravura music font is loaded via @font-face in the app CSS. When we open
-// a new print window, that font is not available there. We solve this by:
-// 1. Extracting all @font-face rules from the current document's stylesheets
-// 2. Injecting them as an inline <style> inside each SVG clone
-// 3. Using a data: URI (not blob URL) to avoid cross-origin canvas tainting
-// 4. Drawing each SVG onto a canvas at 2× resolution, then printing the PNGs
-export async function printScore(score) {
+// printScore — opens a print-ready window using the live SVG strings.
+// The SVG content from VexFlow uses the Bravura music font. Rather than
+// trying to rasterize (which breaks due to cross-origin font restrictions),
+// we inline ALL @font-face CSS rules from the current document directly into
+// the print window's <style> block. Since the print window is opened from the
+// same origin, the browser reuses its font cache and renders glyphs correctly.
+export function printScore(score) {
   const title    = score?.title    || 'Untitled Score'
   const composer = score?.composer || ''
 
   const pages = document.querySelectorAll('.score-page')
-  if (!pages.length) { alert('Nothing to print yet. Add some notes first.'); return }
+  if (!pages.length) { alert('Nothing to print yet — add some notes first.'); return }
 
   const svgElements = []
   pages.forEach(page => {
     page.querySelectorAll('svg').forEach(svg => svgElements.push(svg))
   })
-  if (!svgElements.length) { alert('No score content found to print.'); return }
+  if (!svgElements.length) { alert('No score SVG found.'); return }
 
-  // ── Step 1: Collect all @font-face rules from document stylesheets ──────────
-  let fontFaceCSS = ''
+  // ── Collect ALL CSS from the document — @font-face + any music-related rules ──
+  let allCSS = ''
   try {
     for (const sheet of Array.from(document.styleSheets)) {
       try {
-        for (const rule of Array.from(sheet.cssRules || [])) {
-          if (rule.type === CSSRule.FONT_FACE_RULE) {
-            fontFaceCSS += rule.cssText + '\n'
+        const rules = Array.from(sheet.cssRules || [])
+        for (const rule of rules) {
+          // Include font-face rules and any rules referencing music/score classes
+          if (
+            rule.type === CSSRule.FONT_FACE_RULE ||
+            (rule.cssText && rule.cssText.includes('vf-'))
+          ) {
+            allCSS += rule.cssText + '\n'
           }
         }
-      } catch(_) {}   // cross-origin sheets will throw — skip them
+      } catch(_) { /* cross-origin sheet — skip */ }
     }
   } catch(_) {}
 
-  // ── Step 2: Also inline the actual font as base64 if possible ──────────────
-  // VexFlow's Bravura glyphs use Unicode codepoints. The glyphs must be present.
-  // We try to convert the font URL to base64 so the SVG is fully self-contained.
-  let bravuraBase64 = ''
-  try {
-    // Find the Bravura font URL from the @font-face rules
-    const urlMatch = fontFaceCSS.match(/url\(["']?([^"')]+\.woff2?)["']?\)/)
-    if (urlMatch) {
-      const fontUrl = urlMatch[1]
-      const resp = await fetch(fontUrl)
-      if (resp.ok) {
-        const buf  = await resp.arrayBuffer()
-        const b64  = btoa(String.fromCharCode(...new Uint8Array(buf)))
-        const mime = fontUrl.includes('woff2') ? 'font/woff2' : 'font/woff'
-        // Replace the URL in fontFaceCSS with the base64 version
-        fontFaceCSS = fontFaceCSS.replace(
-          /url\(["']?[^"')]+\.woff2?["']?\)/g,
-          `url('data:${mime};base64,${b64}')`
-        )
-        bravuraBase64 = b64
-      }
-    }
-  } catch(_) {}
-
+  // ── Serialize each SVG to a self-contained string ────────────────────────
   const serializer = new XMLSerializer()
+  const svgStrings = svgElements.map(svg => {
+    const clone = svg.cloneNode(true)
+    clone.setAttribute('xmlns',       'http://www.w3.org/2000/svg')
+    clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
+    // Remove width/height so CSS can control scaling
+    clone.removeAttribute('width')
+    clone.removeAttribute('height')
+    clone.style.width  = '100%'
+    clone.style.height = 'auto'
+    return serializer.serializeToString(clone)
+  })
 
-  // ── Step 3: Rasterize each SVG → canvas → PNG ──────────────────────────────
-  const pngDataUrls = await Promise.all(svgElements.map(svg => {
-    return new Promise(resolve => {
-      try {
-        const svgRect = svg.getBoundingClientRect()
-        const W = Math.max(svgRect.width  || svg.width?.baseVal?.value  || 800, 50)
-        const H = Math.max(svgRect.height || svg.height?.baseVal?.value || 200, 50)
-
-        // Clone the SVG and inject font-face styles into <defs>
-        const clone = svg.cloneNode(true)
-        clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
-        clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
-
-        // Inject font CSS into the SVG so glyphs render in the canvas context
-        if (fontFaceCSS) {
-          let defs = clone.querySelector('defs')
-          if (!defs) { defs = document.createElementNS('http://www.w3.org/2000/svg','defs'); clone.prepend(defs) }
-          const style = document.createElementNS('http://www.w3.org/2000/svg','style')
-          style.textContent = fontFaceCSS
-          defs.prepend(style)
-        }
-
-        const svgString = serializer.serializeToString(clone)
-        // Use data URI instead of blob URL — avoids cross-origin canvas tainting
-        const dataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString)
-        const img = new Image()
-
-        img.onload = () => {
-          const scale  = 2   // 2× for sharp print quality
-          const canvas = document.createElement('canvas')
-          canvas.width  = W * scale
-          canvas.height = H * scale
-          const ctx2 = canvas.getContext('2d')
-          ctx2.scale(scale, scale)
-          ctx2.fillStyle = 'white'
-          ctx2.fillRect(0, 0, W, H)
-          ctx2.drawImage(img, 0, 0, W, H)
-          try {
-            resolve(canvas.toDataURL('image/png', 1.0))
-          } catch(e) {
-            // Canvas still tainted (font couldn't be inlined) — use SVG directly
-            resolve('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString))
-          }
-        }
-        img.onerror = () => resolve(null)
-        img.src = dataUri
-      } catch(e) { resolve(null) }
-    })
-  }))
-
-  const validUrls = pngDataUrls.filter(Boolean)
-  if (!validUrls.length) { alert('Could not export the score. Try MusicXML export.'); return }
-
-  const imgTags = validUrls.map(dataUrl =>
-    `<div class="score-img"><img src="${dataUrl}" alt="score" /></div>`
+  const svgBlocks = svgStrings.map(s =>
+    `<div class="score-row">${s}</div>`
   ).join('\n')
 
+  // ── Build print HTML — fonts are embedded via the collected CSS ───────────
   const html = `<!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
   <meta charset="UTF-8">
   <title>${title}</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { background: white; }
-    .print-page {
+    /* All @font-face rules from the host page — Bravura music font */
+    ${allCSS}
+
+    * { margin:0; padding:0; box-sizing:border-box }
+    html, body { background:white; }
+
+    .page {
       width: 210mm;
-      padding: 14mm 12mm 10mm 12mm;
+      min-height: 297mm;
+      padding: 15mm 14mm 12mm 14mm;
       background: white;
+      margin: 0 auto;
     }
-    .score-header {
+    .header {
       text-align: center;
-      margin-bottom: 6mm;
-      border-bottom: 0.5pt solid #ccc;
+      margin-bottom: 8mm;
       padding-bottom: 4mm;
-    }
-    .score-header h1 {
-      font-size: 20pt;
-      font-weight: bold;
+      border-bottom: 0.5pt solid #ccc;
       font-family: 'Times New Roman', serif;
     }
-    .score-header p {
-      font-size: 11pt;
-      text-align: right;
-      color: #444;
-      margin-top: 2mm;
-      font-family: 'Times New Roman', serif;
-    }
-    .score-img { margin-bottom: 4mm; }
-    .score-img img {
+    .header h1 { font-size: 22pt; font-weight: bold; }
+    .header p  { font-size: 11pt; color:#555; text-align:right; margin-top:3mm; }
+
+    .score-row {
       width: 100%;
-      height: auto;
-      display: block;
-      image-rendering: -webkit-optimize-contrast;
-      image-rendering: crisp-edges;
+      margin-bottom: 4mm;
+      overflow: visible;
     }
+    .score-row svg {
+      width: 100% !important;
+      height: auto !important;
+      display: block;
+      overflow: visible;
+    }
+
+    /* VexFlow applies these classes to text glyphs — ensure font is set */
+    text, tspan, .vf-text { font-family: 'Bravura', 'Arial', serif !important; }
+
     @media screen {
       body { background: #ccc; padding: 10mm; }
-      .print-page { box-shadow: 0 2px 12px rgba(0,0,0,0.25); margin: 0 auto; }
+      .page { box-shadow: 0 2px 12px rgba(0,0,0,0.2); }
     }
     @media print {
-      html, body { background: white; padding: 0; margin: 0; }
-      .print-page { padding: 14mm 12mm; }
-      .score-img { break-inside: avoid; }
+      html, body { background: white; padding:0; margin:0; }
+      .page { padding: 14mm; }
     }
     @page { size: A4 portrait; margin: 0; }
   </style>
 </head>
 <body>
-  <div class="print-page">
-    <div class="score-header">
+  <div class="page">
+    <div class="header">
       <h1>${title}</h1>
       ${composer ? `<p>${composer}</p>` : ''}
     </div>
-    ${imgTags}
+    ${svgBlocks}
   </div>
   <script>
-    // Wait for all images to load before printing
-    window.addEventListener('load', function() {
-      const imgs = document.querySelectorAll('img')
-      let loaded = 0
-      const tryPrint = () => { if (++loaded >= imgs.length) { setTimeout(() => { window.print() }, 400) } }
-      if (imgs.length === 0) { setTimeout(() => { window.print() }, 400) }
-      imgs.forEach(img => {
-        if (img.complete) tryPrint()
-        else { img.onload = tryPrint; img.onerror = tryPrint }
-      })
+    // Wait for fonts to load before printing
+    document.fonts.ready.then(() => {
+      setTimeout(() => { window.print() }, 600)
     })
   <\/script>
 </body>
 </html>`
 
-  const printWindow = window.open('', '_blank')
-  if (!printWindow) {
-    // Popup blocked — fallback: create a blob URL
+  const win = window.open('', '_blank')
+  if (!win) {
+    // Popup blocked — download as HTML file instead
     const blob = new Blob([html], { type: 'text/html' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${title}.html`
-    a.click()
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href = url; a.download = `${title}.html`; a.click()
     URL.revokeObjectURL(url)
     return
   }
-  printWindow.document.open()
-  printWindow.document.write(html)
-  printWindow.document.close()
+  win.document.open()
+  win.document.write(html)
+  win.document.close()
 }
 
 // ── Download helpers ──────────────────────────────────────────────────────────
@@ -430,4 +365,3 @@ function downloadBytes(bytes, filename, mimeType) {
   a.href = url; a.download = filename; a.click()
   URL.revokeObjectURL(url)
 }
-

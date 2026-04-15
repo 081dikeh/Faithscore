@@ -110,11 +110,13 @@ function buildVfNote(n, clef, isSelected, chordExtras = []) {
 
   const sn = new StaveNote({
     keys,
-    duration:      n.duration,
-    dots:          n.dots || 0,
-    stem_direction: direction,   // 1=up, -1=down — set at construction time
+    duration:       n.duration,
+    dots:           n.dots || 0,
+    stem_direction: direction,   // VexFlow 3 API
     ...clefOpt,
   })
+  // VexFlow 4 API — must call this explicitly too, as Formatter can reset stem_direction
+  try { sn.setStemDirection(direction) } catch(_) {}
   if (n.dots) Dot.buildAndAttach([sn])
   if (isSelected) sn.setStyle({ fillStyle: '#ea580c', strokeStyle: '#ea580c' })
   else if (n.triplet) sn.setStyle({ fillStyle: '#0d9488', strokeStyle: '#0d9488' })
@@ -383,6 +385,17 @@ export default function ScoreRenderer() {
             const formatterWidth = Math.max(40, width - glyphOverhead)
             new Formatter().joinVoices([voice]).format([voice], formatterWidth)
 
+            // Re-apply stem directions AFTER formatting — Formatter.format() resets
+            // stem_direction to its own auto-calculated value, overriding ours.
+            // We must re-set explicitly here to enforce our engraving rules.
+            renderSeq.forEach((seqNote, ni) => {
+              if (seqNote.isRest) return
+              try {
+                const dir = stemDir(seqNote, Object.values(chordMap[seqNote.id] || {}), clef)
+                vfNotes[ni].setStemDirection(dir)
+              } catch(_) {}
+            })
+
             // ── Beaming ─────────────────────────────────────────────────────
             // Our buildVfNote already set stem_direction correctly per engraving rules.
             // We pass auto_stem:false so generateBeams respects our explicit stem dirs.
@@ -541,7 +554,7 @@ export default function ScoreRenderer() {
                 const oc2y = y2  + bow * 1.3
                 // Inner arc control points (the "inside" — closer to baseline)
                 // The distance between outer and inner determines thickness at peak
-                const THICK = 2.8                 // max thickness at centre in px
+                const THICK = 4.0                // max thickness at centre in px
                 const ic1y  = oc1y - Math.sign(bow) * THICK
                 const ic2y  = oc2y - Math.sign(bow) * THICK
 
