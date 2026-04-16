@@ -4,6 +4,7 @@ import Toolbar from './components/Toolbar'
 import ScoreRenderer from './components/ScoreRenderer'
 import NoteEditor from './components/NoteEditor'
 import { useScoreStore, clearSavedScore } from './store/scoreStore'
+import HomeScreen from './components/HomeScreen'
 import Sidebar from './components/Sidebar'
 import { exportMusicXML, exportMIDI, printScore } from './utils/exportScore'
 import { usePlayback } from './hooks/usePlayback'
@@ -14,6 +15,10 @@ const KEY_TO_STEP   = { a:'A',b:'B',c:'C',d:'D',e:'E',f:'F',g:'G' }
 
 export default function App() {
   const score                  = useScoreStore(s => s.score)
+  const [appView, setAppView] = useState(() => {
+    // Start on home screen always — user can go back with Escape or Home button
+    return 'home'
+  })
   const inputMode              = useScoreStore(s => s.inputMode)
   const selectedMeasureIndex   = useScoreStore(s => s.selectedMeasureIndex)
   const selectedPartId         = useScoreStore(s => s.selectedPartId)
@@ -317,17 +322,36 @@ export default function App() {
 
   const liveNote = getSelectedNote()
 
+  // ── Save score with timestamp whenever score changes ──────────────────
+  useEffect(() => {
+    if (appView !== 'editor') return
+    try {
+      const scored = { ...score, _savedAt: Date.now() }
+      localStorage.setItem('faithscore_autosave', JSON.stringify(scored))
+    } catch(_) {}
+  }, [score, appView])
+
+  if (appView === 'home') {
+    return <HomeScreen onOpenEditor={() => setAppView('editor')} />
+  }
+
   return (
     <div className={`min-h-screen flex flex-col ${darkMode ? "bg-gray-900 text-gray-100" : "bg-gray-100"}`}>
 
       {/* ── Sticky top chrome: menu + status + toolbar + shortcuts ── */}
       <div style={{ position: 'sticky', top: 0, zIndex: 50, flexShrink: 0 }}>
       <div data-menubar className="bg-white border-b border-gray-200 flex items-center h-10 px-3 gap-1 shadow-sm">
-        {/* ── Logo ─────────────────────────────────────── */}
-        <span style={{ display:'flex', alignItems:'center', gap:5, fontWeight:700,
-          fontSize:13, color:'#2563eb', marginRight:8, letterSpacing:'-0.3px' }}>
+        {/* ── Logo + Home button ────────────────────────────── */}
+        <button onClick={() => setAppView('home')}
+          title="Back to Home"
+          style={{ display:'flex', alignItems:'center', gap:5, fontWeight:700,
+            fontSize:13, color:'#2563eb', marginRight:8, letterSpacing:'-0.3px',
+            border:'none', background:'none', cursor:'pointer', padding:'2px 6px',
+            borderRadius:5 }}
+          onMouseEnter={e=>e.currentTarget.style.background='#eff6ff'}
+          onMouseLeave={e=>e.currentTarget.style.background='none'}>
           🎵 FaithScore
-        </span>
+        </button>
 
         {/* ── Menu system ─────────────────────────────────────────────── */}
         {(() => {
@@ -415,7 +439,7 @@ export default function App() {
           // ── FILE ───────────────────────────────────────────────────────────
           const fileMenu = <>
             <Item icon="📄" label="New…"              shortcut="Ctrl+N"
-              onClick={() => { if(confirm('Start a new score? Unsaved changes will be lost.')) { clearSavedScore(); window.location.reload() }}} />
+              onClick={() => { setAppView('home') }} />
             <Item icon="📂" label="Open…"             shortcut="Ctrl+O"   disabled />
             <Item icon=""   label="Open recent"       arrow               disabled />
             <Sep />
