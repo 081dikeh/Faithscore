@@ -6,7 +6,7 @@ import {
 } from 'vexflow'
 import { useScoreStore, DURATION_BEATS, noteDuration } from '../../store/scoreStore'
 
-const MEASURES_PER_LINE = 4
+const MEASURES_PER_LINE = 5
 
 // SP = pixels per staff space. Increase to make everything bigger, decrease for smaller.
 // 10 = compact, 12 = medium, 14 = large, 16 = very large
