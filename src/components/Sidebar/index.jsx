@@ -572,6 +572,126 @@ function PalettesTab() {
   )
 }
 
+// ── PARTS TAB ─────────────────────────────────────────────────────────────────
+function PartsTab() {
+  const score            = useScoreStore(s => s.score)
+  const addPart          = useScoreStore(s => s.addPart)
+  const removePart       = useScoreStore(s => s.removePart)
+  const movePartUp       = useScoreStore(s => s.movePartUp)
+  const movePartDown     = useScoreStore(s => s.movePartDown)
+  const setPartClef      = useScoreStore(s => s.setPartClef)
+  const setPartInstrument = useScoreStore(s => s.setPartInstrument)
+
+  const INSTRUMENTS = [
+    { value: 'piano',     label: 'Piano' },
+    { value: 'violin',    label: 'Violin' },
+    { value: 'viola',     label: 'Viola' },
+    { value: 'cello',     label: 'Cello' },
+    { value: 'bass',      label: 'Double Bass' },
+    { value: 'flute',     label: 'Flute' },
+    { value: 'oboe',      label: 'Oboe' },
+    { value: 'clarinet',  label: 'Clarinet' },
+    { value: 'bassoon',   label: 'Bassoon' },
+    { value: 'horn',      label: 'French Horn' },
+    { value: 'trumpet',   label: 'Trumpet' },
+    { value: 'trombone',  label: 'Trombone' },
+    { value: 'tuba',      label: 'Tuba' },
+    { value: 'soprano',   label: 'Soprano Voice' },
+    { value: 'alto',      label: 'Alto Voice' },
+    { value: 'tenor',     label: 'Tenor Voice' },
+    { value: 'baritone',  label: 'Baritone Voice' },
+    { value: 'organ',     label: 'Organ' },
+    { value: 'guitar',    label: 'Guitar' },
+    { value: 'harp',      label: 'Harp' },
+    { value: 'percussion',label: 'Percussion' },
+    { value: 'choir',     label: 'Choir' },
+    { value: 'strings',   label: 'Strings' },
+  ]
+
+  const btnStyle = {
+    border: '1px solid #d1d5db', borderRadius: 4, background: 'white',
+    cursor: 'pointer', fontSize: 11, padding: '2px 6px', color: '#374151',
+  }
+
+  return (
+    <div style={{ overflowY: 'auto', flex: 1, padding: '8px 0' }}>
+      {/* Add part buttons */}
+      <div style={{ padding: '6px 10px 10px', borderBottom: '1px solid #e5e7eb' }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Add Part</div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={() => addPart('treble')} style={{ ...btnStyle, flex: 1, padding: '5px 4px', background: '#f0f9ff', borderColor: '#93c5fd', color: '#1d4ed8', fontWeight: 600 }}>
+            + Treble
+          </button>
+          <button onClick={() => addPart('bass')} style={{ ...btnStyle, flex: 1, padding: '5px 4px', background: '#f0fdf4', borderColor: '#86efac', color: '#15803d', fontWeight: 600 }}>
+            + Bass
+          </button>
+        </div>
+      </div>
+
+      {/* Part list */}
+      <div style={{ padding: '8px 0' }}>
+        <div style={{ padding: '0 10px 6px', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Parts ({score.parts.length})
+        </div>
+        {score.parts.map((part, idx) => (
+          <div key={part.id} style={{
+            margin: '0 8px 6px', padding: '8px 10px',
+            background: 'white', border: '1px solid #e5e7eb', borderRadius: 6,
+            boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+          }}>
+            {/* Part name + move/remove buttons */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 6 }}>
+              <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: '#111827' }}>
+                {part.name}
+              </span>
+              <button onClick={() => movePartUp(part.id)} disabled={idx === 0}
+                title="Move up" style={{ ...btnStyle, padding: '1px 5px', opacity: idx === 0 ? 0.3 : 1 }}>↑</button>
+              <button onClick={() => movePartDown(part.id)} disabled={idx === score.parts.length - 1}
+                title="Move down" style={{ ...btnStyle, padding: '1px 5px', opacity: idx === score.parts.length - 1 ? 0.3 : 1 }}>↓</button>
+              {score.parts.length > 1 && (
+                <button onClick={() => removePart(part.id)} title="Remove part"
+                  style={{ ...btnStyle, padding: '1px 5px', color: '#dc2626', borderColor: '#fca5a5' }}>✕</button>
+              )}
+            </div>
+
+            {/* Instrument selector */}
+            <div style={{ marginBottom: 5 }}>
+              <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>Instrument</div>
+              <select
+                value={part.instrument || 'piano'}
+                onChange={e => setPartInstrument(part.id, e.target.value)}
+                style={{ width: '100%', fontSize: 11, padding: '3px 4px', border: '1px solid #d1d5db', borderRadius: 4, background: 'white', color: '#374151' }}
+              >
+                {INSTRUMENTS.map(i => <option key={i.value} value={i.value}>{i.label}</option>)}
+              </select>
+            </div>
+
+            {/* Clef selector */}
+            <div>
+              <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 2 }}>Clef</div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {['treble', 'bass', 'alto', 'tenor'].map(clef => (
+                  <button key={clef}
+                    onClick={() => setPartClef(part.id, clef)}
+                    style={{
+                      ...btnStyle, flex: 1, padding: '3px 2px', fontSize: 10,
+                      background: part.clef === clef ? '#dbeafe' : 'white',
+                      borderColor: part.clef === clef ? '#93c5fd' : '#d1d5db',
+                      color: part.clef === clef ? '#1d4ed8' : '#374151',
+                      fontWeight: part.clef === clef ? 700 : 400,
+                    }}>
+                    {clef.charAt(0).toUpperCase() + clef.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── LAYOUT TAB ────────────────────────────────────────────────────────────────
 function LayoutTab() {
   const score        = useScoreStore(s => s.score)
@@ -898,6 +1018,7 @@ export default function Sidebar() {
 
   const TABS = [
     { id: 'palettes',   label: 'Palettes'   },
+    { id: 'parts',      label: 'Parts'      },
     { id: 'layout',     label: 'Layout'     },
     { id: 'properties', label: 'Properties' },
   ]
@@ -922,10 +1043,16 @@ export default function Sidebar() {
 
   return (
     <div style={{
-      width: 220, flexShrink: 0, background: '#f9fafb',
+      width: 250, flexShrink: 0, background: '#f9fafb',
       borderRight: '1px solid #e5e7eb',
       display: 'flex', flexDirection: 'column',
-      height: '100%', overflow: 'hidden',
+      position: 'fixed',
+      top: '31vh',
+      left: 0,
+      height: '100vh',
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      zIndex: 40,
     }}>
       {/* Tab bar */}
       <div style={{
@@ -972,6 +1099,7 @@ export default function Sidebar() {
       {/* Tab content */}
       <div style={{ flex:1, overflow:'hidden', display:'flex', flexDirection:'column' }}>
         {activeTab === 'palettes'   && <PalettesTab />}
+        {activeTab === 'parts'      && <PartsTab />}
         {activeTab === 'layout'     && <LayoutTab />}
         {activeTab === 'properties' && <PropertiesTab />}
 

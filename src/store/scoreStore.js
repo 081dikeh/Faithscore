@@ -151,8 +151,8 @@ export const EMPTY_SCORE = {
   composer: '',
   tempo: 120,
   parts: [
-    { id: 'part-treble', name: 'Treble', instrument: 'piano', clef: 'treble', measures: [makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)] },
-    { id: 'part-bass',   name: 'Bass',   instrument: 'piano', clef: 'bass',   measures: [makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)] },
+    { id: 'part-treble', name: 'Treble', instrument: 'piano', clef: 'treble', measures: Array.from({ length: 8 }, () => makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)) },
+    { id: 'part-bass',   name: 'Bass',   instrument: 'piano', clef: 'bass',   measures: Array.from({ length: 8 }, () => makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)) },
   ],
   // Score-level markings (not attached to parts)
   // Each: { id, type, partId, measureIndex, beat, value/text }
@@ -208,8 +208,6 @@ export const useScoreStore = create((set, get) => ({
   setSubtitle:  (t) => set(s => ({ score: { ...s.score, subtitle: t } })),
   setLyricist:  (t) => set(s => ({ score: { ...s.score, lyricist: t } })),
   setCopyright: (t) => set(s => ({ score: { ...s.score, copyright: t } })),
-  setSubtitle:  (t) => set(s => ({ score: { ...s.score, subtitle: t } })),
-  setLyricist:  (t) => set(s => ({ score: { ...s.score, lyricist: t } })),
 
   setPartClef: (partId, clef) => set(s => ({
     score: { ...s.score, parts: s.score.parts.map(p =>
@@ -326,39 +324,47 @@ export const useScoreStore = create((set, get) => ({
 
   // ── Transpose ──────────────────────────────────────────────────────────
   transposeSelection: (semitones) => {
-    const CHROMATIC = [
-      {s:'C',a:null},{s:'C',a:'#'},{s:'D',a:null},{s:'D',a:'#'},{s:'E',a:null},
-      {s:'F',a:null},{s:'F',a:'#'},{s:'G',a:null},{s:'G',a:'#'},{s:'A',a:null},
-      {s:'B',a:'b'},{s:'B',a:null},
-    ]
-    const base = {C:0,D:2,E:4,F:5,G:7,A:9,B:11}
-    function transposeNote(note) {
-      if (note.isRest || !note.pitch) return note
-      const { step, accidental, octave } = note.pitch
-      let semi = base[step] + octave * 12
-      if (accidental === '#') semi++
-      if (accidental === '##') semi+=2
-      if (accidental === 'b') semi--
-      if (accidental === 'bb') semi-=2
-      semi += semitones
-      const oct2 = Math.floor(semi / 12)
-      const idx  = ((semi % 12) + 12) % 12
-      return { ...note, pitch: { step: CHROMATIC[idx].s, accidental: CHROMATIC[idx].a, octave: oct2 } }
+    // Transpose = shift the KEY SIGNATURE by semitones, not individual note pitches.
+    // The circle of fifths maps semitone shifts to key signature accidental counts:
+    //   +1 semitone = +7 sharps (mod 12, wrapping through flats)
+    // We use a direct semitone → key number lookup instead:
+    //   key number: 0=C, 1=G(1#), 2=D(2#), ... -1=F(1b), -2=Bb(2b), etc.
+    // The standard mapping of chromatic semitone offset to key sig number:
+    const SEMITONE_TO_KEY = {
+      0: 0,   // C
+      1: 7,   // Db → use 7 flats (Cb) or treat as C# (7 sharps) — use flats: -5 = Db
+      2: 2,   // D
+      3: -3,  // Eb
+      4: 4,   // E
+      5: -1,  // F
+      6: 6,   // F# / Gb (use sharps)
+      7: 1,   // G
+      8: -4,  // Ab
+      9: 3,   // A
+      10: -2, // Bb
+      11: 5,  // B
     }
+    // Reverse lookup: key number → semitone offset
+    const KEY_TO_SEMITONE = Object.fromEntries(
+      Object.entries(SEMITONE_TO_KEY).map(([s, k]) => [k, Number(s)])
+    )
+
     get()._snapshot()
-    const { score, selectedMeasureRange, selectedMeasureIndex, selectedPartId } = get()
-    const start = selectedMeasureRange?.start ?? selectedMeasureIndex ?? 0
-    const end   = selectedMeasureRange?.end   ?? selectedMeasureIndex ?? (score.parts[0]?.measures.length - 1)
+    const { score } = get()
+
+    // Get current key from first measure of first part
+    const currentKey = score.parts[0]?.measures[0]?.keySignature ?? 0
+    const currentSemitone = KEY_TO_SEMITONE[currentKey] ?? 0
+    const newSemitone = ((currentSemitone + semitones) % 12 + 12) % 12
+    const newKey = SEMITONE_TO_KEY[newSemitone] ?? 0
+
+    // Apply new key signature to ALL measures of ALL parts
     set(s => ({
       score: {
         ...s.score,
         parts: s.score.parts.map(p => ({
           ...p,
-          measures: p.measures.map((m, i) =>
-            i >= start && i <= end
-              ? { ...m, notes: m.notes.map(transposeNote) }
-              : m
-          ),
+          measures: p.measures.map(m => ({ ...m, keySignature: newKey })),
         })),
       },
     }))

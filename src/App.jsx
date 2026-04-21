@@ -16,6 +16,7 @@ const KEY_TO_STEP   = { a:'A',b:'B',c:'C',d:'D',e:'E',f:'F',g:'G' }
 export default function App() {
   const score                  = useScoreStore(s => s.score)
   const [appView, setAppView] = useState(() => {
+    // Start on home screen always — user can go back with Escape or Home button
     return 'home'
   })
   const inputMode              = useScoreStore(s => s.inputMode)
@@ -78,6 +79,7 @@ export default function App() {
 
   const { play, pause, stop, rewind, playFromBeat, toggleMetronome, toggleLoop } = usePlayback()
 
+  // ── Local UI state — all declared together before any logic ───────────────
   const [samplesLoaded, setSamplesLoaded]     = useState(false)
   const [samplesLoading, setSamplesLoading]   = useState(false)
   const [metronomeOn, setMetronomeOn]         = useState(false)
@@ -90,21 +92,35 @@ export default function App() {
   const [showToolsMenu, setShowToolsMenu]     = useState(false)
   const [showPiano, setShowPiano]             = useState(false)
   const [contextMenu, setContextMenu]         = useState(null)
+  const [darkMode, setDarkMode]               = useState(() => {
+    try { return localStorage.getItem('scoreai_dark') === '1' } catch { return false }
+  })
 
-  // FIX 3: default zoom 80% on mount
+  // Apply dark mode class to <html> whenever darkMode changes
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode)
+    document.body.style.background = darkMode ? '#111827' : ''
+  }, [darkMode])
+
+  // FIX 3: Default zoom 80% on mount
   useEffect(() => { setZoom(0.8) }, [])
 
+  // Intercept play to show loading state while piano samples fetch
   const handlePlay = async () => {
-    if (!samplesLoaded && !samplesLoading) setSamplesLoading(true)
+    if (!samplesLoaded && !samplesLoading) {
+      setSamplesLoading(true)
+    }
     await play()
     setSamplesLoaded(true)
     setSamplesLoading(false)
   }
   const ctxRef = useRef(null)
 
+  // Close context menu + all dropdown menus on outside click
   useEffect(() => {
     const h = e => {
       if (ctxRef.current && !ctxRef.current.contains(e.target)) setContextMenu(null)
+      // Close menus if clicking outside the menu bar area
       if (!e.target.closest?.('[data-menubar]')) {
         setShowExportMenu(false); setShowEditMenu(false); setShowAddMenu(false)
         setShowFormatMenu(false); setShowViewMenu(false); setShowToolsMenu(false)
@@ -114,26 +130,38 @@ export default function App() {
     return () => document.removeEventListener('mousedown', h)
   }, [])
 
+  // Chromatic note button click → insert note (only when in note mode)
   useEffect(() => {
     const unsub = useScoreStore.subscribe(s => s.selectedNote, (note) => {
       const st = useScoreStore.getState()
+      // Only auto-insert if in note mode AND a measure is selected
       if (st.inputMode !== 'note' || st.selectedMeasureIndex === null) return
+
       const pitch = { step: note.step, octave: st.selectedOctave, accidental: note.accidental }
       const selNote = st.getSelectedNote()
-      if (selNote?.isRest) st.fillSelectedRest(pitch)
-      else st.addNote(st.selectedPartId, st.selectedMeasureIndex, {
-        pitch, duration: st.selectedDuration, dots: st.selectedDots || 0,
-      })
+
+      if (selNote?.isRest) {
+        st.fillSelectedRest(pitch)
+      } else {
+        st.addNote(st.selectedPartId, st.selectedMeasureIndex, {
+          pitch,
+          duration: st.selectedDuration,
+          dots: st.selectedDots || 0,
+        })
+      }
     })
     return () => unsub()
   }, [])
 
+  // Global keyboard handler
   useEffect(() => {
     const onKey = e => {
       const tag = e.target.tagName
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+
       const st = () => useScoreStore.getState()
 
+      // ── Duration keys (always work; resize note if one is selected) ──
       if (DURATION_KEYS[e.key]) {
         const newDur  = DURATION_KEYS[e.key]
         const selNote = st().getSelectedNote()
@@ -149,32 +177,46 @@ export default function App() {
       }
       if (e.key === 'j' || e.key === 'J') { setChordMode(!st().chordMode); return }
 
+      // ── When a note/rest is selected ──
       if (selectedNoteId) {
         const selNote = st().getSelectedNote()
+
+        // Pitch shifts (only for real notes)
         if (!selNote?.isRest) {
           if (e.shiftKey && e.key === 'ArrowUp')   { e.preventDefault(); shiftPitchOctave(1);   return }
           if (e.shiftKey && e.key === 'ArrowDown')  { e.preventDefault(); shiftPitchOctave(-1);  return }
           if (!e.shiftKey && e.key === 'ArrowUp')   { e.preventDefault(); shiftPitchStep(1);  return }
           if (!e.shiftKey && e.key === 'ArrowDown') { e.preventDefault(); shiftPitchStep(-1); return }
         }
+
         if (e.key === 'ArrowLeft')  { e.preventDefault(); navigateNote(-1); return }
         if (e.key === 'ArrowRight') { e.preventDefault(); navigateNote(1);  return }
+
         if ((e.key === 'Delete' || e.key === 'Backspace') && !selNote?.isRest) {
-          deleteNote(selectedPartId, selectedMeasureIndex, selectedNoteId); return
+          deleteNote(selectedPartId, selectedMeasureIndex, selectedNoteId)
+          return
         }
         if (e.key === 'Escape') { clearNoteSelection(); return }
+
+        // Rest selected + note key → fill it (works in both select and note mode)
         const step = KEY_TO_STEP[e.key.toLowerCase()]
-        if (step && selNote?.isRest) { fillSelectedRest({ step, octave: st().selectedOctave, accidental: null }); return }
+        if (step && selNote?.isRest) {
+          fillSelectedRest({ step, octave: st().selectedOctave, accidental: null })
+          return
+        }
         if (e.key === 'Enter' && st().selectedNote && selNote?.isRest) {
           const n = st().selectedNote
-          fillSelectedRest({ step: n.step, octave: st().selectedOctave, accidental: n.accidental }); return
+          fillSelectedRest({ step: n.step, octave: st().selectedOctave, accidental: n.accidental })
+          return
         }
       }
 
+      // ── Measure selected but no note — arrows enter the measure ──
       if (selectedMeasureIndex !== null && !selectedNoteId) {
         if (e.key === 'Delete')    { clearMeasureColumn(selectedMeasureIndex); return }
         if (e.key === 'Backspace') { deleteLastNote(selectedPartId, selectedMeasureIndex); return }
         if (e.key === 'ArrowRight' && !e.ctrlKey && !e.metaKey) {
+          // Enter measure by selecting its first note
           e.preventDefault()
           const cur = st()
           const part = cur.score.parts.find(p => p.id === selectedPartId)
@@ -194,14 +236,18 @@ export default function App() {
         }
       }
 
+      // ── Note input: A–G ──
       if (inputMode === 'note' && selectedMeasureIndex !== null) {
         const step = KEY_TO_STEP[e.key.toLowerCase()]
         if (step) {
           const cur     = st()
           const selNote = cur.getSelectedNote()
           const pitch   = { step, octave: cur.selectedOctave, accidental: cur.selectedNote?.accidental ?? null }
+
+          // Shift+letter OR chordMode while a real note is selected = add chord
           if ((e.shiftKey || cur.chordMode) && selectedNoteId && selNote && !selNote.isRest) {
-            addChordNote(selectedPartId, selectedMeasureIndex, selectedNoteId, pitch); return
+            addChordNote(selectedPartId, selectedMeasureIndex, selectedNoteId, pitch)
+            return
           }
           if (selNote?.isRest) fillSelectedRest(pitch)
           else addNote(selectedPartId, selectedMeasureIndex, { pitch, duration: cur.selectedDuration, dots: cur.selectedDots || 0 })
@@ -213,7 +259,8 @@ export default function App() {
           const pitch   = { step: n.step, octave: cur.selectedOctave, accidental: n.accidental }
           const selNote = cur.getSelectedNote()
           if ((e.shiftKey || cur.chordMode) && selectedNoteId && selNote && !selNote.isRest) {
-            addChordNote(selectedPartId, selectedMeasureIndex, selectedNoteId, pitch); return
+            addChordNote(selectedPartId, selectedMeasureIndex, selectedNoteId, pitch)
+            return
           }
           if (selNote?.isRest) fillSelectedRest(pitch)
           else addNote(selectedPartId, selectedMeasureIndex, { pitch, duration: cur.selectedDuration, dots: cur.selectedDots || 0 })
@@ -221,28 +268,51 @@ export default function App() {
         }
       }
 
+      // ── Global shortcuts ──
       if (e.key === 'n' || e.key === 'N') { setInputMode('note');   return }
       if (e.key === 's' || e.key === 'S') { setInputMode('select'); return }
       if (e.key === 'Escape')             { clearSelection(); setMeasureRange(null); setInputMode('select'); return }
       if (e.key === 'm' || e.key === 'M') { addMeasure(); return }
       if (e.key === 'p' || e.key === 'P') { setShowPiano(v => !v); return }
+      // T3 or just '3' in note mode = insert triplet of current duration
       if ((e.key === '3') && inputMode === 'note') { e.preventDefault(); insertTriplet(st().selectedDuration); return }
 
+      // Undo / Redo
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return }
       if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'c') { e.preventDefault(); if (selectedMeasureIndex !== null) copyMeasure(selectedPartId, selectedMeasureIndex); return }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'v') { e.preventDefault(); if (selectedMeasureIndex !== null) pasteMeasure(selectedPartId, selectedMeasureIndex); return }
+
+      // Copy / Paste
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        e.preventDefault()
+        if (selectedMeasureIndex !== null) copyMeasure(selectedPartId, selectedMeasureIndex)
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        e.preventDefault()
+        if (selectedMeasureIndex !== null) pasteMeasure(selectedPartId, selectedMeasureIndex)
+        return
+      }
+
+      // Tie (T)
       if (e.key === 't' || e.key === 'T') { toggleTie(); return }
       if (e.key === 'e' || e.key === 'E') { toggleSlurEnd(); return }
+      // Slur (S already taken by Select — use Shift+S)
       if (e.shiftKey && e.key === 'S') { toggleSlurStart(); return }
+
+      // Transpose (up/down by semitone when no note selected, by measure range)
       if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowUp')   { e.preventDefault(); transposeSelection(1);  return }
       if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowDown') { e.preventDefault(); transposeSelection(-1); return }
       if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowRight'){ e.preventDefault(); transposeSelection(12); return }
       if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowLeft') { e.preventDefault(); transposeSelection(-12);return }
+
+      // Zoom (Ctrl + / -)
       if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) { e.preventDefault(); setZoom(zoom + 0.1); return }
       if ((e.ctrlKey || e.metaKey) && e.key === '-') { e.preventDefault(); setZoom(zoom - 0.1); return }
       if ((e.ctrlKey || e.metaKey) && e.key === '0') { e.preventDefault(); setZoom(0.8); return }
+
+      // Shift+click measure = extend range (handled in ScoreRenderer onClick)
     }
+
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [inputMode, selectedDuration, selectedDots, selectedMeasureIndex, selectedPartId, selectedNoteId, selectedOctave, chordMode, addChordNote, undo, redo, copyMeasure, pasteMeasure, transposeSelection, toggleTie, toggleSlurStart, zoom, setZoom, setMeasureRange, insertTriplet])
@@ -255,81 +325,113 @@ export default function App() {
 
   const liveNote = getSelectedNote()
 
-  // Auto-save with timestamp
+  // ── Save score with timestamp whenever score changes ──────────────────
   useEffect(() => {
     if (appView !== 'editor') return
     try {
-      localStorage.setItem('faithscore_autosave', JSON.stringify({ ...score, _savedAt: Date.now() }))
+      const scored = { ...score, _savedAt: Date.now() }
+      localStorage.setItem('faithscore_autosave', JSON.stringify(scored))
     } catch(_) {}
   }, [score, appView])
 
   if (appView === 'home') {
     return <HomeScreen onOpenEditor={() => setAppView('editor')} />
-  }
+  }  
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-100">
+    <div className={`min-h-screen flex flex-col ${darkMode ? "bg-gray-900 text-gray-100" : "bg-gray-100"}`}>
 
-      {/* ── Sticky top chrome ── */}
+      {/* ── Sticky top chrome: menu + status + toolbar + shortcuts ── */}
       <div style={{ position: 'sticky', top: 0, zIndex: 50, flexShrink: 0 }}>
       <div data-menubar className="bg-white border-b border-gray-200 flex items-center h-10 px-3 gap-1 shadow-sm">
-
-        {/* Logo + Home */}
+        {/* ── Logo + Home button ────────────────────────────── */}
         <button onClick={() => setAppView('home')}
           title="Back to Home"
           style={{ display:'flex', alignItems:'center', gap:5, fontWeight:700,
             fontSize:13, color:'#2563eb', marginRight:8, letterSpacing:'-0.3px',
-            border:'none', background:'none', cursor:'pointer', padding:'2px 6px', borderRadius:5 }}
+            border:'none', background:'none', cursor:'pointer', padding:'2px 6px',
+            borderRadius:5 }}
           onMouseEnter={e=>e.currentTarget.style.background='#eff6ff'}
           onMouseLeave={e=>e.currentTarget.style.background='none'}>
           🎵 FaithScore
         </button>
 
-        {/* Menu system */}
+        {/* ── Menu system ─────────────────────────────────────────────── */}
         {(() => {
           const closeAll = () => {
             setShowExportMenu(false); setShowEditMenu(false); setShowAddMenu(false)
             setShowFormatMenu(false); setShowViewMenu(false); setShowToolsMenu(false)
           }
+
+          // Separator line
           const Sep = () => <div style={{ height:1, background:'#e5e7eb', margin:'4px 0' }} />
+
+          // Section label (non-clickable group header)
           const Label = ({ text }) => (
-            <div style={{ padding:'4px 14px 2px', fontSize:10, fontWeight:700, color:'#9ca3af', textTransform:'uppercase', letterSpacing:'0.06em' }}>{text}</div>
+            <div style={{ padding:'4px 14px 2px', fontSize:10, fontWeight:700,
+              color:'#9ca3af', textTransform:'uppercase', letterSpacing:'0.06em' }}>
+              {text}
+            </div>
           )
+
+          // Menu item — with optional icon, shortcut, arrow for sub-menus, danger styling
           const Item = ({ icon, label, shortcut, onClick, disabled, danger, arrow }) => (
             <button disabled={disabled}
               onClick={() => { if (!disabled) { closeAll(); onClick?.() } }}
-              style={{ display:'flex', alignItems:'center', gap:8, width:'100%', textAlign:'left', padding:'5px 14px 5px 10px', fontSize:12.5, border:'none', background:'none', cursor: disabled ? 'default' : 'pointer', borderRadius:3, color: danger ? '#dc2626' : disabled ? '#b0b8c8' : '#1e2433' }}
+              style={{ display:'flex', alignItems:'center', gap:8, width:'100%',
+                textAlign:'left', padding:'5px 14px 5px 10px',
+                fontSize:12.5, border:'none', background:'none',
+                cursor: disabled ? 'default' : 'pointer', borderRadius:3,
+                color: danger ? '#dc2626' : disabled ? '#b0b8c8' : '#1e2433' }}
               onMouseEnter={e => { if (!disabled) e.currentTarget.style.background='#e8f0fe' }}
               onMouseLeave={e => { e.currentTarget.style.background='none' }}>
-              <span style={{ width:18, flexShrink:0, fontSize:13, textAlign:'center', color: disabled ? '#b0b8c8' : '#5a6478' }}>{icon || ''}</span>
+              <span style={{ width:18, flexShrink:0, fontSize:13, textAlign:'center',
+                color: disabled ? '#b0b8c8' : '#5a6478' }}>{icon || ''}</span>
               <span style={{ flex:1 }}>{label}</span>
-              {shortcut && <span style={{ fontSize:10.5, color:'#9ca3af', whiteSpace:'nowrap', marginLeft:16 }}>{shortcut}</span>}
+              {shortcut && <span style={{ fontSize:10.5, color:'#9ca3af', whiteSpace:'nowrap',
+                marginLeft:16 }}>{shortcut}</span>}
               {arrow && <span style={{ fontSize:10, color:'#9ca3af', marginLeft:4 }}>▶</span>}
             </button>
           )
+
+          // Checkmark item (for toggleable views)
           const CheckItem = ({ checked, label, shortcut, onClick }) => (
             <button onClick={() => { closeAll(); onClick?.() }}
-              style={{ display:'flex', alignItems:'center', gap:8, width:'100%', textAlign:'left', padding:'5px 14px 5px 10px', fontSize:12.5, border:'none', background:'none', cursor:'pointer', borderRadius:3, color:'#1e2433' }}
+              style={{ display:'flex', alignItems:'center', gap:8, width:'100%',
+                textAlign:'left', padding:'5px 14px 5px 10px',
+                fontSize:12.5, border:'none', background:'none',
+                cursor:'pointer', borderRadius:3, color:'#1e2433' }}
               onMouseEnter={e => { e.currentTarget.style.background='#e8f0fe' }}
               onMouseLeave={e => { e.currentTarget.style.background='none' }}>
-              <span style={{ width:18, flexShrink:0, fontSize:12, textAlign:'center', color:'#2563eb' }}>{checked ? '✓' : ''}</span>
+              <span style={{ width:18, flexShrink:0, fontSize:12, textAlign:'center',
+                color:'#2563eb' }}>{checked ? '✓' : ''}</span>
               <span style={{ flex:1 }}>{label}</span>
-              {shortcut && <span style={{ fontSize:10.5, color:'#9ca3af', whiteSpace:'nowrap', marginLeft:16 }}>{shortcut}</span>}
+              {shortcut && <span style={{ fontSize:10.5, color:'#9ca3af', whiteSpace:'nowrap',
+                marginLeft:16 }}>{shortcut}</span>}
             </button>
           )
+
+          // Dropdown container
           const MenuTitle = ({ children, w=220, open, toggle, menu }) => (
             <div style={{ position:'relative' }}>
               <button
                 onClick={() => { closeAll(); if (!open) toggle(true) }}
                 onMouseEnter={() => {
-                  const anyOpen = [showExportMenu,showEditMenu,showAddMenu,showFormatMenu,showViewMenu,showToolsMenu].some(Boolean)
+                  const anyOpen = [showExportMenu,showEditMenu,showAddMenu,
+                    showFormatMenu,showViewMenu,showToolsMenu].some(Boolean)
                   if (anyOpen) { closeAll(); toggle(true) }
                 }}
-                style={{ padding:'3px 9px', fontSize:13, fontWeight:500, border:'none', background: open ? '#dbeafe' : 'none', borderRadius:4, cursor:'pointer', color: open ? '#1d4ed8' : '#1e2433' }}>
+                style={{ padding:'3px 9px', fontSize:13, fontWeight:500,
+                  border:'none', background: open ? '#dbeafe' : 'none',
+                  borderRadius:4, cursor:'pointer',
+                  color: open ? '#1d4ed8' : '#1e2433' }}>
                 {children}
               </button>
               {open && (
-                <div style={{ position:'absolute', top:'calc(100% + 2px)', left:0, zIndex:200, background:'white', border:'1px solid #d1d5db', borderRadius:7, boxShadow:'0 10px 30px rgba(0,0,0,0.14)', minWidth:w, padding:'5px 0', userSelect:'none' }}
+                <div style={{ position:'absolute', top:'calc(100% + 2px)', left:0, zIndex:200,
+                  background:'white', border:'1px solid #d1d5db', borderRadius:7,
+                  boxShadow:'0 10px 30px rgba(0,0,0,0.14)', minWidth:w,
+                  padding:'5px 0', userSelect:'none' }}
                   onMouseLeave={() => toggle(false)}>
                   {menu}
                 </div>
@@ -337,123 +439,199 @@ export default function App() {
             </div>
           )
 
+          // ── FILE ───────────────────────────────────────────────────────────
           const fileMenu = <>
-            <Item icon="📄" label="New…" shortcut="Ctrl+N" onClick={() => setAppView('home')} />
-            <Item icon="📂" label="Open…" shortcut="Ctrl+O" disabled />
+            <Item icon="📄" label="New…"              shortcut="Ctrl+N"
+              onClick={() => { setAppView('home') }} />
+            <Item icon="📂" label="Open…"             shortcut="Ctrl+O"   disabled />
+            <Item icon=""   label="Open recent"       arrow               disabled />
             <Sep />
-            <Item icon="💾" label="Save" shortcut="Ctrl+S"
-              onClick={() => { try { localStorage.setItem('faithscore_autosave', JSON.stringify({...score, _savedAt:Date.now()})); alert('Score saved.') } catch(_){} }} />
-            <Item icon="" label="Save as…" shortcut="Ctrl+Shift+S" disabled />
-            <Item icon="☁️" label="Save to cloud…" disabled />
+            <Item icon="💾" label="Save"              shortcut="Ctrl+S"
+              onClick={() => { try { localStorage.setItem('faithscore_autosave', JSON.stringify(score)) } catch(_){} alert('Score saved to browser storage.') }} />
+            <Item icon=""   label="Save as…"          shortcut="Ctrl+Shift+S" disabled />
+            <Item icon="☁️" label="Save to cloud…"                        disabled />
             <Sep />
-            <Item icon="" label="Export MusicXML" shortcut="Ctrl+Shift+X" onClick={() => exportMusicXML(score)} />
-            <Item icon="" label="Export MIDI" shortcut="Ctrl+Shift+M" onClick={() => exportMIDI(score)} />
-            <Item icon="" label="Export…" arrow disabled />
+            <Item icon=""   label="Export MusicXML"   shortcut="Ctrl+Shift+X"
+              onClick={() => exportMusicXML(score)} />
+            <Item icon=""   label="Export MIDI"        shortcut="Ctrl+Shift+M"
+              onClick={() => exportMIDI(score)} />
+            <Item icon=""   label="Export…"           arrow               disabled />
             <Sep />
-            <Item icon="🖨️" label="Print…" shortcut="Ctrl+P" onClick={() => printScore(score)} />
+            <Item icon="🖨️" label="Print…"            shortcut="Ctrl+P"
+              onClick={() => { printScore(score) }} />
             <Sep />
-            <Item icon="" label="Score properties…" disabled />
-            <Item icon="🚪" label="Quit" shortcut="Ctrl+Q" danger onClick={() => window.close()} />
+            <Item icon=""   label="Score properties…"                     disabled />
+            <Item icon="🚪" label="Quit"              shortcut="Ctrl+Q"   danger
+              onClick={() => window.close()} />
           </>
 
+          // ── EDIT ───────────────────────────────────────────────────────────
           const editMenu = <>
-            <Item icon="↩" label="Undo" shortcut="Ctrl+Z" onClick={undo} disabled={_undoStack.length === 0} />
-            <Item icon="↪" label="Redo" shortcut="Ctrl+Y" onClick={redo} />
-            <Item icon="" label="History" disabled />
+            <Item icon="↩" label="Undo"               shortcut="Ctrl+Z"
+              onClick={undo} disabled={_undoStack.length === 0} />
+            <Item icon="↪" label="Redo"               shortcut="Ctrl+Y"
+              onClick={redo} />
+            <Item icon=""  label="History"                                 disabled />
             <Sep />
-            <Item icon="✂️" label="Cut" shortcut="Ctrl+X" disabled />
-            <Item icon="📋" label="Copy" shortcut="Ctrl+C" onClick={() => { if(selectedMeasureIndex!==null) copyMeasure(selectedPartId, selectedMeasureIndex) }} />
-            <Item icon="📌" label="Paste" shortcut="Ctrl+V" onClick={() => { if(selectedMeasureIndex!==null) pasteMeasure(selectedPartId, selectedMeasureIndex) }} />
-            <Item icon="" label="Paste half duration" shortcut="Ctrl+Shift+Q" disabled />
-            <Item icon="" label="Paste double duration" shortcut="Ctrl+Shift+W" disabled />
+            <Item icon="✂️" label="Cut"               shortcut="Ctrl+X"   disabled />
+            <Item icon="📋" label="Copy"              shortcut="Ctrl+C"
+              onClick={() => { if(selectedMeasureIndex!==null) copyMeasure(selectedPartId, selectedMeasureIndex) }} />
+            <Item icon="📌" label="Paste"             shortcut="Ctrl+V"
+              onClick={() => { if(selectedMeasureIndex!==null) pasteMeasure(selectedPartId, selectedMeasureIndex) }} />
+            <Item icon=""  label="Paste half duration" shortcut="Ctrl+Shift+Q" disabled />
+            <Item icon=""  label="Paste double duration" shortcut="Ctrl+Shift+W" disabled />
+            <Item icon=""  label="Swap with clipboard" shortcut="Ctrl+Shift+X" disabled />
             <Sep />
-            <Item icon="🗑" label="Delete" shortcut="Del"
+            <Item icon="🗑" label="Delete"            shortcut="Del"
               onClick={() => { if(selectedNoteId) deleteNote(selectedPartId, selectedMeasureIndex, selectedNoteId)
                 else if(selectedMeasureIndex!==null) clearMeasureColumn(selectedMeasureIndex) }} />
             <Sep />
-            <Item icon="" label="Select all" shortcut="Ctrl+A" disabled />
-            <Item icon="" label="Find / Go to" shortcut="Ctrl+F" disabled />
+            <Item icon=""  label="Select all"         shortcut="Ctrl+A"   disabled />
+            <Item icon=""  label="Select section"                          disabled />
+            <Item icon=""  label="Find / Go to"       shortcut="Ctrl+F"   disabled />
             <Sep />
-            <Item icon="⚙️" label="Preferences…" disabled />
+            <Item icon="⚙️" label="Preferences…"                          disabled />
           </>
 
+          // ── VIEW ───────────────────────────────────────────────────────────
           const viewMenu = <>
-            <Item icon="" label="Full screen" shortcut="F11"
-              onClick={() => { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen() }} />
+            <Item icon=""  label="Full screen"        shortcut="F11"
+              onClick={() => { document.fullscreenElement
+                ? document.exitFullscreen()
+                : document.documentElement.requestFullscreen() }} />
             <Sep />
-            <CheckItem checked label="Palettes" shortcut="F9" onClick={() => {}} />
-            <CheckItem checked label="Layout" shortcut="F7" onClick={() => {}} />
-            <CheckItem checked label="Properties" shortcut="F8" onClick={() => {}} />
+            <CheckItem checked label="Palettes"       shortcut="F9"       onClick={() => {}} />
+            <CheckItem checked={false} label="Master palette" shortcut="Shift+F9" onClick={() => {}} />
+            <CheckItem checked label="Layout"         shortcut="F7"       onClick={() => {}} />
+            <CheckItem checked label="Properties"     shortcut="F8"       onClick={() => {}} />
+            <Item icon=""  label="Selection filter"                        disabled />
+            <Item icon=""  label="History"                                 disabled />
+            <Item icon=""  label="Navigator"                               disabled />
             <Sep />
-            <Item icon="🎹" label="Piano keyboard" shortcut="P" onClick={() => setShowPiano(v => !v)} />
-            <Item icon="" label="Mixer" shortcut="F10" disabled />
+            <Item icon="🎹" label="Piano keyboard"   shortcut="P"
+              onClick={() => setShowPiano(v => !v)} />
+            <Item icon=""  label="Mixer"              shortcut="F10"      disabled />
+            <Item icon=""  label="Playback setup"                         disabled />
             <Sep />
-            <Item icon="" label="Zoom in" shortcut="Ctrl++" onClick={() => setZoom(Math.min(2, zoom + 0.1))} />
-            <Item icon="" label="Zoom out" shortcut="Ctrl+−" onClick={() => setZoom(Math.max(0.5, zoom - 0.1))} />
-            <Item icon="" label="Reset zoom (80%)" shortcut="Ctrl+0" onClick={() => setZoom(0.8)} />
+            <Item icon=""  label="Toolbars"           arrow               disabled />
+            <Item icon=""  label="Workspaces"         arrow               disabled />
+            <Sep />
+            <CheckItem checked={darkMode} label="Dark mode"
+              onClick={() => { const n=!darkMode; setDarkMode(n); localStorage.setItem('faithscore_dark',n?'1':'0') }} />
+            <Sep />
+            <Item icon=""  label="Zoom in"            shortcut="Ctrl++"
+              onClick={() => setZoom(Math.min(2, zoom + 0.1))} />
+            <Item icon=""  label="Zoom out"           shortcut="Ctrl+−"
+              onClick={() => setZoom(Math.max(0.5, zoom - 0.1))} />
+            <Item icon=""  label="Reset zoom (80%)"  shortcut="Ctrl+0"
+              onClick={() => setZoom(0.8)} />
           </>
 
+          // ── ADD ────────────────────────────────────────────────────────────
           const addMenu = <>
+            <Item icon="♩"  label="Notes"             arrow               disabled />
+            <Item icon=""   label="Intervals"         arrow               disabled />
+            <Item icon=""   label="Tuplets"           arrow               disabled />
+            <Sep />
+            <Item icon=""   label="Measures"          arrow>
+            </Item>
             <Label text="Measures" />
-            <Item icon="" label="Insert measure" shortcut="Ins" onClick={addMeasure} />
-            <Item icon="" label="Append measure" shortcut="Ctrl+B" onClick={addMeasure} />
-            <Item icon="" label="Append measures…" disabled />
+            <Item icon=""   label="Insert measure"    shortcut="Ins"
+              onClick={addMeasure} />
+            <Item icon=""   label="Insert measures…"                      disabled />
+            <Item icon=""   label="Append measure"    shortcut="Ctrl+B"
+              onClick={addMeasure} />
+            <Item icon=""   label="Append measures…"                      disabled />
+            <Sep />
+            <Item icon=""   label="Frames"            arrow               disabled />
+            <Item icon=""   label="Text"              arrow               disabled />
             <Sep />
             <Label text="Lines & markings" />
-            <Item icon="⌢" label="Tie" shortcut="T" onClick={toggleTie} />
-            <Item icon="⌣" label="Slur" shortcut="S" onClick={toggleSlurStart} />
-            <Item icon="³" label="Triplet" onClick={() => insertTriplet(selectedDuration)} />
+            <Item icon="⌢"  label="Tie"              shortcut="T"
+              onClick={toggleTie} />
+            <Item icon="⌣"  label="Slur"             shortcut="S"
+              onClick={toggleSlurStart} />
+            <Item icon="³"  label="Triplet"
+              onClick={() => insertTriplet(selectedDuration)} />
             <Sep />
-            <Item icon="" label="Add rehearsal mark"
+            <Item icon=""   label="Add rehearsal mark"
               onClick={() => {
                 const idx = selectedMeasureIndex
                 if (idx===null) { alert('Select a measure first.'); return }
                 const letter = prompt('Rehearsal mark letter:', 'A')
                 if (letter) useScoreStore.getState().addRehearsalMark(idx, letter.trim().slice(0,3))
               }} />
+            <Item icon=""   label="Chords and fretboard diagrams" arrow   disabled />
           </>
 
+          // ── FORMAT ─────────────────────────────────────────────────────────
           const formatMenu = <>
-            <Item icon="" label="Style…" disabled />
-            <Item icon="" label="Page settings…" disabled />
-            <Item icon="" label="Measures per system…"
+            <Item icon=""  label="Style…"                                  disabled />
+            <Item icon=""  label="Page settings…"                          disabled />
+            <Item icon=""  label="Measures per system…"
               onClick={() => {
                 const v = prompt('Measures per line (1–8):', useScoreStore.getState().measuresPerLine ?? 4)
                 const n = parseInt(v)
                 if (!isNaN(n)) useScoreStore.getState().setMeasuresPerLine(n)
               }} />
+            <Item icon=""  label="Stretch"            arrow               disabled />
             <Sep />
-            <Item icon="" label="Transpose up ½ step" shortcut="Ctrl+↑" onClick={() => transposeSelection(1)} />
-            <Item icon="" label="Transpose down ½ step" shortcut="Ctrl+↓" onClick={() => transposeSelection(-1)} />
-            <Item icon="" label="Transpose up octave" shortcut="Ctrl+→" onClick={() => transposeSelection(12)} />
-            <Item icon="" label="Transpose down octave" shortcut="Ctrl+←" onClick={() => transposeSelection(-12)} />
+            <Item icon=""  label="Transpose up ½ step"  shortcut="Ctrl+↑"
+              onClick={() => transposeSelection(1)} />
+            <Item icon=""  label="Transpose down ½ step" shortcut="Ctrl+↓"
+              onClick={() => transposeSelection(-1)} />
+            <Item icon=""  label="Transpose up octave"   shortcut="Ctrl+→"
+              onClick={() => transposeSelection(12)} />
+            <Item icon=""  label="Transpose down octave" shortcut="Ctrl+←"
+              onClick={() => transposeSelection(-12)} />
             <Sep />
-            <Item icon="" label="Load style…" disabled />
-            <Item icon="" label="Save style…" disabled />
+            <Item icon=""  label="Reset text style overrides"
+              onClick={() => {}} disabled />
+            <Item icon=""  label="Reset beams"
+              onClick={() => {}} disabled />
+            <Item icon=""  label="Reset shapes and positions" shortcut="Ctrl+R"
+              onClick={() => {}} disabled />
+            <Item icon=""  label="Reset entire score to default layout"
+              onClick={() => {}} disabled />
+            <Sep />
+            <Item icon=""  label="Load style…"                            disabled />
+            <Item icon=""  label="Save style…"                            disabled />
           </>
 
+          // ── TOOLS ──────────────────────────────────────────────────────────
           const toolsMenu = <>
-            <Item icon="" label="Transpose…"
+            <Item icon=""  label="Transpose…"
               onClick={() => {
                 const s = prompt('Semitones to transpose (positive=up, negative=down):', '0')
                 const n = parseInt(s)
                 if (!isNaN(n) && n !== 0) transposeSelection(n)
               }} />
-            <Item icon="" label="Explode" disabled />
-            <Item icon="" label="Implode" disabled />
-            <Item icon="" label="Realize chord symbols" disabled />
+            <Item icon=""  label="Explode"                                disabled />
+            <Item icon=""  label="Implode"                                disabled />
+            <Item icon=""  label="Realize chord symbols"                  disabled />
+            <Item icon=""  label="Voices"             arrow               disabled />
+            <Item icon=""  label="Measures"           arrow               disabled />
             <Sep />
             <Item icon="🗑" label="Remove selected range" shortcut="Ctrl+Del"
               onClick={() => { if(selectedMeasureIndex!==null) deleteMeasureColumn(selectedMeasureIndex) }} />
+            <Item icon=""  label="Fill with slashes"                      disabled />
+            <Item icon=""  label="Toggle rhythmic slash notation"         disabled />
             <Sep />
-            <Item icon="" label="Change enharmonic spelling" shortcut="J" disabled />
-            <Item icon="" label="Regroup rhythms" disabled />
-            <Item icon="" label="Resequence rehearsal marks" disabled />
+            <Item icon=""  label="Change enharmonic spelling"  shortcut="J" disabled />
+            <Item icon=""  label="Optimize enharmonic spelling"           disabled />
+            <Item icon=""  label="Regroup rhythms"                        disabled />
+            <Item icon=""  label="Resequence rehearsal marks"             disabled />
+            <Sep />
+            <Item icon=""  label="Remove empty trailing measures"
+              onClick={() => {}} disabled />
             <Sep />
             <Label text="AI Features" />
-            <Item icon="🤖" label="AI: Generate melody…" onClick={() => alert('AI melody generation — coming soon!')} />
-            <Item icon="🤖" label="AI: Harmonize…" onClick={() => alert('AI harmonization — coming soon!')} />
-            <Item icon="🤖" label="AI: Generate lyrics…" onClick={() => alert('AI lyric generation — coming soon!')} />
+            <Item icon="🤖" label="AI: Generate melody…"
+              onClick={() => alert('AI melody generation — coming soon!')} />
+            <Item icon="🤖" label="AI: Harmonize…"
+              onClick={() => alert('AI harmonization — coming soon!')} />
+            <Item icon="🤖" label="AI: Generate lyrics…"
+              onClick={() => alert('AI lyric generation — coming soon!')} />
           </>
 
           return (
@@ -488,27 +666,52 @@ export default function App() {
 
         {/* Playback controls */}
         <div className="flex items-center gap-1.5 mr-4">
-          <button onClick={rewind} className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">⏮</button>
-          <button onClick={isPlaying ? pause : handlePlay}
-            className={`w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition-colors ${isPlaying ? 'bg-orange-500 hover:bg-orange-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
+          {/* Rewind */}
+          <button onClick={rewind}
+            className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">
+            ⏮
+          </button>
+          {/* Play / Pause toggle */}
+          <button
+            onClick={isPlaying ? pause : handlePlay}
+            className={`w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition-colors
+              ${isPlaying
+                ? 'bg-orange-500 hover:bg-orange-600 text-white'
+                : 'bg-blue-600 hover:bg-blue-700 text-white'
+              }`}>
             {isPlaying ? '⏸' : '▶'}
           </button>
-          <button onClick={stop} className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">⏹</button>
+          {/* Stop */}
+          <button onClick={stop}
+            className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">
+            ⏹
+          </button>
+          {/* Metronome */}
           <button onClick={() => { const v = toggleMetronome(); setMetronomeOn(v) }}
-            title="Metronome"
-            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors ${metronomeOn ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
+            title="Metronome click during playback"
+            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors
+              ${metronomeOn ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
             𝅘
           </button>
-          <button onClick={() => setShowPiano(v => !v)} title="Toggle piano keyboard (P)"
-            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors ${showPiano ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
+          {/* Piano keyboard toggle */}
+          <button onClick={() => setShowPiano(v => !v)}
+            title="Toggle piano keyboard (P)"
+            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors
+              ${showPiano ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
             🎹
           </button>
-          <button onClick={() => { const v = toggleLoop(); setLoopOn(v) }} title="Loop playback"
-            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors ${loopOn ? 'bg-green-100 border-green-400 text-green-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
+          {/* Loop */}
+          <button onClick={() => { const v = toggleLoop(); setLoopOn(v) }}
+            title="Loop playback"
+            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors
+              ${loopOn ? 'bg-green-100 border-green-400 text-green-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
             🔁
           </button>
+          {/* Beat counter / loading indicator */}
           {samplesLoading ? (
-            <span className="text-amber-500 text-xs ml-1 animate-pulse">🎹 loading…</span>
+            <span className="text-amber-500 text-xs ml-1 animate-pulse" title="Loading real piano samples...">
+              🎹 loading…
+            </span>
           ) : (
             <span className="text-gray-400 text-xs ml-1 font-mono w-10">
               {playbackBeat !== null && playbackBeat !== undefined
@@ -518,8 +721,18 @@ export default function App() {
           )}
         </div>
 
-        {/* FIX 1: Part manager REMOVED from here — moved to Sidebar Parts tab */}
+        {/* Dark mode */}
+        <button onClick={() => {
+          const next = !darkMode; setDarkMode(next)
+          localStorage.setItem('scoreai_dark', next ? '1' : '0')
+          document.documentElement.classList.toggle('dark', next)
+        }}
+          title="Toggle dark mode"
+          className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-xs mr-2">
+          {darkMode ? '☀️' : '🌙'}
+        </button>
 
+        {/* Part manager moved to Sidebar → Parts tab */}
       </div>
 
       {/* ── Score info + status bar ── */}
@@ -530,24 +743,46 @@ export default function App() {
         <input value={score.composer || ''} onChange={e => setComposer(e.target.value)}
           className="border-b border-gray-300 focus:border-blue-500 text-gray-600 text-sm outline-none w-36 pb-0.5 bg-transparent"
           placeholder="Composer" />
+
         <div className="flex-1" />
+
+        {/* Status indicators */}
         <div className="flex items-center gap-3 text-xs">
-          <span className={`px-2.5 py-0.5 rounded-full font-medium border ${inputMode === 'note' ? 'bg-green-50 text-green-700 border-green-300' : 'bg-gray-100 text-gray-600 border-gray-300'}`}>
+          <span className={`px-2.5 py-0.5 rounded-full font-medium border
+            ${inputMode === 'note'
+              ? 'bg-green-50 text-green-700 border-green-300'
+              : 'bg-gray-100 text-gray-600 border-gray-300'
+            }`}>
             {inputMode === 'note' ? '● Note Input' : '○ Select'}
           </span>
-          {selectedMeasureIndex !== null && <span className="text-gray-500">Bar {selectedMeasureIndex + 1}</span>}
+
+          {selectedMeasureIndex !== null && (
+            <span className="text-gray-500">Bar {selectedMeasureIndex + 1}</span>
+          )}
+
           {liveNote && (
             <span className={`font-medium ${liveNote.isRest ? 'text-sky-600' : 'text-orange-600'}`}>
-              {liveNote.isRest ? `${liveNote.duration}${liveNote.dots?'.':''} rest` : `${liveNote.pitch?.step}${liveNote.pitch?.octave}`} selected
+              {liveNote.isRest
+                ? `${liveNote.duration}${liveNote.dots?'.':''} rest`
+                : `${liveNote.pitch?.step}${liveNote.pitch?.octave}`
+              } selected
             </span>
           )}
         </div>
+
+        {/* Tie / Slur / Transpose quick buttons */}
         <button onClick={toggleTie} title="Toggle tie on selected note (T)"
-          className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-2.5 py-1.5 rounded transition-colors">⌢ Tie</button>
+          className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-2.5 py-1.5 rounded transition-colors">
+          ⌢ Tie
+        </button>
         <button onClick={toggleSlurStart} title="Toggle slur on selected note (Shift+S)"
-          className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-2.5 py-1.5 rounded transition-colors">⌣ Slur</button>
+          className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-2.5 py-1.5 rounded transition-colors">
+          ⌣ Slur
+        </button>
         <button onClick={addMeasure}
-          className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-3 py-1.5 rounded transition-colors">+ Bar (M)</button>
+          className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-3 py-1.5 rounded transition-colors">
+          + Bar (M)
+        </button>
       </div>
 
       {/* ── Toolbar ── */}
@@ -561,7 +796,8 @@ export default function App() {
           ['⇧+A–G','Chord'], ['J','Chord mode'], ['T','Tie'], ['↑↓','Chromatic'], ['⇧↑↓','Octave'],
           ['←→','Navigate'], ['Del','Delete'], ['M','Add bar'],
           ['Ctrl+Z','Undo'], ['Ctrl+Y','Redo'], ['Ctrl+C','Copy bar'], ['Ctrl+V','Paste'],
-          ['Ctrl+↑↓','Transpose ½'], ['Ctrl+←→','Transpose 8ve'], ['Ctrl+ +/-','Zoom'],
+          ['Ctrl+↑↓','Transpose ½'], ['Ctrl+←→','Transpose 8ve'],
+          ['Ctrl+ +/-','Zoom'],
         ].map(([k,v]) => (
           <span key={k}>
             <kbd className="bg-gray-100 border border-gray-300 px-1 py-0.5 rounded text-gray-600 font-mono">{k}</kbd>
@@ -576,83 +812,110 @@ export default function App() {
 
       {/* ── Main area: Sidebar + Score canvas ── */}
       <div className="flex flex-1 overflow-hidden">
-
-        {/* FIX 2: Sidebar — truly fixed, does not scroll with score */}
-        <div style={{
-          position: 'sticky',
-          top: 0,
-          alignSelf: 'flex-start',
-          height: '100vh',
-          overflowY: 'auto',
-          flexShrink: 0,
-          zIndex: 10,
-        }}>
-          <Sidebar />
-        </div>
-
-        {/* Score canvas */}
-        <main className="flex-1 overflow-auto bg-gray-300 p-6" id="score-main"
-          style={{ paddingBottom: showPiano ? 180 : 48 }}>
-          <div style={{ display: 'flex', justifyContent: 'center', minHeight: `${1556 * zoom}px` }}>
-            <div style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', width: '100%', maxWidth: 1100, flexShrink: 0 }}>
-              <div
-                className="score-page bg-white mx-auto shadow-lg"
-                style={{ width: '100%', maxWidth: 1100, minHeight: 1556, padding: '60px 60px 60px 60px', marginBottom: 24, boxSizing: 'border-box', position: 'relative' }}
-                onContextMenu={handleContextMenu}
-              >
-                {/* Score header */}
-                <div data-print-header="1" style={{ textAlign: 'center', marginBottom: 20, borderBottom: '1px solid #e5e7eb', paddingBottom: 12 }}>
-                  <div style={{ fontSize: 28, fontWeight: 700, fontFamily: 'Times New Roman, serif', color: '#111', margin: 0 }}>
-                    {score.title || 'Untitled Score'}
-                  </div>
-                  {score.subtitle && (
-                    <div style={{ fontSize: 14, fontStyle: 'italic', fontFamily: 'Times New Roman, serif', color: '#555', marginTop: 4 }}>
-                      {score.subtitle}
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 12, fontFamily: 'Times New Roman, serif', color: '#555' }}>
-                    <span style={{ fontStyle: 'italic' }}>{score.lyricist ? 'Words: ' + score.lyricist : ''}</span>
-                    <span>{score.composer || ''}</span>
-                  </div>
-                  {score.copyright && (
-                    <div style={{ fontSize: 10, color: '#888', fontFamily: 'Times New Roman, serif', marginTop: 10, borderTop: '1px solid #eee', paddingTop: 6 }}>
-                      {'© ' + score.copyright}
-                    </div>
-                  )}
-                </div>
-
-                {/* Score notation */}
-                <div style={{ width: '100%', overflow: 'visible' }}>
-                  <ScoreRenderer />
-                </div>
-              </div>
-            </div>
-          </div>
-        </main>
+      {/* Sidebar is position:fixed inside Sidebar.jsx — this spacer reserves its width */}
+      <div style={{ width: 250, flexShrink: 0 }}>
+        <Sidebar />
       </div>
 
-      {/* Piano keyboard */}
+      {/* ── Score canvas — A4 page layout ── */}
+      <main className="flex-1 overflow-auto bg-gray-300 p-6" id="score-main" style={{ paddingBottom: showPiano ? 180 : 48 }}>
+        {/*
+          Zoom wrapper: scales the entire page (white paper + score) together.
+          transform-origin: top center means it grows/shrinks from the top middle,
+          keeping the page centred. The outer div has enough height to avoid clipping.
+        */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          minHeight: `${1556 * zoom}px`,
+        }}>
+          <div style={{
+            transform: `scale(${zoom})`,
+            transformOrigin: 'top center',
+            width: '100%',
+            maxWidth: 1100,
+            flexShrink: 0,
+          }}>
+        {/* Page 1 always has the title header */}
+        <div
+          className="score-page bg-white mx-auto shadow-lg"
+          style={{
+            width: '100%',
+            maxWidth: 1100,   // comfortable screen width for editing
+            minHeight: 1556,  // A4 proportions: 1100 × (297/210) ≈ 1556px
+            padding: '60px 60px 60px 60px',  // 60px = ~15mm at screen scale
+            marginBottom: 24,
+            boxSizing: 'border-box',
+            position: 'relative',
+          }}
+          onContextMenu={handleContextMenu}
+        >
+          {/* Score header — data-print-header marks elements for print extraction */}
+          <div data-print-header="1" style={{ textAlign: 'center', marginBottom: 20, borderBottom: '1px solid #e5e7eb', paddingBottom: 12 }}>
+            <div style={{ fontSize: 28, fontWeight: 700, fontFamily: 'Times New Roman, serif', color: '#111', margin: 0 }}>
+              {score.title || 'Untitled Score'}
+            </div>
+            {score.composer && (
+              <div style={{ fontSize: 13, color: '#555', textAlign: 'right', fontFamily: 'Times New Roman, serif', margin: '4px 0 0' }}>
+                {score.composer}
+              </div>
+            )}
+          </div>
+
+          {/* Score notation — renders into the page */}
+          <div style={{ width: '100%', overflow: 'visible' }}>
+            <ScoreRenderer />
+          </div>
+        </div>
+          </div>{/* end zoom scale wrapper */}
+        </div>{/* end zoom flex centering wrapper */}
+      </main>
+      </div>{/* end sidebar+canvas flex row */}
+
+      {/* ── Piano keyboard — fixed above the bottom bar ── */}
       {showPiano && (
-        <div style={{ position: 'fixed', bottom: 32, left: 0, right: 0, zIndex: 59, boxShadow: '0 -4px 20px rgba(0,0,0,0.4)' }}>
+        <div style={{
+          position: 'fixed', bottom: 32, left: 0, right: 0,
+          zIndex: 59,
+          boxShadow: '0 -4px 20px rgba(0,0,0,0.4)',
+        }}>
           <PianoKeyboard />
         </div>
       )}
 
-      {/* Bottom bar */}
-      <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: 32, background: '#1e293b', borderTop: '1px solid #334155', display: 'flex', alignItems: 'center', padding: '0 12px', zIndex: 60, gap: 8 }}>
-        <button onClick={() => setShowPiano(v => !v)} title="Toggle piano keyboard (P)"
-          style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '2px 10px', borderRadius: 4, border: 'none', background: showPiano ? '#3b82f6' : '#334155', color: showPiano ? 'white' : '#94a3b8', fontSize: 11, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }}>
+      {/* ── Bottom bar — fixed at bottom of viewport ── */}
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0,
+        height: 32, background: '#1e293b', borderTop: '1px solid #334155',
+        display: 'flex', alignItems: 'center', padding: '0 12px',
+        zIndex: 60, gap: 8,
+      }}>
+        <button
+          onClick={() => setShowPiano(v => !v)}
+          title="Toggle piano keyboard (P)"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '2px 10px', borderRadius: 4, border: 'none',
+            background: showPiano ? '#3b82f6' : '#334155',
+            color: showPiano ? 'white' : '#94a3b8',
+            fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            transition: 'all 0.15s',
+          }}>
           🎹 Piano Keyboard {showPiano ? '▲' : '▼'}
         </button>
-        <span style={{ color: '#475569', fontSize: 10 }}>Press P to toggle · Click key to insert note</span>
+        <span style={{ color: '#475569', fontSize: 10 }}>
+          Press P to toggle · Click key to insert note
+        </span>
       </div>
 
-      {/* Context menu */}
+      {/* ── Context menu ── */}
       {contextMenu && (
         <div ref={ctxRef}
           className="fixed z-50 bg-white border border-gray-200 rounded shadow-xl py-1 w-52 text-sm"
           style={{ left: contextMenu.x, top: contextMenu.y }}>
-          <div className="px-3 py-1 text-gray-400 text-xs border-b border-gray-100 mb-1">Bar {contextMenu.col + 1}</div>
+          <div className="px-3 py-1 text-gray-400 text-xs border-b border-gray-100 mb-1">
+            Bar {contextMenu.col + 1}
+          </div>
           <button className="w-full text-left px-3 py-1.5 hover:bg-gray-100 text-gray-700"
             onClick={() => { addMeasure(); setContextMenu(null) }}>➕ Add bar after</button>
           <button className="w-full text-left px-3 py-1.5 hover:bg-gray-100 text-gray-700"
