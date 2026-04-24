@@ -23,8 +23,22 @@ export const DURATION_BEATS = {
 }
 
 export function noteDuration(note) {
+  // ── Tuplet duration model ────────────────────────────────────────────────
+  // A tuplet is defined by a ratio: num notes played in the time of den notes.
+  // Example: triplet (3:2) means 3 notes fill the space of 2 of the same value.
+  //   → each note duration = base_duration × (den / num)
+  //   → quarter triplet: q × (2/3) = 2/3 beat each
+  //   → eighth triplet:  8 × (2/3) = 1/3 beat each
+  //   → quintuplet (5:4): base × (4/5)
+  //
+  // Legacy support: note.triplet (boolean) = shorthand for 3:2 ratio
+  // Full support:   note.tuplet = { num: 3, den: 2 } for any ratio
+  if (note.tuplet) {
+    const base = DURATION_BEATS[note.duration] || 1
+    return base * (note.tuplet.den / note.tuplet.num)
+  }
   if (note.triplet) {
-    // Triplet note: 2/3 of its base duration
+    // Legacy triplet flag — treat as 3:2
     return (DURATION_BEATS[note.duration] || 1) * 2 / 3
   }
   const key = note.duration + (note.dots ? 'd' : '')
@@ -151,8 +165,8 @@ export const EMPTY_SCORE = {
   composer: '',
   tempo: 120,
   parts: [
-    { id: 'part-treble', name: 'Treble', instrument: 'piano', clef: 'treble', measures: Array.from({ length: 8 }, () => makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)) },
-    { id: 'part-bass',   name: 'Bass',   instrument: 'piano', clef: 'bass',   measures: Array.from({ length: 8 }, () => makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)) },
+    { id: 'part-treble', name: 'Treble', instrument: 'piano', clef: 'treble', measures: Array.from({ length: 12 }, () => makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)) },
+    { id: 'part-bass',   name: 'Bass',   instrument: 'piano', clef: 'bass',   measures: Array.from({ length: 12 }, () => makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)) },
   ],
   // Score-level markings (not attached to parts)
   // Each: { id, type, partId, measureIndex, beat, value/text }
@@ -204,6 +218,7 @@ export const useScoreStore = create((set, get) => ({
   playbackBeat: null,     // fractional beat position (null = stopped/not started)
 
   setTitle: (t) => set(s => ({ score: { ...s.score, title: t } })),
+  setCloudId: (id) => set(s => ({ score: { ...s.score, _cloudId: id } })),
   setComposer:  (c) => set(s => ({ score: { ...s.score, composer: c } })),
   setSubtitle:  (t) => set(s => ({ score: { ...s.score, subtitle: t } })),
   setLyricist:  (t) => set(s => ({ score: { ...s.score, lyricist: t } })),
@@ -1275,7 +1290,9 @@ export const useScoreStore = create((set, get) => ({
       pitch: null,
       duration: baseDuration,
       dots: 0,
+      // Both legacy flag and new structured tuplet data
       triplet: true,
+      tuplet: { num: 3, den: 2, groupId },   // 3 notes in space of 2
       tripletGroupId: groupId,
       tripletIndex: i,
       tripletOf: 3,
@@ -1291,6 +1308,58 @@ export const useScoreStore = create((set, get) => ({
 
     // Select the first triplet note
     set({ selectedNoteId: tripletNotes[0].id })
+    saveToStorage(get().score)
+  },
+
+  // ── General tuplet insertion ──────────────────────────────────────────────
+  // insertTuplet(baseDuration, num, den)
+  // Example: insertTuplet('q', 3, 2) = triplet
+  //          insertTuplet('8', 5, 4) = quintuplet of 8th notes
+  //          insertTuplet('q', 7, 4) = septuplet
+  insertTuplet: (baseDuration, num, den) => {
+    const { selectedPartId, selectedMeasureIndex } = get()
+    if (selectedMeasureIndex === null) return
+    get()._snapshot()
+    const part    = get().score.parts.find(p => p.id === selectedPartId)
+    const measure = part?.measures[selectedMeasureIndex]
+    if (!measure) return
+
+    // Each tuplet note fills: base_duration × (den/num) beats
+    const baseDurBeats  = DURATION_BEATS[baseDuration] || 1
+    const noteBeats     = baseDurBeats * (den / num)
+    const totalBeats    = noteBeats * num   // = baseDurBeats × den
+
+    const nonChord = measure.notes.filter(n => !n.chordWith)
+    let targetRest = null
+    for (const n of nonChord) {
+      if (n.isRest && noteDuration(n) >= totalBeats - 0.001) { targetRest = n; break }
+    }
+    if (!targetRest) return
+
+    const restBeats = noteDuration(targetRest)
+    const leftover  = restBeats - totalBeats
+    const groupId   = crypto.randomUUID()
+
+    const tupletNotes = Array.from({ length: num }, (_, i) => ({
+      id: crypto.randomUUID(),
+      isRest: true, pitch: null,
+      duration: baseDuration, dots: 0,
+      triplet: num === 3 && den === 2,  // legacy compat
+      tuplet: { num, den, groupId },
+      tripletGroupId: groupId,
+      tripletIndex: i,
+      tripletOf: num,
+    }))
+
+    get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) => {
+      const idx      = notes.findIndex(n => n.id === targetRest.id)
+      const before   = notes.slice(0, idx)
+      const after    = notes.slice(idx + 1).filter(n => !n.isRest)
+      const leftovers = leftover > 0.001 ? makeRests(leftover, `tuplet_after`) : []
+      return [...before, ...tupletNotes, ...leftovers, ...after]
+    })
+
+    set({ selectedNoteId: tupletNotes[0].id })
     saveToStorage(get().score)
   },
 

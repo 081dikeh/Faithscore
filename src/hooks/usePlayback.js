@@ -1,62 +1,12 @@
 // src/hooks/usePlayback.js
-//
-// ════════════════════════════════════════════════════════════════════════════
-//  SOUND GUIDE — how to adjust the audio in this file
-// ════════════════════════════════════════════════════════════════════════════
-//
-//  FaithScore uses TWO sound engines, with automatic fallback:
-//
-//  1. SAMPLER (best quality) — loads real recorded piano samples from a CDN.
-//     Sounds like an actual piano. Requires internet on first load.
-//     → To swap the instrument, change SAMPLE_BASE_URL + SAMPLE_MAP below.
-//     → Free sample libraries: https://gleitz.github.io/midi-js-soundfonts/
-//
-//  2. FM SYNTH (fallback / offline) — a fully synthetic piano built from
-//     Tone.js oscillators. Tweakable in the SYNTH SOUND PARAMETERS section.
-//
-//  QUICK TUNING REFERENCE (FM Synth):
-//  ┌──────────────────────────────────────────────────────────────────────┐
-//  │ harmonicity    — ratio of carrier : modulator frequency              │
-//  │                  1 = unison, 2 = octave up, 0.5 = octave down       │
-//  │                  Try: 3, 5, 7 for brighter tones                    │
-//  │                                                                      │
-//  │ modulationIndex — depth of FM modulation = "brightness" / "texture" │
-//  │                  0 = pure sine, 2-5 = piano-like, 10+ = bell/organ  │
-//  │                                                                      │
-//  │ envelope.attack  — how fast the note starts (seconds)               │
-//  │                  Piano: 0.001–0.005  | Strings: 0.2–0.5             │
-//  │ envelope.decay   — how fast volume drops after attack peak           │
-//  │                  Piano: 0.3–0.8      | Organ: 0                     │
-//  │ envelope.sustain — volume level held while key is pressed (0–1)     │
-//  │                  Piano: 0.05–0.15    | Organ: 1.0                   │
-//  │ envelope.release — fade time after key is released                  │
-//  │                  Piano: 0.5–1.2      | Pad: 2–4                     │
-//  │                                                                      │
-//  │ modEnvelope      — same params but controls the FM brightness over  │
-//  │                  time. Short decay = bright attack, dark sustain     │
-//  │                                                                      │
-//  │ volume           — output level in dB. -6 is safe, -12 is quieter  │
-//  │ EQ treble        — positive = brighter. Try +3 to +8 for presence   │
-//  │ EQ bass          — positive = more low end. -4 to -8 cleans bass    │
-//  │ reverb wet       — 0 = dry, 1 = fully wet. 0.2–0.35 = concert hall │
-//  │ reverb decay     — room size in seconds. 1.2 = small, 3+ = large   │
-//  └──────────────────────────────────────────────────────────────────────┘
-//
-//  TO SWITCH TO A DIFFERENT BUILT-IN TONE.JS SYNTH:
-//    Replace `new Tone.FMSynth(...)` with any of:
-//    • Tone.AMSynth    — amplitude modulation, warmer/softer
-//    • Tone.DuoSynth   — two detuned oscillators, richer chords
-//    • Tone.PluckSynth — physical model of a plucked string (great for solo)
-//    • Tone.MetalSynth — bell / metallic tones
-//
-// ════════════════════════════════════════════════════════════════════════════
+// FaithScore — Full playback system with seek, tempo control, loop, metronome
+// Web Audio / Tone.js based. Sampler (real piano) with FM synth fallback.
 
 import { useEffect, useRef, useCallback } from 'react'
 import * as Tone from 'tone'
 import { useScoreStore, noteDuration } from '../store/scoreStore'
 
 // ── SAMPLER CONFIG ────────────────────────────────────────────────────────────
-// Salamander Grand Piano samples — hosted on Tone.js's official CDN.
 const SAMPLE_BASE_URL = 'https://tonejs.github.io/audio/salamander/'
 const SAMPLE_MAP = {
   'A0' : 'A0.mp3',
@@ -70,48 +20,36 @@ const SAMPLE_MAP = {
   'C8' : 'C8.mp3',
 }
 
-// ── SYNTH SOUND PARAMETERS ────────────────────────────────────────────────────
-// Used when Sampler fails (offline / CDN error). Tweak freely.
+// ── FM SYNTH FALLBACK PARAMS ──────────────────────────────────────────────────
 const FM_PARAMS = {
-  harmonicity:     3.5,
-  modulationIndex: 8,
-  oscillator:      { type: 'sine' },
-  envelope: {
-    attack:  0.001,
-    decay:   0.4,
-    sustain: 0.08,
-    release: 1.0,
-  },
-  modulation:      { type: 'square' },
-  modulationEnvelope: {
-    attack:  0.002,
-    decay:   0.2,
-    sustain: 0.1,
-    release: 0.5,
-  },
+  harmonicity: 3.5, modulationIndex: 8,
+  oscillator: { type: 'sine' },
+  envelope: { attack: 0.001, decay: 0.4, sustain: 0.08, release: 1.0 },
+  modulation: { type: 'square' },
+  modulationEnvelope: { attack: 0.002, decay: 0.2, sustain: 0.1, release: 0.5 },
 }
-
-// ── EFFECTS CHAIN PARAMETERS ──────────────────────────────────────────────────
 const EQ_PARAMS     = { high: 3, mid: 0, low: 6, highFrequency: 3200, lowFrequency: 250 }
 const REVERB_PARAMS = { decay: 1.5, wet: 0.22 }
 const MASTER_VOLUME = -4
 
-// ── Pitch conversion ──────────────────────────────────────────────────────────
+// ── Pitch helpers ─────────────────────────────────────────────────────────────
 function pitchToTone(pitch) {
   if (!pitch) return null
   const acc = pitch.accidental === '#'  ? '#'
             : pitch.accidental === 'b'  ? 'b'
             : pitch.accidental === '##' ? '##'
-            : pitch.accidental === 'bb' ? 'bb'
-            : ''
+            : pitch.accidental === 'bb' ? 'bb' : ''
   return `${pitch.step}${acc}${pitch.octave}`
 }
 
-// ── Score → flat event list ───────────────────────────────────────────────────
-function buildSchedule(score) {
-  const tempo      = score.tempo || 120
-  const secPerBeat = 60 / tempo
+// ── Build full event schedule from score ──────────────────────────────────────
+// Returns { events, totalSecs, tempo, beatMap }
+// beatMap: array of { measureIndex, beatStart (seconds), totalBeats } for seek
+function buildSchedule(score, tempo) {
+  const bpm        = tempo || score.tempo || 120
+  const secPerBeat = 60 / bpm
   const events     = []
+  const beatMap    = []   // one entry per measure: { measureIndex, startSec, beats }
   let   globalSec  = 0
 
   const numMeasures = Math.max(...score.parts.map(p => p.measures.length), 0)
@@ -120,28 +58,32 @@ function buildSchedule(score) {
     const refM     = score.parts[0]?.measures[mIdx]
     const maxBeats = refM?.timeSignature?.beats ?? 4
 
+    beatMap.push({ measureIndex: mIdx, startSec: globalSec, beats: maxBeats })
+
     for (const part of score.parts) {
       const measure = part.measures[mIdx]
       if (!measure) continue
-
       const chordMap = {}
       measure.notes.filter(n => n.chordWith).forEach(n => {
         if (!chordMap[n.chordWith]) chordMap[n.chordWith] = []
         chordMap[n.chordWith].push(n)
       })
-
       let beatCursor = 0
       for (const note of measure.notes.filter(n => !n.chordWith)) {
         const durBeats = noteDuration(note)
         if (!note.isRest && note.pitch) {
           const companions = chordMap[note.id] || []
-          const toneNotes  = [pitchToTone(note.pitch)]
+          const toneNotes  = [pitchToTone(note.pitch)].filter(Boolean)
           companions.forEach(c => { const t = pitchToTone(c.pitch); if (t) toneNotes.push(t) })
-          events.push({
-            time:  globalSec + beatCursor * secPerBeat,
-            dur:   Math.max(0.08, durBeats * secPerBeat * 0.88),
-            notes: toneNotes,
-          })
+          if (toneNotes.length > 0) {
+            events.push({
+              time:         globalSec + beatCursor * secPerBeat,
+              dur:          Math.max(0.08, durBeats * secPerBeat * 0.88),
+              notes:        toneNotes,
+              beatPosition: globalSec / secPerBeat + beatCursor,  // absolute beat
+              measureIndex: mIdx,
+            })
+          }
         }
         beatCursor += durBeats
       }
@@ -149,7 +91,7 @@ function buildSchedule(score) {
     globalSec += maxBeats * secPerBeat
   }
 
-  return { events, totalSecs: globalSec, tempo }
+  return { events, totalSecs: globalSec, tempo: bpm, beatMap }
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
@@ -163,43 +105,42 @@ export function usePlayback() {
   const samplerReady   = useRef(false)
   const rafRef         = useRef(null)
   const isPlayingRef   = useRef(false)
-  const transportStart = useRef(0)
+  const isPausedRef    = useRef(false)
+  const transportStart = useRef(0)   // Tone.now() when playback began (adjusted for seek)
+  const seekOffsetRef  = useRef(0)   // seconds into score where playback started
   const totalSecsRef   = useRef(0)
   const tempoRef       = useRef(120)
-
-  // ── FIX: These refs were missing — caused runtime crash on metronome/loop toggle ──
+  const scheduleRef    = useRef(null) // last built schedule (for seek)
   const metronomeRef   = useRef(null)
   const metronomeOnRef = useRef(false)
   const loopRef        = useRef(false)
+  const userTempoRef   = useRef(null) // null = use score tempo
 
-  // ── Build effects chain ───────────────────────────────────────────────────
+  // ── Effects chain ─────────────────────────────────────────────────────────
   function getEffectsChain() {
     if (fxChainRef.current) return fxChainRef.current
     const eq     = new Tone.EQ3(EQ_PARAMS)
     const reverb = new Tone.Reverb(REVERB_PARAMS)
     const vol    = new Tone.Volume(MASTER_VOLUME)
-    eq.connect(reverb)
-    reverb.connect(vol)
-    vol.toDestination()
+    eq.connect(reverb); reverb.connect(vol); vol.toDestination()
     fxChainRef.current = { eq, reverb, vol }
     return fxChainRef.current
   }
 
-  // ── Build Sampler ─────────────────────────────────────────────────────────
+  // ── Sampler ───────────────────────────────────────────────────────────────
   function buildSampler() {
     const { eq } = getEffectsChain()
     return new Promise((resolve) => {
       const sampler = new Tone.Sampler({
-        urls:    SAMPLE_MAP,
-        baseUrl: SAMPLE_BASE_URL,
+        urls: SAMPLE_MAP, baseUrl: SAMPLE_BASE_URL,
         onload:  () => { samplerReady.current = true; resolve(sampler) },
-        onerror: () => { resolve(null) },
+        onerror: () => resolve(null),
       }).connect(eq)
       setTimeout(() => { if (!samplerReady.current) resolve(null) }, 15000)
     })
   }
 
-  // ── Build metronome click synth ──────────────────────────────────────────
+  // ── Metronome ─────────────────────────────────────────────────────────────
   function getMetronome() {
     if (!metronomeRef.current) {
       metronomeRef.current = new Tone.Synth({
@@ -211,41 +152,44 @@ export function usePlayback() {
     return metronomeRef.current
   }
 
-  // ── Build FM Synth fallback ───────────────────────────────────────────────
+  // ── FM Synth fallback ─────────────────────────────────────────────────────
   function buildFMSynth() {
     const { eq } = getEffectsChain()
     const synth = new Tone.PolySynth(Tone.FMSynth, FM_PARAMS)
-    synth.connect(eq)
-    return synth
+    synth.connect(eq); return synth
   }
 
-  // ── Initialise instrument ─────────────────────────────────────────────────
   async function getInstrument() {
     if (instrumentRef.current) return instrumentRef.current
     getEffectsChain()
     const sampler = await buildSampler()
-    if (sampler) {
-      instrumentRef.current = sampler
-    } else {
-      instrumentRef.current = buildFMSynth()
-    }
+    instrumentRef.current = sampler || buildFMSynth()
     return instrumentRef.current
   }
 
-  // ── Cursor RAF loop ────────────────────────────────────────────────────────
+  // ── Cursor RAF loop ───────────────────────────────────────────────────────
   function startCursorLoop() {
-    const secPerBeat = 60 / tempoRef.current
     const tick = () => {
       if (!isPlayingRef.current) return
-      const elapsed = Tone.now() - transportStart.current
-      if (elapsed >= totalSecsRef.current + 0.15) {
+      const elapsed    = Tone.now() - transportStart.current
+      const totalSec   = totalSecsRef.current
+      const secPerBeat = 60 / tempoRef.current
+
+      const positionSec = seekOffsetRef.current + elapsed
+      if (positionSec >= totalSec + 0.15) {
         if (loopRef.current) {
+          // Loop: restart from beginning
+          seekOffsetRef.current  = 0
           transportStart.current = Tone.now()
+          setPlaybackBeat(0)
+          rafRef.current = requestAnimationFrame(tick)
           return
         }
-        doStop(false); return
+        doStop(false)
+        setPlaybackBeat(null)
+        return
       }
-      setPlaybackBeat(Math.max(0, elapsed / secPerBeat))
+      setPlaybackBeat(Math.max(0, positionSec / secPerBeat))
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
@@ -255,131 +199,178 @@ export function usePlayback() {
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
   }
 
+  // ── Internal stop ─────────────────────────────────────────────────────────
   function doStop(clearBeat = true) {
     Tone.getTransport().stop()
     Tone.getTransport().cancel()
     isPlayingRef.current = false
+    isPausedRef.current  = false
     setIsPlaying(false)
     stopCursorLoop()
-    if (clearBeat) setPlaybackBeat(null)
+    if (clearBeat) { setPlaybackBeat(null); seekOffsetRef.current = 0 }
   }
 
-  // ── Schedule metronome clicks for current score ────────────────────────────
-  function scheduleMetronome(events, totalSecs, tempo) {
-    if (!metronomeOnRef.current) return
-    const met        = getMetronome()
-    const secPerBeat = 60 / tempo
-    const numBeats   = Math.ceil(totalSecs / secPerBeat)
-    for (let b = 0; b < numBeats; b++) {
-      const t = b * secPerBeat
-      Tone.getTransport().schedule((audioTime) => {
-        // Downbeat = higher pitch, other beats = lower
-        const isDownbeat = b % 4 === 0
-        met.triggerAttackRelease(isDownbeat ? 'C6' : 'G5', '32n', audioTime)
-      }, t + 0.1)
-    }
-  }
-
-  // ── play ──────────────────────────────────────────────────────────────────
-  const play = useCallback(async () => {
-    await Tone.start()
+  // ── Schedule notes from a given second offset ─────────────────────────────
+  async function scheduleAndPlay(startSec) {
     Tone.getTransport().stop()
     Tone.getTransport().cancel()
     stopCursorLoop()
 
-    const { events, totalSecs, tempo } = buildSchedule(score)
-    totalSecsRef.current = totalSecs
-    tempoRef.current     = tempo
-    if (events.length === 0) return
+    const effectiveTempo = userTempoRef.current || score.tempo || 120
+    const schedule = buildSchedule(score, effectiveTempo)
+    scheduleRef.current  = schedule
+    totalSecsRef.current = schedule.totalSecs
+    tempoRef.current     = effectiveTempo
+    seekOffsetRef.current = startSec
+
+    if (schedule.events.length === 0) return
 
     const instrument = await getInstrument()
     const LEAD = 0.1
 
-    events.forEach(ev => {
-      Tone.getTransport().schedule((audioTime) => {
-        const isBass = ev.notes.some(n => {
-          const oct = parseInt(n.replace(/[^0-9]/g, ''), 10)
-          return oct <= 3
-        })
-        const velocity = isBass ? 0.95 : 0.78
-        instrument.triggerAttackRelease(ev.notes, ev.dur, audioTime, velocity)
-      }, ev.time + LEAD)
-    })
+    // Only schedule events at or after startSec
+    schedule.events
+      .filter(ev => ev.time >= startSec - 0.001)
+      .forEach(ev => {
+        const relTime = ev.time - startSec + LEAD
+        Tone.getTransport().schedule((audioTime) => {
+          const isBass = ev.notes.some(n => parseInt(n.replace(/[^0-9]/g, ''), 10) <= 3)
+          instrument.triggerAttackRelease(ev.notes, ev.dur, audioTime, isBass ? 0.95 : 0.78)
+        }, relTime)
+      })
 
-    scheduleMetronome(events, totalSecs, tempo)
+    // Metronome
+    if (metronomeOnRef.current) {
+      const met        = getMetronome()
+      const secPerBeat = 60 / effectiveTempo
+      const remaining  = schedule.totalSecs - startSec
+      const numBeats   = Math.ceil(remaining / secPerBeat)
+      const startBeat  = Math.floor(startSec / secPerBeat)
+      for (let b = 0; b < numBeats; b++) {
+        const t = b * secPerBeat + LEAD
+        Tone.getTransport().schedule((audioTime) => {
+          const isDownbeat = (startBeat + b) % 4 === 0
+          met.triggerAttackRelease(isDownbeat ? 'C6' : 'G5', '32n', audioTime)
+        }, t)
+      }
+    }
 
-    // Apply loop setting to transport
-    Tone.getTransport().loop     = loopRef.current
-    Tone.getTransport().loopEnd  = totalSecs
-
-    Tone.getTransport().schedule((audioTime) => {
-      transportStart.current = audioTime
-    }, LEAD)
-
-    Tone.getTransport().bpm.value = tempo
+    Tone.getTransport().loop    = false  // we handle looping manually in RAF
+    Tone.getTransport().bpm.value = effectiveTempo
     Tone.getTransport().start()
     isPlayingRef.current = true
+    isPausedRef.current  = false
     setIsPlaying(true)
 
-    setTimeout(() => {
-      if (isPlayingRef.current) startCursorLoop()
-    }, LEAD * 1000 + 20)
-
-  }, [score])
-
-  // ── playFromBeat ──────────────────────────────────────────────────────────
-  const playFromBeat = useCallback(async (startBeat) => {
-    await Tone.start()
-    Tone.getTransport().stop()
-    Tone.getTransport().cancel()
-    stopCursorLoop()
-
-    const { events, totalSecs, tempo } = buildSchedule(score)
-    totalSecsRef.current = totalSecs
-    tempoRef.current     = tempo
-    if (events.length === 0) return
-
-    const secPerBeat   = 60 / tempo
-    const startSec     = (startBeat || 0) * secPerBeat
-    const instrument   = await getInstrument()
-    const LEAD         = 0.1
-
-    events.filter(ev => ev.time >= startSec - 0.001).forEach(ev => {
-      Tone.getTransport().schedule((audioTime) => {
-        instrument.triggerAttackRelease(ev.notes, ev.dur, audioTime, 0.8)
-      }, ev.time - startSec + LEAD)
-    })
-
-    Tone.getTransport().schedule((audioTime) => {
-      transportStart.current = audioTime
-    }, LEAD)
-
-    Tone.getTransport().bpm.value = tempo
-    Tone.getTransport().start()
-    isPlayingRef.current = true
-    setIsPlaying(true)
-
+    // Record when transport actually starts (for cursor sync)
+    transportStart.current = Tone.now() + LEAD
     setTimeout(() => { if (isPlayingRef.current) startCursorLoop() }, LEAD * 1000 + 20)
+  }
+
+  // ── Public API ────────────────────────────────────────────────────────────
+
+  const play = useCallback(async () => {
+    await Tone.start()
+    // If paused, resume from where we stopped
+    if (isPausedRef.current) {
+      Tone.getTransport().start()
+      isPlayingRef.current = true
+      isPausedRef.current  = false
+      setIsPlaying(true)
+      // Adjust transport start so cursor stays in sync
+      transportStart.current = Tone.now() - (seekOffsetRef.current / 1) // already set
+      startCursorLoop()
+      return
+    }
+    await scheduleAndPlay(0)
   }, [score])
 
   const pause = useCallback(() => {
     if (!isPlayingRef.current) return
+    // Save current position before pausing
+    const elapsed = Tone.now() - transportStart.current
+    seekOffsetRef.current += elapsed
+    transportStart.current = Tone.now()
     Tone.getTransport().pause()
     isPlayingRef.current = false
+    isPausedRef.current  = true
     setIsPlaying(false)
     stopCursorLoop()
   }, [])
 
-  const stop   = useCallback(() => { doStop(true) }, [])
-  const rewind = useCallback(() => { doStop(true) }, [])
+  const stop = useCallback(() => {
+    doStop(true)
+  }, [])
+
+  const rewind = useCallback(() => {
+    doStop(true)
+  }, [])
+
+  // Seek to a specific beat position
+  const seekToBeat = useCallback(async (beat) => {
+    await Tone.start()
+    const effectiveTempo = userTempoRef.current || score.tempo || 120
+    const secPerBeat     = 60 / effectiveTempo
+    const targetSec      = Math.max(0, beat * secPerBeat)
+    setPlaybackBeat(beat)
+    if (isPlayingRef.current || isPausedRef.current) {
+      await scheduleAndPlay(targetSec)
+    } else {
+      seekOffsetRef.current = targetSec
+      setPlaybackBeat(beat)
+    }
+  }, [score])
+
+  // Seek to a specific second
+  const seekToSecond = useCallback(async (sec) => {
+    const effectiveTempo = userTempoRef.current || score.tempo || 120
+    const beat = sec / (60 / effectiveTempo)
+    await seekToBeat(beat)
+  }, [score])
+
+  // Set tempo override (null = use score tempo)
+  const setTempo = useCallback((bpm) => {
+    userTempoRef.current = bpm ? Math.max(20, Math.min(300, bpm)) : null
+    if (isPlayingRef.current) {
+      // Restart from current position with new tempo
+      const elapsed = Tone.now() - transportStart.current
+      const currentSec = seekOffsetRef.current + elapsed
+      scheduleAndPlay(currentSec)
+    }
+  }, [score])
+
+  const playFromBeat = useCallback(async (startBeat) => {
+    await Tone.start()
+    const effectiveTempo = userTempoRef.current || score.tempo || 120
+    const startSec = (startBeat || 0) * (60 / effectiveTempo)
+    await scheduleAndPlay(startSec)
+  }, [score])
+
+  const toggleMetronome = useCallback(() => {
+    metronomeOnRef.current = !metronomeOnRef.current
+    return metronomeOnRef.current
+  }, [])
+
+  const toggleLoop = useCallback(() => {
+    loopRef.current = !loopRef.current
+    return loopRef.current
+  }, [])
+
+  // Expose current position in seconds (for seek bar)
+  const getCurrentSec = useCallback(() => {
+    if (!isPlayingRef.current && !isPausedRef.current) return 0
+    if (isPausedRef.current) return seekOffsetRef.current
+    return seekOffsetRef.current + (Tone.now() - transportStart.current)
+  }, [])
+
+  const getTotalSecs  = useCallback(() => totalSecsRef.current, [])
+  const getCurrentTempo = useCallback(() => userTempoRef.current || score.tempo || 120, [score])
 
   useEffect(() => {
     return () => {
       doStop(true)
-      instrumentRef.current?.dispose()
-      instrumentRef.current = null
-      metronomeRef.current?.dispose()
-      metronomeRef.current = null
+      instrumentRef.current?.dispose(); instrumentRef.current = null
+      metronomeRef.current?.dispose();  metronomeRef.current  = null
       if (fxChainRef.current) {
         fxChainRef.current.eq?.dispose()
         fxChainRef.current.reverb?.dispose()
@@ -389,24 +380,13 @@ export function usePlayback() {
     }
   }, [])
 
-  const toggleMetronome = useCallback(() => {
-    metronomeOnRef.current = !metronomeOnRef.current
-    return metronomeOnRef.current
-  }, [])
-
-  const toggleLoop = useCallback(() => {
-    loopRef.current = !loopRef.current
-    if (isPlayingRef.current) {
-      Tone.getTransport().loop    = loopRef.current
-      Tone.getTransport().loopEnd = totalSecsRef.current
-    }
-    return loopRef.current
-  }, [])
-
   return {
     play, pause, stop, rewind, playFromBeat,
+    seekToBeat, seekToSecond, setTempo,
     toggleMetronome, toggleLoop,
+    getCurrentSec, getTotalSecs, getCurrentTempo,
     isMetronomeOn: () => metronomeOnRef.current,
     isLooping:     () => loopRef.current,
+    isPaused:      () => isPausedRef.current,
   }
 }

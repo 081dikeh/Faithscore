@@ -598,28 +598,37 @@ export default function HomeScreen({ onOpenEditor, user, onSignOut }) {
   }, [user])
 
   // Save current score to cloud
-  const saveToCloud = async () => {
+  const saveToCloud = async (scoreToSave, existingCloudId) => {
     if (!user) return
     setCloudSaving(true)
     setCloudMsg('')
     try {
-      const payload = {
-        user_id: user.id,
-        title: score.title || 'Untitled Score',
-        data: score,
+      const currentScore = scoreToSave || useScoreStore.getState().score
+      let error
+      if (existingCloudId) {
+        // Update existing cloud record
+        ;({ error } = await supabase.from('scores')
+          .update({ title: currentScore.title || 'Untitled Score', data: currentScore, updated_at: new Date().toISOString() })
+          .eq('id', existingCloudId)
+          .eq('user_id', user.id))
+      } else {
+        // Insert new record
+        ;({ error } = await supabase.from('scores').insert([{
+          user_id: user.id,
+          title: currentScore.title || 'Untitled Score',
+          data: currentScore,
+        }]))
       }
-      // Upsert: update if same title exists for this user, else insert
-      const { error } = await supabase.from('scores').upsert(
-        [{ ...payload, updated_at: new Date().toISOString() }],
-        { onConflict: 'id' }
-      )
       if (error) throw error
-      setCloudMsg('Saved to cloud ✓')
+      setCloudMsg('Saved ✓')
       setTimeout(() => setCloudMsg(''), 3000)
       // Refresh list
       const { data } = await supabase.from('scores').select('id,title,updated_at,data')
         .eq('user_id', user.id).order('updated_at', { ascending: false }).limit(50)
-      if (data) setRecent(data.map(row => ({ key: row.id, score: row.data, title: row.title, ts: new Date(row.updated_at).getTime(), cloudId: row.id })))
+      if (data) setRecent(data.map(row => ({
+        key: row.id, score: row.data, title: row.title,
+        ts: new Date(row.updated_at).getTime(), cloudId: row.id,
+      })))
     } catch (err) {
       setCloudMsg('Save failed: ' + (err.message || 'unknown error'))
     }
@@ -633,8 +642,39 @@ export default function HomeScreen({ onOpenEditor, user, onSignOut }) {
     setRecent(r => r.filter(x => x.cloudId !== cloudId))
   }
 
-  function openScore(s) { loadScore(s); onOpenEditor() }
-  function handleWizardDone() { setWizard(false); onOpenEditor() }
+  function openScore(s, cloudId) {
+    loadScore(s)
+    // Store cloudId on the score so the editor's Save can update the right record
+    if (cloudId) {
+      useScoreStore.setState(st => ({ score: { ...st.score, _cloudId: cloudId } }))
+    }
+    onOpenEditor()
+  }
+  async function handleWizardDone() {
+    setWizard(false)
+    // Auto-save the newly created score to cloud immediately
+    if (user) {
+      const currentScore = useScoreStore.getState().score
+      try {
+        await supabase.from('scores').insert([{
+          user_id: user.id,
+          title: currentScore.title || 'Untitled Score',
+          data: currentScore,
+        }])
+        // Refresh list
+        const { data } = await supabase.from('scores')
+          .select('id,title,updated_at,data')
+          .eq('user_id', user.id)
+          .order('updated_at', { ascending: false })
+          .limit(50)
+        if (data) setRecent(data.map(row => ({
+          key: row.id, score: row.data, title: row.title,
+          ts: new Date(row.updated_at).getTime(), cloudId: row.id,
+        })))
+      } catch(e) { console.warn('Auto-save failed:', e) }
+    }
+    onOpenEditor()
+  }
 
   const NAV = [
     { id:'scores',  icon:'♪',  label:'Scores'       },
@@ -769,7 +809,7 @@ export default function HomeScreen({ onOpenEditor, user, onSignOut }) {
                   <div key={key} style={{ border:'1px solid #e5e7eb', borderRadius:12, background:'white', overflow:'hidden', boxShadow:'0 1px 3px rgba(0,0,0,0.06)', transition:'all 0.15s', position:'relative' }}
                     onMouseEnter={e=>e.currentTarget.style.boxShadow='0 6px 20px rgba(0,0,0,0.12)'}
                     onMouseLeave={e=>e.currentTarget.style.boxShadow='0 1px 3px rgba(0,0,0,0.06)'}>
-                    <button onClick={()=>openScore(score)} style={{ width:'100%', border:'none', background:'none', cursor:'pointer', padding:0, textAlign:'left' }}>
+                    <button onClick={()=>openScore(score, cloudId)} style={{ width:'100%', border:'none', background:'none', cursor:'pointer', padding:0, textAlign:'left' }}>
                       <div style={{ height:168, overflow:'hidden', borderBottom:'1px solid #f3f4f6', background:'#fafbfc' }}>
                         <Thumbnail score={score}/>
                       </div>
@@ -816,7 +856,7 @@ export default function HomeScreen({ onOpenEditor, user, onSignOut }) {
                   <div key={key} style={{ display:'flex', alignItems:'center', gap:14, padding:'11px 16px', border:'1px solid #e5e7eb', borderRadius:9, background:'white', transition:'all 0.15s', boxShadow:'0 1px 2px rgba(0,0,0,0.05)' }}
                     onMouseEnter={e=>e.currentTarget.style.boxShadow='0 3px 10px rgba(0,0,0,0.09)'}
                     onMouseLeave={e=>e.currentTarget.style.boxShadow='0 1px 2px rgba(0,0,0,0.05)'}>
-                    <button onClick={()=>openScore(score)} style={{ display:'flex', alignItems:'center', gap:14, flex:1, border:'none', background:'none', cursor:'pointer', padding:0, textAlign:'left' }}>
+                    <button onClick={()=>openScore(score, cloudId)} style={{ display:'flex', alignItems:'center', gap:14, flex:1, border:'none', background:'none', cursor:'pointer', padding:0, textAlign:'left' }}>
                       <div style={{ width:56,height:42,borderRadius:6,overflow:'hidden',border:'1px solid #e5e7eb',flexShrink:0,background:'#fafbfc' }}><Thumbnail score={score}/></div>
                       <div style={{ flex:1 }}>
                         <div style={{ fontSize:13.5,fontWeight:600,color:'#1e2433' }}>{score.title||'Untitled Score'}</div>

@@ -117,7 +117,7 @@ export default function App() {
   const isPlaying    = useScoreStore(s => s.isPlaying)
   const playbackBeat = useScoreStore(s => s.playbackBeat)
 
-  const { play, pause, stop, rewind, playFromBeat, toggleMetronome, toggleLoop } = usePlayback()
+  const { play, pause, stop, rewind, playFromBeat, seekToBeat, setTempo: setPlaybackTempo, getCurrentSec, getTotalSecs, toggleMetronome, toggleLoop } = usePlayback()
 
   // ── Local UI state — all declared together before any logic ───────────────
   const [samplesLoaded, setSamplesLoaded]     = useState(false)
@@ -131,6 +131,8 @@ export default function App() {
   const [showViewMenu, setShowViewMenu]       = useState(false)
   const [showToolsMenu, setShowToolsMenu]     = useState(false)
   const [showPiano, setShowPiano]             = useState(false)
+  const [seekValue, setSeekValue]             = useState(0)     // 0-100 for seek bar
+  const [tempoOverride, setTempoOverride]     = useState(null)  // null = score tempo
   const [contextMenu, setContextMenu]         = useState(null)
   const [darkMode, setDarkMode]               = useState(() => {
     try { return localStorage.getItem('scoreai_dark') === '1' } catch { return false }
@@ -512,13 +514,18 @@ export default function App() {
                 // Also save to cloud if logged in
                 if (user) {
                   try {
-                    await supabase.from('scores').upsert([{
-                      user_id: user.id,
-                      title: score.title || 'Untitled Score',
-                      data: score,
-                      updated_at: new Date().toISOString(),
-                    }], { onConflict: 'id' })
-                    alert('Score saved to cloud ☁')
+                    const cloudId = score._cloudId || null
+                    if (cloudId) {
+                      await supabase.from('scores')
+                        .update({ title: score.title || 'Untitled Score', data: score, updated_at: new Date().toISOString() })
+                        .eq('id', cloudId).eq('user_id', user.id)
+                    } else {
+                      const { data } = await supabase.from('scores').insert([{
+                        user_id: user.id, title: score.title || 'Untitled Score', data: score,
+                      }]).select('id').single()
+                      if (data?.id) useScoreStore.getState().setCloudId(data.id)
+                    }
+                    alert('Saved to cloud ☁')
                   } catch(e) { alert('Cloud save failed — saved locally instead.') }
                 } else {
                   alert('Score saved to browser storage.')
@@ -740,61 +747,73 @@ export default function App() {
 
         <div className="flex-1" />
 
-        {/* Playback controls */}
-        <div className="flex items-center gap-1.5 mr-4">
+        {/* ── Playback controls + seek bar ── */}
+        <div className="flex items-center gap-1.5 mr-2">
           {/* Rewind */}
-          <button onClick={rewind}
-            className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">
-            ⏮
-          </button>
-          {/* Play / Pause toggle */}
-          <button
-            onClick={isPlaying ? pause : handlePlay}
-            className={`w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition-colors
-              ${isPlaying
-                ? 'bg-orange-500 hover:bg-orange-600 text-white'
-                : 'bg-blue-600 hover:bg-blue-700 text-white'
-              }`}>
+          <button onClick={rewind} title="Rewind (stop)"
+            className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">⏮</button>
+          {/* Play / Pause */}
+          <button onClick={isPlaying ? pause : handlePlay} title="Play/Pause (Space)"
+            className={`w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition-colors ${isPlaying ? 'bg-orange-500 hover:bg-orange-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
             {isPlaying ? '⏸' : '▶'}
           </button>
           {/* Stop */}
-          <button onClick={stop}
-            className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">
-            ⏹
-          </button>
+          <button onClick={stop} title="Stop"
+            className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">⏹</button>
+
+          {/* Seek bar */}
+          <div style={{ display:'flex', alignItems:'center', gap:4, width:160 }}>
+            <input type="range" min={0} max={100} step={0.1}
+              value={(() => {
+                if (!isPlaying && playbackBeat === null) return 0
+                const totalSecs = getTotalSecs()
+                const curSec    = getCurrentSec()
+                return totalSecs > 0 ? Math.min(100, (curSec / totalSecs) * 100) : 0
+              })()}
+              onChange={e => {
+                const pct = parseFloat(e.target.value)
+                const totalSecs = getTotalSecs()
+                seekToSecond(pct / 100 * totalSecs)
+              }}
+              style={{ width:'100%', accentColor:'#2563eb', cursor:'pointer' }}
+            />
+            <span className="text-gray-400 text-xs font-mono" style={{ minWidth:32, fontSize:10 }}>
+              {playbackBeat !== null
+                ? `${Math.floor(playbackBeat/4)+1}:${(Math.floor(playbackBeat)%4)+1}`
+                : '1:1'}
+            </span>
+          </div>
+
+          {/* Tempo */}
+          <div style={{ display:'flex', alignItems:'center', gap:3 }}>
+            <span style={{ fontSize:10, color:'#9ca3af' }}>♩=</span>
+            <input type="number" min={20} max={300}
+              defaultValue={score.tempo || 120}
+              onChange={e => {
+                const v = parseInt(e.target.value)
+                if (v >= 20 && v <= 300) { setTempoOverride(v); setPlaybackTempo(v) }
+              }}
+              style={{ width:44, fontSize:11, border:'1px solid #d1d5db', borderRadius:4,
+                padding:'2px 4px', textAlign:'center', color:'#374151' }}
+            />
+          </div>
+
           {/* Metronome */}
-          <button onClick={() => { const v = toggleMetronome(); setMetronomeOn(v) }}
-            title="Metronome click during playback"
-            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors
-              ${metronomeOn ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
+          <button onClick={() => { const v = toggleMetronome(); setMetronomeOn(v) }} title="Metronome"
+            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors ${metronomeOn ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
             𝅘
           </button>
-          {/* Piano keyboard toggle */}
-          <button onClick={() => setShowPiano(v => !v)}
-            title="Toggle piano keyboard (P)"
-            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors
-              ${showPiano ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
-            🎹
-          </button>
           {/* Loop */}
-          <button onClick={() => { const v = toggleLoop(); setLoopOn(v) }}
-            title="Loop playback"
-            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors
-              ${loopOn ? 'bg-green-100 border-green-400 text-green-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
+          <button onClick={() => { const v = toggleLoop(); setLoopOn(v) }} title="Loop"
+            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors ${loopOn ? 'bg-green-100 border-green-400 text-green-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
             🔁
           </button>
-          {/* Beat counter / loading indicator */}
-          {samplesLoading ? (
-            <span className="text-amber-500 text-xs ml-1 animate-pulse" title="Loading real piano samples...">
-              🎹 loading…
-            </span>
-          ) : (
-            <span className="text-gray-400 text-xs ml-1 font-mono w-10">
-              {playbackBeat !== null && playbackBeat !== undefined
-                ? `${Math.floor(playbackBeat / 4)}:${(Math.floor(playbackBeat) % 4) + 1}`
-                : '0:1'}
-            </span>
-          )}
+          {/* Piano */}
+          <button onClick={() => setShowPiano(v => !v)} title="Piano keyboard (P)"
+            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors ${showPiano ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
+            🎹
+          </button>
+          {samplesLoading && <span className="text-amber-500 text-xs animate-pulse">🎹…</span>}
         </div>
 
         {/* Dark mode */}
