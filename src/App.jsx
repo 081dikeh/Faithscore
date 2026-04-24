@@ -5,20 +5,60 @@ import ScoreRenderer from './components/ScoreRenderer'
 import NoteEditor from './components/NoteEditor'
 import { useScoreStore, clearSavedScore } from './store/scoreStore'
 import HomeScreen from './components/HomeScreen'
+import AuthScreen from './components/AuthScreen'
 import Sidebar from './components/Sidebar'
 import { exportMusicXML, exportMIDI, printScore } from './utils/exportScore'
 import { usePlayback } from './hooks/usePlayback'
 import PianoKeyboard from './components/PianoKeyboard'
+import { supabase } from './lib/supabase'
 
 const DURATION_KEYS = { '1':'w','2':'h','3':'q','4':'8','5':'16','6':'32','7':'64' }
 const KEY_TO_STEP   = { a:'A',b:'B',c:'C',d:'D',e:'E',f:'F',g:'G' }
 
 export default function App() {
   const score                  = useScoreStore(s => s.score)
-  const [appView, setAppView] = useState(() => {
-    // Start on home screen always — user can go back with Escape or Home button
-    return 'home'
-  })
+  const [appView, setAppView] = useState('home')
+  // ── Auth state ─────────────────────────────────────────────────────────────
+  const [user, setUser]           = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)  // true while checking session
+
+  // Auth: get session once on mount, then subscribe to changes.
+  // We intentionally do NOT react to TOKEN_REFRESHED — that was causing
+  // a re-render loop which hammered the refresh endpoint (429 errors),
+  // which Supabase then rate-limited, responding with SIGNED_OUT.
+  // getSession() reads directly from localStorage — no network call,
+  // no rate limiting — so it's safe to call on every mount.
+  useEffect(() => {
+    // Step 1: read the existing session from localStorage immediately.
+    // This is synchronous-ish and never hits the network.
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null)
+      setAuthLoading(false)
+    })
+
+    // Step 2: subscribe only to explicit login/logout events.
+    // TOKEN_REFRESHED is intentionally excluded — we don't need to
+    // re-render on token refresh; the user object doesn't change.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN') {
+        setUser(session?.user ?? null)
+        setAuthLoading(false)
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null)
+        setAuthLoading(false)
+        setAppView('home')
+      }
+      // INITIAL_SESSION, TOKEN_REFRESHED, PASSWORD_RECOVERY — all ignored.
+      // getSession() above already handles the initial state.
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    // onAuthStateChange SIGNED_OUT will clear user and reset view
+  }
+
   const inputMode              = useScoreStore(s => s.inputMode)
   const selectedMeasureIndex   = useScoreStore(s => s.selectedMeasureIndex)
   const selectedPartId         = useScoreStore(s => s.selectedPartId)
@@ -334,9 +374,28 @@ export default function App() {
     } catch(_) {}
   }, [score, appView])
 
+  // ── Auth gate — show AuthScreen until user is logged in ──────────────────
+  if (authLoading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%)',
+        fontFamily: '-apple-system, sans-serif', fontSize: 14, color: '#6b7280' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>🎵</div>
+          <div>Loading FaithScore…</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <AuthScreen onAuth={(u) => setUser(u)} />
+  }
+
   if (appView === 'home') {
-    return <HomeScreen onOpenEditor={() => setAppView('editor')} />
-  }  
+    return <HomeScreen user={user} onOpenEditor={() => setAppView('editor')} onSignOut={handleSignOut} />
+  }
+
 
   return (
     <div className={`min-h-screen flex flex-col ${darkMode ? "bg-gray-900 text-gray-100" : "bg-gray-100"}`}>
@@ -447,7 +506,24 @@ export default function App() {
             <Item icon=""   label="Open recent"       arrow               disabled />
             <Sep />
             <Item icon="💾" label="Save"              shortcut="Ctrl+S"
-              onClick={() => { try { localStorage.setItem('faithscore_autosave', JSON.stringify(score)) } catch(_){} alert('Score saved to browser storage.') }} />
+              onClick={async () => {
+                // Always save to localStorage
+                try { localStorage.setItem('faithscore_autosave', JSON.stringify({ ...score, _savedAt: Date.now() })) } catch(_) {}
+                // Also save to cloud if logged in
+                if (user) {
+                  try {
+                    await supabase.from('scores').upsert([{
+                      user_id: user.id,
+                      title: score.title || 'Untitled Score',
+                      data: score,
+                      updated_at: new Date().toISOString(),
+                    }], { onConflict: 'id' })
+                    alert('Score saved to cloud ☁')
+                  } catch(e) { alert('Cloud save failed — saved locally instead.') }
+                } else {
+                  alert('Score saved to browser storage.')
+                }
+              }} />
             <Item icon=""   label="Save as…"          shortcut="Ctrl+Shift+S" disabled />
             <Item icon="☁️" label="Save to cloud…"                        disabled />
             <Sep />
@@ -733,6 +809,32 @@ export default function App() {
         </button>
 
         {/* Part manager moved to Sidebar → Parts tab */}
+
+        {/* ── User badge + sign out ── */}
+        {user && (
+          <div style={{ display:'flex', alignItems:'center', gap:6, marginLeft:4 }}>
+            <div style={{
+              width:28, height:28, borderRadius:'50%',
+              background:'linear-gradient(135deg,#2563eb,#7c3aed)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              fontSize:11, fontWeight:700, color:'white', flexShrink:0,
+            }}>
+              {(user.user_metadata?.full_name || user.email || '?')[0].toUpperCase()}
+            </div>
+            <span style={{ fontSize:11, color:'#374151', maxWidth:100,
+              overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+              {user.user_metadata?.full_name || user.email?.split('@')[0]}
+            </span>
+            <button onClick={handleSignOut}
+              title="Sign out"
+              style={{ fontSize:11, color:'#6b7280', background:'none', border:'1px solid #e5e7eb',
+                borderRadius:5, padding:'2px 8px', cursor:'pointer' }}
+              onMouseEnter={e=>e.currentTarget.style.color='#dc2626'}
+              onMouseLeave={e=>e.currentTarget.style.color='#6b7280'}>
+              Sign out
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Score info + status bar ── */}

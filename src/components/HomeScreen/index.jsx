@@ -1,6 +1,7 @@
 // src/components/HomeScreen/index.jsx
 import { useState, useEffect, useRef } from 'react'
 import { useScoreStore } from '../../store/scoreStore'
+import { supabase } from '../../lib/supabase'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 
@@ -545,28 +546,92 @@ function timeAgo(ts) {
 }
 
 // ─── Home Screen ──────────────────────────────────────────────────────────────
-export default function HomeScreen({ onOpenEditor }) {
-  const [wizard,   setWizard]   = useState(false)
-  const [recent,   setRecent]   = useState([])
-  const [viewMode, setViewMode] = useState('grid')  // 'grid' | 'list'
-  const [tab,      setTab]      = useState('recent') // 'recent' | 'online'
-  const [nav,      setNav]      = useState('scores')
-  const loadScore = useScoreStore(s => s.loadScore)
+export default function HomeScreen({ onOpenEditor, user, onSignOut }) {
+  const [wizard,    setWizard]    = useState(false)
+  const [recent,    setRecent]    = useState([])
+  const [cloudSaving, setCloudSaving] = useState(false)
+  const [cloudMsg,  setCloudMsg]  = useState('')
+  const [viewMode,  setViewMode]  = useState('grid')
+  const [tab,       setTab]       = useState('recent')
+  const [nav,       setNav]       = useState('scores')
+  const loadScore  = useScoreStore(s => s.loadScore)
+  const score      = useScoreStore(s => s.score)
 
+  // Load scores: cloud first (if logged in), then localStorage fallback
   useEffect(() => {
-    try {
-      const items = []
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i)
-        if (!k?.startsWith('faithscore')) continue
+    async function fetchScores() {
+      if (user) {
         try {
-          const s = JSON.parse(localStorage.getItem(k))
-          if (s?.parts) items.push({ key: k, score: s, ts: s._savedAt || 0 })
+          const { data, error } = await supabase
+            .from('scores')
+            .select('id, title, updated_at, data')
+            .eq('user_id', user.id)
+            .order('updated_at', { ascending: false })
+            .limit(50)
+          if (!error && data) {
+            setRecent(data.map(row => ({
+              key: row.id,
+              score: row.data,
+              title: row.title,
+              ts: new Date(row.updated_at).getTime(),
+              cloudId: row.id,
+            })))
+            return
+          }
         } catch {}
       }
-      setRecent(items.sort((a,b)=>b.ts-a.ts))
-    } catch {}
-  }, [])
+      // localStorage fallback
+      try {
+        const items = []
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i)
+          if (!k?.startsWith('faithscore')) continue
+          try {
+            const s = JSON.parse(localStorage.getItem(k))
+            if (s?.parts) items.push({ key: k, score: s, ts: s._savedAt || 0 })
+          } catch {}
+        }
+        setRecent(items.sort((a,b)=>b.ts-a.ts))
+      } catch {}
+    }
+    fetchScores()
+  }, [user])
+
+  // Save current score to cloud
+  const saveToCloud = async () => {
+    if (!user) return
+    setCloudSaving(true)
+    setCloudMsg('')
+    try {
+      const payload = {
+        user_id: user.id,
+        title: score.title || 'Untitled Score',
+        data: score,
+      }
+      // Upsert: update if same title exists for this user, else insert
+      const { error } = await supabase.from('scores').upsert(
+        [{ ...payload, updated_at: new Date().toISOString() }],
+        { onConflict: 'id' }
+      )
+      if (error) throw error
+      setCloudMsg('Saved to cloud ✓')
+      setTimeout(() => setCloudMsg(''), 3000)
+      // Refresh list
+      const { data } = await supabase.from('scores').select('id,title,updated_at,data')
+        .eq('user_id', user.id).order('updated_at', { ascending: false }).limit(50)
+      if (data) setRecent(data.map(row => ({ key: row.id, score: row.data, title: row.title, ts: new Date(row.updated_at).getTime(), cloudId: row.id })))
+    } catch (err) {
+      setCloudMsg('Save failed: ' + (err.message || 'unknown error'))
+    }
+    setCloudSaving(false)
+  }
+
+  const deleteCloudScore = async (cloudId) => {
+    if (!user || !cloudId) return
+    if (!window.confirm('Delete this score from your account?')) return
+    await supabase.from('scores').delete().eq('id', cloudId).eq('user_id', user.id)
+    setRecent(r => r.filter(x => x.cloudId !== cloudId))
+  }
 
   function openScore(s) { loadScore(s); onOpenEditor() }
   function handleWizardDone() { setWizard(false); onOpenEditor() }
@@ -586,12 +651,27 @@ export default function HomeScreen({ onOpenEditor }) {
         {/* Profile */}
         <div style={{ padding:'20px 16px 16px', borderBottom:'1px solid #dde1e7' }}>
           <div style={{ display:'flex', alignItems:'center', gap:11 }}>
-            <div style={{ width:40, height:40, borderRadius:'50%', background:'linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%)', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontWeight:700, fontSize:15, flexShrink:0 }}>F</div>
-            <div>
-              <div style={{ fontWeight:700, fontSize:13.5, color:'#1e2433' }}>FaithScore</div>
-              <div style={{ fontSize:11, color:'#8892a4', marginTop:1 }}>My workspace</div>
+            <div style={{ width:40, height:40, borderRadius:'50%', background:'linear-gradient(135deg,#2563eb 0%,#7c3aed 100%)', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontWeight:700, fontSize:15, flexShrink:0 }}>
+              {user ? (user.user_metadata?.full_name || user.email || '?')[0].toUpperCase() : 'F'}
+            </div>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontWeight:700, fontSize:13, color:'#1e2433', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'FaithScore'}
+              </div>
+              <div style={{ fontSize:11, color:'#8892a4', marginTop:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                {user?.email || 'My workspace'}
+              </div>
             </div>
           </div>
+          {user && onSignOut && (
+            <button onClick={onSignOut}
+              style={{ marginTop:10, width:'100%', padding:'5px 0', fontSize:11, color:'#6b7280',
+                background:'none', border:'1px solid #dde1e7', borderRadius:5, cursor:'pointer' }}
+              onMouseEnter={e=>e.currentTarget.style.color='#dc2626'}
+              onMouseLeave={e=>e.currentTarget.style.color='#6b7280'}>
+              Sign out
+            </button>
+          )}
         </div>
 
         {/* Nav */}
@@ -643,14 +723,30 @@ export default function HomeScreen({ onOpenEditor }) {
               </div>
             </div>
 
-            {/* Tabs */}
-            <div style={{ display:'flex', borderBottom:'1px solid #dde1e7', marginBottom:24, gap:0 }}>
-              {[{id:'recent',l:'New & recent'},{id:'online',l:'My online scores'}].map(t=>(
+            {/* Tabs + cloud save */}
+            <div style={{ display:'flex', alignItems:'center', borderBottom:'1px solid #dde1e7', marginBottom:24, gap:0 }}>
+              {[{id:'recent',l:'My Scores'}].map(t=>(
                 <button key={t.id} onClick={()=>setTab(t.id)}
                   style={{ padding:'8px 18px', border:'none', background:'none', cursor:'pointer', fontSize:13.5, fontWeight: tab===t.id?600:400, color: tab===t.id?'#2563eb':'#6b7280', borderBottom: tab===t.id?'2px solid #2563eb':'2px solid transparent', marginBottom:'-1px' }}>
                   {t.l}
                 </button>
               ))}
+              <div style={{ flex:1 }} />
+              {user && (
+                <div style={{ display:'flex', alignItems:'center', gap:8, paddingBottom:8 }}>
+                  {cloudMsg && (
+                    <span style={{ fontSize:12, color: cloudMsg.startsWith('Save failed') ? '#dc2626' : '#16a34a' }}>
+                      {cloudMsg}
+                    </span>
+                  )}
+                  <button onClick={saveToCloud} disabled={cloudSaving}
+                    style={{ fontSize:12, fontWeight:600, padding:'5px 14px',
+                      background: cloudSaving ? '#93c5fd' : '#2563eb', color:'white',
+                      border:'none', borderRadius:6, cursor: cloudSaving ? 'not-allowed' : 'pointer' }}>
+                    {cloudSaving ? 'Saving…' : '☁ Save to cloud'}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Grid or list */}
@@ -668,23 +764,37 @@ export default function HomeScreen({ onOpenEditor }) {
                   </div>
                 </button>
 
-                {/* Recent score cards */}
-                {recent.map(({key,score,ts})=>(
-                  <button key={key} onClick={()=>openScore(score)} style={{ border:'1px solid #e5e7eb', borderRadius:12, background:'white', cursor:'pointer', padding:0, overflow:'hidden', textAlign:'left', transition:'all 0.15s', boxShadow:'0 1px 3px rgba(0,0,0,0.06)' }}
-                    onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 6px 20px rgba(0,0,0,0.12)';e.currentTarget.style.transform='translateY(-2px)'}}
-                    onMouseLeave={e=>{e.currentTarget.style.boxShadow='0 1px 3px rgba(0,0,0,0.06)';e.currentTarget.style.transform=''}}>
-                    <div style={{ height:168, overflow:'hidden', borderBottom:'1px solid #f3f4f6', background:'#fafbfc' }}>
-                      <Thumbnail score={score}/>
-                    </div>
-                    <div style={{ padding:'11px 13px 13px' }}>
-                      <div style={{ fontSize:13, fontWeight:600, color:'#1e2433', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-                        {score.title || 'Untitled Score'}
+                {/* Score cards */}
+                {recent.map(({key,score,ts,cloudId})=>(
+                  <div key={key} style={{ border:'1px solid #e5e7eb', borderRadius:12, background:'white', overflow:'hidden', boxShadow:'0 1px 3px rgba(0,0,0,0.06)', transition:'all 0.15s', position:'relative' }}
+                    onMouseEnter={e=>e.currentTarget.style.boxShadow='0 6px 20px rgba(0,0,0,0.12)'}
+                    onMouseLeave={e=>e.currentTarget.style.boxShadow='0 1px 3px rgba(0,0,0,0.06)'}>
+                    <button onClick={()=>openScore(score)} style={{ width:'100%', border:'none', background:'none', cursor:'pointer', padding:0, textAlign:'left' }}>
+                      <div style={{ height:168, overflow:'hidden', borderBottom:'1px solid #f3f4f6', background:'#fafbfc' }}>
+                        <Thumbnail score={score}/>
                       </div>
-                      <div style={{ fontSize:11, color:'#9ca3af', marginTop:4, textTransform:'uppercase', letterSpacing:'0.05em' }}>
-                        {timeAgo(ts)}
+                      <div style={{ padding:'11px 13px 10px' }}>
+                        <div style={{ fontSize:13, fontWeight:600, color:'#1e2433', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                          {score.title || 'Untitled Score'}
+                        </div>
+                        <div style={{ fontSize:11, color:'#9ca3af', marginTop:3, display:'flex', alignItems:'center', gap:6 }}>
+                          {cloudId && <span title="Saved to cloud">☁</span>}
+                          {timeAgo(ts)}
+                        </div>
                       </div>
-                    </div>
-                  </button>
+                    </button>
+                    {cloudId && (
+                      <button onClick={()=>deleteCloudScore(cloudId)}
+                        title="Delete score"
+                        style={{ position:'absolute', top:8, right:8, width:24, height:24, borderRadius:4,
+                          background:'rgba(255,255,255,0.9)', border:'1px solid #e5e7eb',
+                          cursor:'pointer', fontSize:12, color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center' }}
+                        onMouseEnter={e=>{e.currentTarget.style.color='#dc2626';e.currentTarget.style.borderColor='#fca5a5'}}
+                        onMouseLeave={e=>{e.currentTarget.style.color='#9ca3af';e.currentTarget.style.borderColor='#e5e7eb'}}>
+                        ✕
+                      </button>
+                    )}
+                  </div>
                 ))}
 
                 {recent.length === 0 && (
@@ -702,17 +812,27 @@ export default function HomeScreen({ onOpenEditor }) {
                   <div style={{ width:42,height:42,borderRadius:8,background:'#f3f4f6',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,color:'#9ca3af',flexShrink:0 }}>+</div>
                   <span style={{ fontSize:13.5, fontWeight:600, color:'#374151' }}>New score</span>
                 </button>
-                {recent.map(({key,score,ts})=>(
-                  <button key={key} onClick={()=>openScore(score)} style={{ display:'flex', alignItems:'center', gap:14, padding:'11px 16px', border:'1px solid #e5e7eb', borderRadius:9, background:'white', cursor:'pointer', transition:'all 0.15s', boxShadow:'0 1px 2px rgba(0,0,0,0.05)' }}
+                {recent.map(({key,score,ts,cloudId})=>(
+                  <div key={key} style={{ display:'flex', alignItems:'center', gap:14, padding:'11px 16px', border:'1px solid #e5e7eb', borderRadius:9, background:'white', transition:'all 0.15s', boxShadow:'0 1px 2px rgba(0,0,0,0.05)' }}
                     onMouseEnter={e=>e.currentTarget.style.boxShadow='0 3px 10px rgba(0,0,0,0.09)'}
                     onMouseLeave={e=>e.currentTarget.style.boxShadow='0 1px 2px rgba(0,0,0,0.05)'}>
-                    <div style={{ width:56,height:42,borderRadius:6,overflow:'hidden',border:'1px solid #e5e7eb',flexShrink:0,background:'#fafbfc' }}><Thumbnail score={score}/></div>
-                    <div style={{ flex:1, textAlign:'left' }}>
-                      <div style={{ fontSize:13.5,fontWeight:600,color:'#1e2433' }}>{score.title||'Untitled Score'}</div>
-                      <div style={{ fontSize:11.5,color:'#9ca3af',marginTop:2 }}>{score.parts?.length||0} parts · {score.parts?.[0]?.measures?.length||0} bars</div>
-                    </div>
-                    <div style={{ fontSize:11,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em',flexShrink:0 }}>{timeAgo(ts)}</div>
-                  </button>
+                    <button onClick={()=>openScore(score)} style={{ display:'flex', alignItems:'center', gap:14, flex:1, border:'none', background:'none', cursor:'pointer', padding:0, textAlign:'left' }}>
+                      <div style={{ width:56,height:42,borderRadius:6,overflow:'hidden',border:'1px solid #e5e7eb',flexShrink:0,background:'#fafbfc' }}><Thumbnail score={score}/></div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13.5,fontWeight:600,color:'#1e2433' }}>{score.title||'Untitled Score'}</div>
+                        <div style={{ fontSize:11.5,color:'#9ca3af',marginTop:2 }}>{score.parts?.length||0} parts · {score.parts?.[0]?.measures?.length||0} bars · {cloudId ? '☁ cloud' : 'local'}</div>
+                      </div>
+                      <div style={{ fontSize:11,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em',flexShrink:0 }}>{timeAgo(ts)}</div>
+                    </button>
+                    {cloudId && (
+                      <button onClick={()=>deleteCloudScore(cloudId)}
+                        style={{ width:24,height:24,borderRadius:4,background:'none',border:'1px solid #e5e7eb',cursor:'pointer',fontSize:12,color:'#9ca3af',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center' }}
+                        onMouseEnter={e=>{e.currentTarget.style.color='#dc2626';e.currentTarget.style.borderColor='#fca5a5'}}
+                        onMouseLeave={e=>{e.currentTarget.style.color='#9ca3af';e.currentTarget.style.borderColor='#e5e7eb'}}>
+                        ✕
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
