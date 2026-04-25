@@ -491,8 +491,8 @@ export default function ScoreRenderer() {
             }).setStrict(false);
             voice.addTickables(vfNotes);
             // Formatter width = stave width minus glyph overhead.
-            // Uses same dynamic GLYPH_FIRST that accounts for key sig accidentals.
-            const glyphOverhead = isFirst ? GLYPH_FIRST : GLYPH_REST;
+            // getGlyphOverhead() accounts for clef + key sig accidentals + time sig.
+            const glyphOverhead = getGlyphOverhead(col, isFirst);
             const formatterWidth = Math.max(40, width - glyphOverhead);
             new Formatter().joinVoices([voice]).format([voice], formatterWidth);
 
