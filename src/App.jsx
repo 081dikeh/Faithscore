@@ -11,6 +11,9 @@ import { exportMusicXML, exportMIDI, printScore } from './utils/exportScore'
 import { usePlayback } from './hooks/usePlayback'
 import PianoKeyboard from './components/PianoKeyboard'
 import { supabase } from './lib/supabase'
+import SolfaRenderer from './components/SolfaRenderer'
+import SolfaEditor from './components/SolfaEditor'
+import { useSolfaStore } from './store/solfaStore'
 
 const DURATION_KEYS = { '1':'w','2':'h','3':'q','4':'8','5':'16','6':'32','7':'64' }
 const KEY_TO_STEP   = { a:'A',b:'B',c:'C',d:'D',e:'E',f:'F',g:'G' }
@@ -20,6 +23,8 @@ export default function App() {
   const [appView, setAppView] = useState('home')
   // ── Auth state ─────────────────────────────────────────────────────────────
   const [user, setUser]           = useState(null)
+  // ── Notation mode: 'staff' (standard) or 'solfa' ──────────────────────────
+  const [notationMode, setNotationMode] = useState('staff')
   const [authLoading, setAuthLoading] = useState(true)  // true while checking session
 
   // Auth: get session once on mount, then subscribe to changes.
@@ -383,7 +388,7 @@ export default function App() {
         background: 'linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%)',
         fontFamily: '-apple-system, sans-serif', fontSize: 14, color: '#6b7280' }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 36, marginBottom: 12 }}>🎵</div>
+          <img src="/FaithScore_logo.png" alt="FaithScore" style={{ height:60, width:'auto', marginBottom:12 }} />
           <div>Loading FaithScore…</div>
         </div>
       </div>
@@ -414,8 +419,30 @@ export default function App() {
             borderRadius:5 }}
           onMouseEnter={e=>e.currentTarget.style.background='#eff6ff'}
           onMouseLeave={e=>e.currentTarget.style.background='none'}>
-          🎵 FaithScore
+          <img src="/FaithScore_logo.png" alt="FaithScore" style={{ height:20, width:'auto', objectFit:'contain' }} />
+          FaithScore
         </button>
+
+        {/* ── Notation mode toggle ── */}
+        <div style={{ display:'flex', gap:0, border:'1px solid #d1d5db', borderRadius:6, overflow:'hidden', marginRight:4 }}>
+          <button onClick={() => setNotationMode('staff')}
+            title="Staff notation (standard)"
+            style={{ padding:'3px 10px', fontSize:11, fontWeight:600, border:'none',
+              background: notationMode==='staff' ? '#2563eb' : 'white',
+              color: notationMode==='staff' ? 'white' : '#6b7280',
+              cursor:'pointer', transition:'all 0.15s' }}>
+            ♩ Staff
+          </button>
+          <button onClick={() => setNotationMode('solfa')}
+            title="Solfa notation (tonic sol-fa)"
+            style={{ padding:'3px 10px', fontSize:11, fontWeight:600, border:'none',
+              borderLeft:'1px solid #d1d5db',
+              background: notationMode==='solfa' ? '#2563eb' : 'white',
+              color: notationMode==='solfa' ? 'white' : '#6b7280',
+              cursor:'pointer', transition:'all 0.15s' }}>
+            d·r·m Solfa
+          </button>
+        </div>
 
         {/* ── Menu system ─────────────────────────────────────────────── */}
         {(() => {
@@ -927,8 +954,8 @@ export default function App() {
         ))}
       </div>
 
-      {/* ── Note editor panel ── */}
-      <NoteEditor />
+      {/* ── Note editor panel (staff mode) or Solfa editor toolbar (solfa mode) ── */}
+      {notationMode === 'staff' ? <NoteEditor /> : <SolfaEditor />}
       </div>{/* end sticky top chrome */}
 
       {/* ── Main area: Sidebar + Score canvas ── */}
@@ -983,9 +1010,9 @@ export default function App() {
             )}
           </div>
 
-          {/* Score notation — renders into the page */}
+          {/* Score notation — staff or solfa depending on mode */}
           <div style={{ width: '100%', overflow: 'visible' }}>
-            <ScoreRenderer />
+            {notationMode === 'staff' ? <ScoreRenderer /> : <SolfaRenderer />}
           </div>
         </div>
           </div>{/* end zoom scale wrapper */}

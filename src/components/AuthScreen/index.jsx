@@ -100,7 +100,7 @@ export default function AuthScreen({ onAuth }) {
 
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ fontSize: 42, marginBottom: 6 }}>🎵</div>
+          <img src="/FaithScore_logo.png" alt="FaithScore" style={{ height:56, width:'auto', marginBottom:6 }} />
           <div style={{ fontSize: 26, fontWeight: 800, color: '#1e40af', letterSpacing: '-0.5px' }}>FaithScore</div>
           <div style={{ fontSize: 11, color: '#6b7280', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Music Notation</div>
         </div>
