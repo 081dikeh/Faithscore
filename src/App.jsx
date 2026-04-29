@@ -11,9 +11,7 @@ import { exportMusicXML, exportMIDI, printScore } from './utils/exportScore'
 import { usePlayback } from './hooks/usePlayback'
 import PianoKeyboard from './components/PianoKeyboard'
 import { supabase } from './lib/supabase'
-import SolfaRenderer from './components/SolfaRenderer'
-import SolfaEditor from './components/SolfaEditor'
-import { useSolfaStore } from './store/solfaStore'
+import SolfaApp from './components/SolfaApp'
 
 const DURATION_KEYS = { '1':'w','2':'h','3':'q','4':'8','5':'16','6':'32','7':'64' }
 const KEY_TO_STEP   = { a:'A',b:'B',c:'C',d:'D',e:'E',f:'F',g:'G' }
@@ -23,8 +21,7 @@ export default function App() {
   const [appView, setAppView] = useState('home')
   // ── Auth state ─────────────────────────────────────────────────────────────
   const [user, setUser]           = useState(null)
-  // ── Notation mode: 'staff' (standard) or 'solfa' ──────────────────────────
-  const [notationMode, setNotationMode] = useState('staff')
+
   const [authLoading, setAuthLoading] = useState(true)  // true while checking session
 
   // Auth: get session once on mount, then subscribe to changes.
@@ -400,7 +397,17 @@ export default function App() {
   }
 
   if (appView === 'home') {
-    return <HomeScreen user={user} onOpenEditor={() => setAppView('editor')} onSignOut={handleSignOut} />
+    return <HomeScreen
+      user={user}
+      onOpenEditor={() => setAppView('editor')}
+      onOpenSolfaEditor={() => setAppView('solfa-editor')}
+      onSignOut={handleSignOut}
+    />
+  }
+
+  // ── Solfa editor — completely standalone, separate from staff ──────────────
+  if (appView === 'solfa-editor') {
+    return <SolfaApp user={user} onGoHome={() => setAppView('home')} />
   }
 
 
@@ -422,27 +429,6 @@ export default function App() {
           <img src="/FaithScore_logo.png" alt="FaithScore" style={{ height:20, width:'auto', objectFit:'contain' }} />
           FaithScore
         </button>
-
-        {/* ── Notation mode toggle ── */}
-        <div style={{ display:'flex', gap:0, border:'1px solid #d1d5db', borderRadius:6, overflow:'hidden', marginRight:4 }}>
-          <button onClick={() => setNotationMode('staff')}
-            title="Staff notation (standard)"
-            style={{ padding:'3px 10px', fontSize:11, fontWeight:600, border:'none',
-              background: notationMode==='staff' ? '#2563eb' : 'white',
-              color: notationMode==='staff' ? 'white' : '#6b7280',
-              cursor:'pointer', transition:'all 0.15s' }}>
-            ♩ Staff
-          </button>
-          <button onClick={() => setNotationMode('solfa')}
-            title="Solfa notation (tonic sol-fa)"
-            style={{ padding:'3px 10px', fontSize:11, fontWeight:600, border:'none',
-              borderLeft:'1px solid #d1d5db',
-              background: notationMode==='solfa' ? '#2563eb' : 'white',
-              color: notationMode==='solfa' ? 'white' : '#6b7280',
-              cursor:'pointer', transition:'all 0.15s' }}>
-            d·r·m Solfa
-          </button>
-        </div>
 
         {/* ── Menu system ─────────────────────────────────────────────── */}
         {(() => {
@@ -955,7 +941,7 @@ export default function App() {
       </div>
 
       {/* ── Note editor panel (staff mode) or Solfa editor toolbar (solfa mode) ── */}
-      {notationMode === 'staff' ? <NoteEditor /> : <SolfaEditor />}
+      <NoteEditor />
       </div>{/* end sticky top chrome */}
 
       {/* ── Main area: Sidebar + Score canvas ── */}
@@ -1010,9 +996,9 @@ export default function App() {
             )}
           </div>
 
-          {/* Score notation — staff or solfa depending on mode */}
+          {/* Score notation */}
           <div style={{ width: '100%', overflow: 'visible' }}>
-            {notationMode === 'staff' ? <ScoreRenderer /> : <SolfaRenderer />}
+            <ScoreRenderer />
           </div>
         </div>
           </div>{/* end zoom scale wrapper */}

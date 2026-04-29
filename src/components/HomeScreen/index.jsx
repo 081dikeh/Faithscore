@@ -1,6 +1,8 @@
 // src/components/HomeScreen/index.jsx
 import { useState, useEffect, useRef } from 'react'
 import { useScoreStore } from '../../store/scoreStore'
+import { useSolfaStore } from '../../store/solfaStore'
+import SolfaWizard from '../SolfaWizard'
 import { supabase } from '../../lib/supabase'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
@@ -380,7 +382,7 @@ function Wizard({ onDone, onCancel }) {
         <div style={{ ...hd, paddingTop:14, paddingBottom:0 }}>
           <div style={{ display:'flex', alignItems:'center', marginBottom:8 }}>
             <div style={{ display:'flex', alignItems:'center', gap:7 }}>
-              <span style={{ color:'#2563eb', fontSize:16 }}>🎵</span>
+              <img src="/FaithScore_logo.png" alt="" style={{ height:18, width:'auto' }} />
               <span style={{ fontWeight:600, fontSize:14, color:'#1e2433' }}>New score</span>
             </div>
             <button onClick={onCancel} style={{ marginLeft:'auto', border:'none', background:'none', cursor:'pointer', fontSize:22, color:'#9ca3af', lineHeight:1, padding:'0 2px' }}>×</button>
@@ -546,15 +548,17 @@ function timeAgo(ts) {
 }
 
 // ─── Home Screen ──────────────────────────────────────────────────────────────
-export default function HomeScreen({ onOpenEditor, user, onSignOut }) {
-  const [wizard,    setWizard]    = useState(false)
+export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSignOut }) {
+  const [wizard,       setWizard]       = useState(false)
+  const [solfaWizard,  setSolfaWizard]  = useState(false)
   const [recent,    setRecent]    = useState([])
   const [cloudSaving, setCloudSaving] = useState(false)
   const [cloudMsg,  setCloudMsg]  = useState('')
   const [viewMode,  setViewMode]  = useState('grid')
   const [tab,       setTab]       = useState('recent')
   const [nav,       setNav]       = useState('scores')
-  const loadScore  = useScoreStore(s => s.loadScore)
+  const loadScore      = useScoreStore(s => s.loadScore)
+  const loadSolfaScore = useSolfaStore(s => s.loadScore)
   const score      = useScoreStore(s => s.score)
 
   // Load scores: cloud first (if logged in), then localStorage fallback
@@ -643,13 +647,37 @@ export default function HomeScreen({ onOpenEditor, user, onSignOut }) {
   }
 
   function openScore(s, cloudId) {
-    loadScore(s)
-    // Store cloudId on the score so the editor's Save can update the right record
-    if (cloudId) {
-      useScoreStore.setState(st => ({ score: { ...st.score, _cloudId: cloudId } }))
+    if (s?.type === 'solfa') {
+      // Route solfa scores to the solfa editor
+      loadSolfaScore({ ...s, _cloudId: cloudId || s._cloudId || null })
+      onOpenSolfaEditor()
+    } else {
+      loadScore(s)
+      if (cloudId) useScoreStore.setState(st => ({ score: { ...st.score, _cloudId: cloudId } }))
+      onOpenEditor()
     }
-    onOpenEditor()
   }
+  async function handleSolfaWizardDone(newScore) {
+    setSolfaWizard(false)
+    loadSolfaScore(newScore)
+    if (user) {
+      try {
+        const { data } = await supabase.from('scores')
+          .insert([{ user_id: user.id, title: newScore.title || 'Untitled', data: newScore }])
+          .select('id').single()
+        if (data?.id) useSolfaStore.getState().setCloudId(data.id)
+        const { data: scores } = await supabase.from('scores')
+          .select('id,title,updated_at,data').eq('user_id', user.id)
+          .order('updated_at', { ascending: false }).limit(50)
+        if (scores) setRecent(scores.map(row => ({
+          key: row.id, score: row.data, title: row.title,
+          ts: new Date(row.updated_at).getTime(), cloudId: row.id,
+        })))
+      } catch(e) { console.warn('Solfa auto-save failed:', e) }
+    }
+    onOpenSolfaEditor()
+  }
+
   async function handleWizardDone() {
     setWizard(false)
     // Auto-save the newly created score to cloud immediately
@@ -792,15 +820,33 @@ export default function HomeScreen({ onOpenEditor, user, onSignOut }) {
             {/* Grid or list */}
             {viewMode === 'grid' ? (
               <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))', gap:20 }}>
-                {/* New score card */}
-                <button onClick={()=>setWizard(true)} style={{ border:'2px dashed #d1d5db', borderRadius:12, background:'white', cursor:'pointer', padding:0, overflow:'hidden', textAlign:'center', transition:'all 0.15s' }}
-                  onMouseEnter={e=>{e.currentTarget.style.borderColor='#6366f1';e.currentTarget.style.background='#fafbff'}}
+                {/* New Staff Score card */}
+                <button onClick={()=>setWizard(true)}
+                  style={{ border:'2px dashed #d1d5db', borderRadius:12, background:'white', cursor:'pointer', padding:0, overflow:'hidden', textAlign:'center', transition:'all 0.15s' }}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor='#2563eb';e.currentTarget.style.background='#eff6ff'}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor='#d1d5db';e.currentTarget.style.background='white'}}>
-                  <div style={{ height:168, display:'flex', alignItems:'center', justifyContent:'center' }}>
-                    <div style={{ width:52, height:52, borderRadius:'50%', background:'#f0f0f0', display:'flex', alignItems:'center', justifyContent:'center', fontSize:28, color:'#9ca3af' }}>+</div>
+                  <div style={{ height:138, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:8 }}>
+                    <div style={{ width:44, height:44, borderRadius:'50%', background:'#eff6ff', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22 }}>♩</div>
+                    <span style={{ fontSize:11, fontWeight:600, color:'#2563eb', letterSpacing:'0.05em' }}>STAFF NOTATION</span>
                   </div>
-                  <div style={{ padding:'10px 12px 14px', borderTop:'1px solid #f3f4f6' }}>
-                    <div style={{ fontSize:13.5, fontWeight:600, color:'#1e2433' }}>New score</div>
+                  <div style={{ padding:'10px 12px 14px', borderTop:'1px solid #f3f4f6', background:'#fafbff' }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:'#1e2433' }}>New Staff Score</div>
+                    <div style={{ fontSize:10.5, color:'#6b7280', marginTop:2 }}>Standard music notation</div>
+                  </div>
+                </button>
+
+                {/* New Solfa Score card */}
+                <button onClick={()=>setSolfaWizard(true)}
+                  style={{ border:'2px dashed #d1d5db', borderRadius:12, background:'white', cursor:'pointer', padding:0, overflow:'hidden', textAlign:'center', transition:'all 0.15s' }}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor='#d97706';e.currentTarget.style.background='#fffbeb'}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor='#d1d5db';e.currentTarget.style.background='white'}}>
+                  <div style={{ height:138, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:8 }}>
+                    <div style={{ width:44, height:44, borderRadius:'50%', background:'#fef3c7', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, fontFamily:'"Times New Roman",serif', fontWeight:700, color:'#92400e' }}>d·r·m</div>
+                    <span style={{ fontSize:11, fontWeight:600, color:'#d97706', letterSpacing:'0.05em' }}>TONIC SOL-FA</span>
+                  </div>
+                  <div style={{ padding:'10px 12px 14px', borderTop:'1px solid #fef3c7', background:'#fffdf0' }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:'#1e2433' }}>New Solfa Score</div>
+                    <div style={{ fontSize:10.5, color:'#6b7280', marginTop:2 }}>Choral tonic sol-fa notation</div>
                   </div>
                 </button>
 
@@ -818,6 +864,7 @@ export default function HomeScreen({ onOpenEditor, user, onSignOut }) {
                           {score.title || 'Untitled Score'}
                         </div>
                         <div style={{ fontSize:11, color:'#9ca3af', marginTop:3, display:'flex', alignItems:'center', gap:6 }}>
+                          {score?.type === 'solfa' && <span style={{fontSize:9,fontWeight:700,padding:'1px 5px',borderRadius:3,background:'#fef3c7',color:'#92400e'}}>SOLFA</span>}
                           {cloudId && <span title="Saved to cloud">☁</span>}
                           {timeAgo(ts)}
                         </div>
@@ -846,11 +893,25 @@ export default function HomeScreen({ onOpenEditor, user, onSignOut }) {
             ) : (
               <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
                 {/* New score row in list */}
-                <button onClick={()=>setWizard(true)} style={{ display:'flex', alignItems:'center', gap:14, padding:'13px 16px', border:'1px dashed #d1d5db', borderRadius:9, background:'white', cursor:'pointer', transition:'all 0.15s' }}
-                  onMouseEnter={e=>e.currentTarget.style.borderColor='#6366f1'}
-                  onMouseLeave={e=>e.currentTarget.style.borderColor='#d1d5db'}>
-                  <div style={{ width:42,height:42,borderRadius:8,background:'#f3f4f6',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,color:'#9ca3af',flexShrink:0 }}>+</div>
-                  <span style={{ fontSize:13.5, fontWeight:600, color:'#374151' }}>New score</span>
+                {/* New Staff Score */}
+                <button onClick={()=>setWizard(true)} style={{ display:'flex', alignItems:'center', gap:14, padding:'12px 16px', border:'1px dashed #d1d5db', borderRadius:9, background:'white', cursor:'pointer', transition:'all 0.15s' }}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor='#2563eb';e.currentTarget.style.background='#eff6ff'}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor='#d1d5db';e.currentTarget.style.background='white'}}>
+                  <div style={{ width:38,height:38,borderRadius:8,background:'#eff6ff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,flexShrink:0 }}>♩</div>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:700, color:'#1e2433' }}>New Staff Score</div>
+                    <div style={{ fontSize:11, color:'#6b7280' }}>Standard music notation</div>
+                  </div>
+                </button>
+                {/* New Solfa Score */}
+                <button onClick={()=>setSolfaWizard(true)} style={{ display:'flex', alignItems:'center', gap:14, padding:'12px 16px', border:'1px dashed #d1d5db', borderRadius:9, background:'white', cursor:'pointer', transition:'all 0.15s' }}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor='#d97706';e.currentTarget.style.background='#fffbeb'}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor='#d1d5db';e.currentTarget.style.background='white'}}>
+                  <div style={{ width:38,height:38,borderRadius:8,background:'#fef3c7',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontFamily:'"Times New Roman",serif',fontWeight:700,color:'#92400e',flexShrink:0 }}>d·r·m</div>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:700, color:'#1e2433' }}>New Solfa Score</div>
+                    <div style={{ fontSize:11, color:'#6b7280' }}>Choral tonic sol-fa notation</div>
+                  </div>
                 </button>
                 {recent.map(({key,score,ts,cloudId})=>(
                   <div key={key} style={{ display:'flex', alignItems:'center', gap:14, padding:'11px 16px', border:'1px solid #e5e7eb', borderRadius:9, background:'white', transition:'all 0.15s', boxShadow:'0 1px 2px rgba(0,0,0,0.05)' }}
@@ -887,6 +948,7 @@ export default function HomeScreen({ onOpenEditor, user, onSignOut }) {
       </div>
 
       {wizard && <Wizard onDone={handleWizardDone} onCancel={()=>setWizard(false)}/>}
+      {solfaWizard && <SolfaWizard onDone={handleSolfaWizardDone} onCancel={()=>setSolfaWizard(false)}/>}
     </div>
   )
 }
