@@ -61,6 +61,44 @@ export const VOICE_COMBOS = {
 
 function uid() { return crypto.randomUUID() }
 
+// ── MIGRATION: old notes[] → new beats[] ─────────────────────────────────────
+// Converts a measure in the old format ({ notes:[] }) to the new format ({ beats:[] }).
+// Called defensively whenever we load or display a measure.
+export function migrateMeasure(measure) {
+  if (!measure) return makeEmptyMeasure(4)
+  // Already new format
+  if (Array.isArray(measure.beats)) return measure
+  // Old format had measure.notes[] with { beatPos, duration, type, syllable, octave, lyric }
+  const top = measure.timeSignature?.beats || 4
+  const beats = Array.from({length: top}, (_, bi) => {
+    const beat = makeBeat(1)
+    // Find note(s) that start in this beat slot
+    const noteHere = (measure.notes||[]).find(n => Math.abs(Math.floor(n.beatPos) - bi) < 0.01)
+    if (noteHere && noteHere.type !== 'rest') {
+      beat.slots[0] = {
+        id: uid(),
+        type: noteHere.type,
+        syllable: noteHere.syllable || null,
+        octave: noteHere.octave || 0,
+        lyric: noteHere.lyric || null,
+      }
+    }
+    return beat
+  })
+  return { ...measure, beats }
+}
+
+export function migrateScore(score) {
+  if (!score) return buildEmptySolfaScore()
+  return {
+    ...score,
+    parts: (score.parts || []).map(p => ({
+      ...p,
+      measures: (p.measures || []).map(m => migrateMeasure(m)),
+    })),
+  }
+}
+
 // A single rhythmic slot (one subdivision within a beat)
 function makeSlot(type='rest') {
   return { id:uid(), type, syllable:null, octave:0, lyric:null }
@@ -124,7 +162,7 @@ export function slashPositions(beats, beatType) {
 
 // ── STORE ────────────────────────────────────────────────────────────────────
 export const useSolfaStore = create((set,get) => ({
-  score:              buildEmptySolfaScore(),
+  score:              buildEmptySolfaScore(),   // always new beats[] format
   selectedPartId:     null,
   selectedMeasureIdx: null,
   selectedBeatIdx:    null,   // which beat (0-based)
@@ -141,10 +179,13 @@ export const useSolfaStore = create((set,get) => ({
   setInputMode:      m => set({inputMode:m}),
   setSelectedOctave: o => set({selectedOctave:o}),
 
-  loadScore: score => set({
-    score, selectedPartId:score.parts[0]?.id??null,
-    selectedMeasureIdx:null, selectedBeatIdx:null, selectedSlotIdx:null,
-  }),
+  loadScore: rawScore => {
+    const score = migrateScore(rawScore)
+    set({
+      score, selectedPartId:score.parts[0]?.id??null,
+      selectedMeasureIdx:null, selectedBeatIdx:null, selectedSlotIdx:null,
+    })
+  },
 
   // ── selection ─────────────────────────────────────────────────────────────
   selectSlot: (partId, measureIdx, beatIdx, slotIdx) => set({

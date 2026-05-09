@@ -342,14 +342,14 @@ export default function SolfaApp({user, onGoHome}) {
 
           <button onClick={()=>doSubdivide(2)} title="Split into 2 halves: d. and .d (key 2)"
             style={{...abtn(currentSubdivision===2),minWidth:52,
-              fontFamily:'"Times New Roman",serif',fontSize:12,letterSpacing:1}}>
-            d.·.d
+              fontFamily:'"Times New Roman",serif',fontSize:13}}>
+            d.d
           </button>
 
           <button onClick={()=>doSubdivide(4)} title="Split into 4 quarters: d, ,d ,,d ,,,d (key 4)"
             style={{...abtn(currentSubdivision===4),minWidth:52,
-              fontFamily:'"Times New Roman",serif',fontSize:12,letterSpacing:1}}>
-            d,·,d
+              fontFamily:'"Times New Roman",serif',fontSize:13}}>
+            d,d
           </button>
         </div>
 
@@ -400,7 +400,7 @@ export default function SolfaApp({user, onGoHome}) {
         display:'flex',gap:14,flexWrap:'wrap',alignItems:'center'}}>
         <strong>How to enter notes:</strong>
         <span>1. Click a beat to select it</span>
-        <span>2. Choose beat split: <strong>d</strong>=whole · <strong>d.·.d</strong>=halves · <strong>d,·,d</strong>=quarters</span>
+        <span>2. Choose beat split: <strong>d</strong>=whole · <strong>d.d</strong>=halves · <strong>d,d</strong>=quarters</span>
         <span>3. Click the slot you want, then type <strong>d r m f s l t</strong></span>
         <span>4. Cursor auto-advances. Skip a slot with <kbd style={{background:'white',border:'1px solid #bbf7d0',padding:'0 3px',borderRadius:2}}>Space</kbd></span>
         <span style={{marginLeft:8}}><kbd style={{background:'white',border:'1px solid #bbf7d0',padding:'0 3px',borderRadius:2}}>← →</kbd> navigate · <kbd style={{background:'white',border:'1px solid #bbf7d0',padding:'0 3px',borderRadius:2}}>↑ ↓</kbd> change voice</span>
