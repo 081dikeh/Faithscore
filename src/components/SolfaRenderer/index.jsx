@@ -1,34 +1,23 @@
 // src/components/SolfaRenderer/index.jsx
 // FaithScore Solfa Renderer
 //
-// RENDERING EXACTLY AS IN THE HANDWRITTEN SAMPLES:
+// NOTATION (matching handwritten samples exactly):
 //
-// 1. BEAT SEPARATOR ":"
-//    Written BEFORE each beat starting from beat 2.
-//    So beat 1 has no prefix, beat 2 gets ":", beat 3 gets ":", etc.
-//    4/4 whole beats: "d :r :m :f"
+//  d :r / :m :f       4/4 — colon before each beat, slash at midpoint
+//  d.r :m :f          beat 1 split into 2 halves with dot connector
+//  d,r,m,f :s :l :t   beat 1 split into 4 quarters with comma connector
+//  d. , :r            beat 1 is 3/4 beat (half+quarter): "d. ," 
+//                     slot 0=half (d.), slot 1=quarter (,)
 //
-// 2. SLOT CONNECTOR within a beat
-//    subdivision=2 (halves): slots joined by "."  →  "d.r"
-//    subdivision=3 (thirds): slots joined by ","  →  "d,r,m"
-//    subdivision=4 (quarters): slots joined by "," →  "d,r,m,f"
-//    The connector is drawn BETWEEN slots, not before or after.
+//  SLASH "/" position:
+//    - Stored in slashSet as the beat index AFTER which the slash appears.
+//    - When rendering beat bi, IF slashSet.has(bi-1) THEN use "/" ELSE use ":"
+//    - 4/4: slashSet={1} → slash before beat idx 2 (the 3rd beat)
+//      Result: d :r / :m :f  ✓
 //
-// 3. SLASH "/" mid-bar visual separator
-//    Appears INSTEAD of ":" at specific beat boundaries per time sig.
-//    4/4: d :r / :m :f     (slash at beat boundary after beat 2, idx 1)
-//    Note: slash replaces the ":" at that position.
-//    From the Exultet sample: "s,:l,:d :d :t, :d :r" — the commas connect
-//    sub-notes WITHIN a beat, the colons separate BEATS.
-//
-// 4. OCTAVE marks: small superscript/subscript number RIGHT of syllable
-//    octave=1 → d¹    octave=-1 → d₁
-//    octave=2 → d²    octave=-2 → d₂
-//
-// 5. REST: small "–" dash (as seen in samples: "d :- :-")
-//    Sustain/hold: also "–"
-//
-// 6. LYRIC: always on ruled underline below each voice row, click to edit
+//  LYRIC INPUT:
+//    Click the underline below any note slot → inline text input appears.
+//    Press Enter or Tab to confirm, Escape to cancel.
 
 import { useRef, useEffect, useState } from 'react'
 import { useSolfaStore, slashPositions, slotConnector, migrateMeasure } from '../../store/solfaStore'
@@ -38,12 +27,12 @@ const FONT     = '"Times New Roman", Georgia, serif'
 const NOTE_SZ  = 14
 const OCT_SZ   = 8
 const LYRIC_SZ = 10
-const CON_SZ   = 11   // connector (. or ,) font size
+const CON_SZ   = 11
 
-const ROW_H    = 26   // px from note baseline to next row's top
-const LYRIC_H  = 17   // px for lyric area
-const VOICE_G  = 5    // px gap between voice blocks
-const SYS_GAP  = 46   // px between systems
+const ROW_H    = 26
+const LYRIC_H  = 17
+const VOICE_G  = 5
+const SYS_GAP  = 46
 const BRAK_W   = 10
 const LABEL_W  = 26
 const PAGE_L   = 36
@@ -51,44 +40,48 @@ const PAGE_R   = 20
 const HDR_H    = 44
 const VOICE_H  = ROW_H + LYRIC_H + VOICE_G
 
-// Pixel widths
-const NOTE_W   = 18   // one syllable cell
-const OCT_W    = 6    // octave number width
-const CON_W    = 7    // connector (. or ,) width
-const COLON_W  = 9    // ":" beat separator width
-const SLASH_W  = 9    // "/" mid-bar separator width
-const PAD      = 8    // bar left+right padding each side
+const NOTE_W   = 18   // syllable cell
+const OCT_W    = 5    // space for octave mark right of syllable
+const CON_W    = 6    // connector (. or ,) between slots
+const COLON_W  = 9    // ":" separator
+const SLASH_W  = 10   // "/" separator
+const PAD      = 8    // bar padding each side
 
 const C = {
-  ink:'#111827', hold:'#6b7280', rest:'#9ca3af',
+  ink:'#111827', hold:'#6b7280', rest:'#aab0bc',
   sel:'#1d4ed8', selBg:'rgba(29,78,216,0.10)',
   barline:'#1f2937', bracket:'#1f2937', label:'#1e3a8a',
-  lyric:'#1f2937', lyricRul:'#b0b8c8', voiceSep:'#e5e7eb',
-  colon:'#374151', slash:'#9ca3af', connector:'#374151',
+  lyric:'#374151', lyricRul:'#b0b8c8', voiceSep:'#e5e7eb',
+  colon:'#4b5563', slash:'#9ca3af', connector:'#374151',
   mBgAlt:'#f8f9fa',
 }
 
-// ── WIDTH CALCULATIONS ────────────────────────────────────────────────────────
-// Width of one beat (all its slots + connectors between them)
-// Each slot = NOTE_W + OCT_W (for octave mark space, whether used or not)
-// Connectors between slots (subdivision-1 of them)
+// Width of one slot cell (note + space for octave mark)
+const SLOT_W = NOTE_W + OCT_W
+
+// Width of a beat: slots + connectors between them
+// specialSub='3q': 2 slots but first is double-width (half+quarter = 2+1 units)
 function beatWidth(beat) {
-  const sub = beat?.subdivision || 1
-  const slotW = NOTE_W + OCT_W
-  const connectors = (sub - 1) * CON_W
-  return sub * slotW + connectors
+  if (!beat) return SLOT_W
+  const sub = beat.subdivision||1
+  if (beat.specialSub==='3q') {
+    // 2 slots: [half-slot=NOTE_W*2+OCT_W, quarter-slot=NOTE_W+OCT_W], 1 connector
+    return (NOTE_W*2+OCT_W) + CON_W + SLOT_W
+  }
+  return sub*SLOT_W + Math.max(0,sub-1)*CON_W
 }
 
 // Width of one measure
 function measureWidth(measure, slashSet) {
-  if (!measure?.beats) return PAD*2 + (NOTE_W+OCT_W)*4 + COLON_W*3
-  const nb = measure.beats.length
-  let w = PAD * 2
-  for (let bi=0; bi<nb; bi++) {
-    w += beatWidth(measure.beats[bi])
-    if (bi < nb-1) {
-      // separator after this beat
-      w += slashSet.has(bi) ? SLASH_W : COLON_W
+  if (!measure?.beats) return PAD*2 + SLOT_W*4 + COLON_W*3
+  const nb=measure.beats.length
+  let w=PAD*2
+  for (let bi=0;bi<nb;bi++) {
+    w+=beatWidth(measure.beats[bi])
+    if (bi<nb-1) {
+      // The separator AFTER beat bi:
+      // slash if slashSet contains bi (slash appears AFTER beat index bi)
+      w+=slashSet.has(bi)?SLASH_W:COLON_W
     }
   }
   return w
@@ -111,6 +104,86 @@ function InlineLyricEditor({x,y,w,value,onCommit,onCancel}) {
         onBlur={e=>onCommit(e.target.value)}
       />
     </foreignObject>
+  )
+}
+
+// ── RENDER ONE SLOT ───────────────────────────────────────────────────────────
+function renderSlot({slot, x, y, w, isSel, partId, col, bi, si,
+                     selectSlot, onSelectSlot, setLyricEdit, elems, slotKey}) {
+  const isNote=slot.type==='note'
+  const isHold=slot.type==='sustain'
+  const isRest=slot.type==='rest'
+  const cx=x+w/2
+  const ink=isSel?C.sel:isNote?C.ink:isHold?C.hold:C.rest
+  const lyricY=y+ROW_H+LYRIC_H-5
+
+  // Selection highlight
+  if (isSel) elems.push(
+    <rect key={`sel-${slotKey}`} x={x-1} y={y-NOTE_SZ-2} width={w+2} height={NOTE_SZ+5}
+      fill={C.selBg} rx={2}/>
+  )
+
+  // Invisible click target (always full size for easy clicking)
+  elems.push(
+    <rect key={`hit-${slotKey}`} x={x} y={y-NOTE_SZ-2} width={w} height={NOTE_SZ+5}
+      fill="transparent" style={{cursor:'pointer'}}
+      onClick={()=>{selectSlot(partId,col,bi,si);onSelectSlot?.(partId,col,bi,si);}}
+    />
+  )
+
+  // Syllable / hold / rest
+  if (isNote) {
+    elems.push(
+      <text key={`n-${slotKey}`} x={cx} y={y} textAnchor="middle"
+        fontFamily={FONT} fontSize={NOTE_SZ} fontWeight={isSel?700:400} fill={ink}
+        style={{cursor:'pointer',pointerEvents:'none'}}>
+        {slot.syllable||'?'}
+      </text>
+    )
+  } else {
+    // Hold and rest both render as "–", rest is lighter
+    elems.push(
+      <text key={`d-${slotKey}`} x={cx} y={y} textAnchor="middle"
+        fontFamily={FONT} fontSize={NOTE_SZ} fill={ink}
+        style={{cursor:'pointer',pointerEvents:'none'}}>
+        –
+      </text>
+    )
+  }
+
+  // Octave mark
+  if (isNote&&slot.octave!==0) {
+    const octX=x+NOTE_W
+    const octY=slot.octave>0?y-NOTE_SZ+2:y+3
+    elems.push(
+      <text key={`oct-${slotKey}`} x={octX} y={octY}
+        textAnchor="start" fontFamily={FONT} fontSize={OCT_SZ} fontWeight={700}
+        fill={isSel?C.sel:C.ink}
+        dominantBaseline={slot.octave>0?'auto':'hanging'}
+        style={{pointerEvents:'none'}}>
+        {Math.abs(slot.octave)}
+      </text>
+    )
+  }
+
+  // Lyric text — click to edit
+  elems.push(
+    <text key={`ly-${slotKey}`} x={cx} y={lyricY} textAnchor="middle"
+      fontFamily={FONT} fontSize={LYRIC_SZ} fill={C.lyric} style={{cursor:'text'}}
+      onClick={e=>{
+        e.stopPropagation()
+        setLyricEdit({partId,measureIdx:col,beatIdx:bi,slotIdx:si,
+          x,y:lyricY,w,current:slot.lyric||''})
+      }}>
+      {slot.lyric||''}
+    </text>
+  )
+
+  // Lyric underline (always visible — shows it's clickable)
+  elems.push(
+    <line key={`lu-${slotKey}`}
+      x1={x} y1={lyricY+2} x2={x+w} y2={lyricY+2}
+      stroke={C.lyricRul} strokeWidth={0.5}/>
   )
 }
 
@@ -139,10 +212,10 @@ export default function SolfaRenderer({onSelectSlot}) {
   const numM     = Math.max(...parts.map(p=>p.measures.length),1)
   const topNum   = score.timeSignature?.beats||4
   const botNum   = score.timeSignature?.beatType||4
+  // slashSet: Set of beat indices AFTER which "/" appears
   const slashSet = slashPositions(topNum,botNum)
 
-  // Compute raw measure widths
-  const rawMWs = Array.from({length:numM},(_,i)=>{
+  const rawMWs=Array.from({length:numM},(_,i)=>{
     const m=migrateMeasure(parts[0]?.measures[i])
     return measureWidth(m,slashSet)
   })
@@ -150,7 +223,6 @@ export default function SolfaRenderer({onSelectSlot}) {
   const leftEdge  = PAGE_L+BRAK_W+LABEL_W
   const available = svgW-leftEdge-PAGE_R
 
-  // Line-break into systems
   const lines=(()=>{
     const ls=[]; let start=0
     while(start<numM){
@@ -166,13 +238,13 @@ export default function SolfaRenderer({onSelectSlot}) {
     return ls
   })()
 
-  const systemH = parts.length*VOICE_H+SYS_GAP
-  const totalH  = HDR_H+lines.length*systemH+40
+  const systemH=parts.length*VOICE_H+SYS_GAP
+  const totalH  =HDR_H+lines.length*systemH+40
 
   const elems=[]
   let sysY=HDR_H+20
 
-  // Header
+  // ── Header ─────────────────────────────────────────────────────────────────
   elems.push(
     <g key="hdr">
       <text x={PAGE_L} y={HDR_H-8} fontFamily={FONT} fontSize={13}
@@ -188,8 +260,7 @@ export default function SolfaRenderer({onSelectSlot}) {
     const isLast   = lineIdx===lines.length-1
     const lineScale= (!isLast&&totalRaw<available&&totalRaw>0)?available/totalRaw:1
 
-    const colXs=[]
-    let cx=leftEdge
+    const colXs=[]; let cx=leftEdge
     lineCols.forEach(c=>{colXs.push(cx);cx+=rawMWs[c]*lineScale})
 
     const lineTop    = sysY-NOTE_SZ-4
@@ -203,18 +274,13 @@ export default function SolfaRenderer({onSelectSlot}) {
         <line x1={PAGE_L+2} y1={lineBottom} x2={PAGE_L+BRAK_W+2} y2={lineBottom} stroke={C.bracket} strokeWidth={2}   strokeLinecap="round"/>
       </g>
     )
-
-    // Opening barline
     elems.push(<line key={`obar-${lineIdx}`} x1={leftEdge} y1={lineTop} x2={leftEdge} y2={lineBottom} stroke={C.barline} strokeWidth={1.5}/>)
-
-    // Measure number
     elems.push(<text key={`mnum-${lineIdx}`} x={leftEdge+2} y={lineTop-2} fontFamily={FONT} fontSize={9} fill="#9ca3af">{lineCols[0]+1}</text>)
 
-    // Each voice
+    // ── Each voice ────────────────────────────────────────────────────────────
     parts.forEach((part,pIdx)=>{
       const rowY=sysY+pIdx*VOICE_H
 
-      // Voice label
       elems.push(
         <text key={`lbl-${lineIdx}-${pIdx}`} x={PAGE_L+BRAK_W+2} y={rowY}
           fontFamily={FONT} fontSize={12} fontWeight={700} fill={C.label}>
@@ -222,12 +288,11 @@ export default function SolfaRenderer({onSelectSlot}) {
         </text>
       )
 
-      // Each measure
       lineCols.forEach((col,ci)=>{
-        const measure   = migrateMeasure(part.measures[col])
-        const scaledMW  = rawMWs[col]*lineScale
-        const rawW      = measureWidth(measure,slashSet)
-        const sc        = scaledMW/rawW
+        const measure  = migrateMeasure(part.measures[col])
+        const scaledMW = rawMWs[col]*lineScale
+        const rawW     = measureWidth(measure,slashSet)
+        const sc       = scaledMW/rawW
 
         // Alternating measure background
         if (col%2!==0) {
@@ -239,19 +304,20 @@ export default function SolfaRenderer({onSelectSlot}) {
           )
         }
 
-        // Render measure content
         let x=colXs[ci]+PAD*sc
 
         measure.beats.forEach((beat,bi)=>{
-          const sub      = beat.subdivision||1
-          const connector= slotConnector(sub)
-          const slotW    = (NOTE_W+OCT_W)*sc
-          const conW     = CON_W*sc
+          const sub       = beat.subdivision||1
+          const is3q      = beat.specialSub==='3q'
+          const connector = slotConnector(sub)
 
-          // ── Beat separator (: or /) before this beat (except beat 0) ────
+          // ── Beat separator ":"  or  "/" ──────────────────────────────────
+          // The separator is placed BEFORE beat bi (for bi>0).
+          // It's a "/" if slashSet contains the PREVIOUS beat index (bi-1).
+          // Because slashSet stores: "slash appears AFTER beat index X" = before beat X+1.
           if (bi>0) {
-            const isSlash = slashSet.has(bi-1)  // slash is AFTER the previous beat (bi-1)
-            const sepChar = isSlash ? '/' : ':'
+            // slash appears AFTER beat (bi-1), i.e., BEFORE beat bi
+            const isSlash = slashSet.has(bi-1)
             const sepW    = (isSlash?SLASH_W:COLON_W)*sc
             elems.push(
               <text key={`sep-${lineIdx}-${pIdx}-${col}-${bi}`}
@@ -259,8 +325,9 @@ export default function SolfaRenderer({onSelectSlot}) {
                 textAnchor="middle" fontFamily={FONT}
                 fontSize={NOTE_SZ}
                 fill={isSlash?C.slash:C.colon}
-                opacity={isSlash?0.5:1}>
-                {sepChar}
+                opacity={isSlash?0.55:1}
+                style={{pointerEvents:'none'}}>
+                {isSlash?'/':':'}
               </text>
             )
             x+=sepW
@@ -269,140 +336,46 @@ export default function SolfaRenderer({onSelectSlot}) {
           // ── Slots within this beat ───────────────────────────────────────
           beat.slots.forEach((slot,si)=>{
             const isSel=(
-              part.id===selectedPartId &&
-              col===selectedMeasureIdx &&
-              bi===selectedBeatIdx &&
+              part.id===selectedPartId&&
+              col===selectedMeasureIdx&&
+              bi===selectedBeatIdx&&
               si===selectedSlotIdx
             )
 
-            const noteX = x
-            const noteW = NOTE_W*sc
-            const isNote    = slot.type==='note'
-            const isHold    = slot.type==='sustain'
-            const isRest    = slot.type==='rest'
-            const ink       = isSel?C.sel:isNote?C.ink:isHold?C.hold:C.rest
-            const cx2       = noteX+noteW/2
-            const lyricY    = rowY+ROW_H+LYRIC_H-5
-
-            // Selection highlight
-            if (isSel) {
-              elems.push(
-                <rect key={`sel-${slot.id}`}
-                  x={noteX-1} y={rowY-NOTE_SZ-2}
-                  width={noteW+2} height={NOTE_SZ+5}
-                  fill={C.selBg} rx={2}/>
-              )
-            }
-
-            // Syllable / hold / rest
-            if (isNote) {
-              elems.push(
-                <text key={`n-${slot.id}`}
-                  x={cx2} y={rowY}
-                  textAnchor="middle" fontFamily={FONT}
-                  fontSize={NOTE_SZ} fontWeight={isSel?700:400}
-                  fill={ink}
-                  onClick={()=>{
-                    selectSlot(part.id,col,bi,si)
-                    onSelectSlot?.(part.id,col,bi,si)
-                    setLyricEdit(null)
-                  }}
-                  style={{cursor:'pointer'}}>
-                  {slot.syllable||'?'}
-                </text>
-              )
-            } else if (isHold) {
-              elems.push(
-                <text key={`h-${slot.id}`}
-                  x={cx2} y={rowY}
-                  textAnchor="middle" fontFamily={FONT}
-                  fontSize={NOTE_SZ} fill={C.hold}
-                  onClick={()=>{selectSlot(part.id,col,bi,si);onSelectSlot?.(part.id,col,bi,si)}}
-                  style={{cursor:'pointer'}}>
-                  –
-                </text>
-              )
+            // 3q beat: slot 0 is a half-slot (wider), slot 1 is a quarter-slot
+            let slotDisplayW
+            if (is3q) {
+              slotDisplayW = si===0 ? (NOTE_W*2+OCT_W)*sc : SLOT_W*sc
             } else {
-              // Rest: small dash, lighter
-              elems.push(
-                <text key={`r-${slot.id}`}
-                  x={cx2} y={rowY}
-                  textAnchor="middle" fontFamily={FONT}
-                  fontSize={NOTE_SZ} fill={C.rest}
-                  onClick={()=>{selectSlot(part.id,col,bi,si);onSelectSlot?.(part.id,col,bi,si)}}
-                  style={{cursor:'pointer'}}>
-                  –
-                </text>
-              )
+              slotDisplayW = SLOT_W*sc
             }
 
-            // Invisible click target (makes empty slots selectable)
-            elems.push(
-              <rect key={`hit-${slot.id}`}
-                x={noteX} y={rowY-NOTE_SZ-2}
-                width={noteW} height={NOTE_SZ+5}
-                fill="transparent"
-                style={{cursor:'pointer'}}
-                onClick={()=>{
-                  selectSlot(part.id,col,bi,si)
-                  onSelectSlot?.(part.id,col,bi,si)
-                  setLyricEdit(null)
-                }}
-              />
-            )
+            // For narrow slots (3q slot 1), center the note
+            const noteW = Math.min(slotDisplayW, SLOT_W*sc)
 
-            // Octave mark (superscript or subscript)
-            if (isNote&&slot.octave!==0) {
-              const octX = noteX+noteW
-              const octY = slot.octave>0 ? rowY-NOTE_SZ+2 : rowY+3
-              const domBase = slot.octave>0 ? 'auto' : 'hanging'
+            renderSlot({
+              slot, x, y:rowY, w:slotDisplayW,
+              isSel, partId:part.id, col, bi, si,
+              selectSlot, onSelectSlot, setLyricEdit, elems,
+              slotKey:`${lineIdx}-${pIdx}-${col}-${bi}-${si}`,
+            })
+
+            x+=slotDisplayW
+
+            // Connector between slots (not after last slot)
+            if (si<beat.slots.length-1) {
+              const conW=CON_W*sc
+              // For 3q: use ". ," notation (dot after half, comma before quarter)
+              // slot 0→1: dot after = ".", slot 1→2: not applicable (only 2 slots)
+              const conChar = is3q ? (si===0?'.':',') : connector
+              const conY    = conChar==='.'?rowY-4:rowY
               elems.push(
-                <text key={`oct-${slot.id}`}
-                  x={octX} y={octY}
-                  textAnchor="start" fontFamily={FONT}
-                  fontSize={OCT_SZ} fontWeight={700}
-                  fill={isSel?C.sel:C.ink}
-                  dominantBaseline={domBase}>
-                  {Math.abs(slot.octave)}
-                </text>
-              )
-            }
-
-            // Lyric text
-            elems.push(
-              <text key={`ly-${slot.id}`}
-                x={cx2} y={lyricY}
-                textAnchor="middle" fontFamily={FONT}
-                fontSize={LYRIC_SZ} fill={C.lyric}
-                style={{cursor:'text'}}
-                onClick={e=>{
-                  e.stopPropagation()
-                  setLyricEdit({
-                    partId:part.id, measureIdx:col, beatIdx:bi, slotIdx:si,
-                    x:noteX, y:lyricY, w:noteW, current:slot.lyric||'',
-                  })
-                }}>
-                {slot.lyric||''}
-              </text>
-            )
-
-            // Lyric underline (always visible — shows where to click)
-            elems.push(
-              <line key={`lu-${slot.id}`}
-                x1={noteX} y1={lyricY+2} x2={noteX+noteW} y2={lyricY+2}
-                stroke={C.lyricRul} strokeWidth={0.5}/>
-            )
-
-            x+=slotW
-
-            // Connector between slots (. or ,) — not after last slot
-            if (si<sub-1) {
-              elems.push(
-                <text key={`con-${slot.id}`}
-                  x={x+conW/2} y={connector==='.'?rowY-4:rowY}
+                <text key={`con-${lineIdx}-${pIdx}-${col}-${bi}-${si}`}
+                  x={x+conW/2} y={conY}
                   textAnchor="middle" fontFamily={FONT}
-                  fontSize={CON_SZ} fill={C.connector} fontWeight={600}>
-                  {connector}
+                  fontSize={CON_SZ} fill={C.connector} fontWeight={600}
+                  style={{pointerEvents:'none'}}>
+                  {conChar}
                 </text>
               )
               x+=conW
