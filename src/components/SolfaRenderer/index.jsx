@@ -53,9 +53,9 @@ const C = {
 // Prefix string for event starting at quarter-unit `offset` within its beat
 function getPrefix(offset) {
   if (offset===0) return ''
-  if (offset===1) return ','
-  if (offset===2) return '.'
-  if (offset===3) return '.,,'
+  if (offset===1) return ''
+  if (offset===2) return ''
+  if (offset===3) return ''
   return ''
 }
 
