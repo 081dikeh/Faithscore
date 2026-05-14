@@ -1,9 +1,35 @@
 // src/components/SolfaApp/index.jsx
 // FaithScore — Solfa Editor
+//
+// HOW INPUT WORKS (duration-based model):
+//
+// 1. Click any beat on the score to select it (turns blue).
+//    Each beat starts as a single rest (blank).
+//
+// 2. Choose the DURATION of the note you want to enter:
+//      ● 4 = whole beat (d)
+//      ● 3 = 3/4 beat   (d.,)
+//      ● 2 = half beat  (d.)
+//      ● 1 = quarter    (d,)
+//
+// 3. Type a syllable key: d r m f s l t  OR click the syllable button.
+//    The note is placed at the current cursor position within the beat.
+//    The cursor advances by the note's duration automatically.
+//
+// 4. If there is space left in the beat, typing another note fills the rest.
+//    Example: duration=3 then duration=1 fills a whole beat (3+1=4).
+//
+// 5. To leave a space (rest): press Space or click ○ Rest.
+//    To sustain previous note: press – or click – Hold.
+//
+// CHANGING AN EXISTING NOTE'S DURATION:
+//   Select the event (click it), then press 1/2/3/4 to change its duration.
+//   The remaining space in the beat is adjusted automatically.
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import SolfaRenderer from '../SolfaRenderer'
-import { useSolfaStore, VOICE_COMBOS } from '../../store/solfaStore'
+import { useSolfaStore, VOICE_COMBOS, migrateMeasure } from '../../store/solfaStore'
+import { useSolfaPlayback } from '../../hooks/useSolfaPlayback'
 import { supabase } from '../../lib/supabase'
 
 const SYLLABLES = ['d','r','m','f','s','l','t']
@@ -11,28 +37,24 @@ const CHROMATIC = ['de','ri','fe','se','ta']
 const KEYS      = ['C','G','D','A','E','B','F#','Db','Ab','Eb','Bb','F']
 const OCTAVE_LEVELS = [-2,-1,0,1,2]
 
-// All supported time signatures
 const TIME_SIGS = [
-  // Simple
-  {label:'2/4',  beats:2,  beatType:4},
-  {label:'3/4',  beats:3,  beatType:4},
-  {label:'4/4',  beats:4,  beatType:4},
-  {label:'5/4',  beats:5,  beatType:4},
-  {label:'6/4',  beats:6,  beatType:4},
-  {label:'7/4',  beats:7,  beatType:4},
-  {label:'8/4',  beats:8,  beatType:4},
-  // Compound
-  {label:'3/8',  beats:3,  beatType:8},
-  {label:'5/8',  beats:5,  beatType:8},
-  {label:'6/8',  beats:6,  beatType:8},
-  {label:'7/8',  beats:7,  beatType:8},
-  {label:'8/8',  beats:8,  beatType:8},
-  {label:'9/8',  beats:9,  beatType:8},
-  {label:'12/8', beats:12, beatType:8},
-  // Cut/Half time
-  {label:'2/2',  beats:2,  beatType:2},
-  {label:'4/2',  beats:4,  beatType:2},
+  {label:'2/4',beats:2,beatType:4},{label:'3/4',beats:3,beatType:4},
+  {label:'4/4',beats:4,beatType:4},{label:'5/4',beats:5,beatType:4},
+  {label:'6/4',beats:6,beatType:4},{label:'7/4',beats:7,beatType:4},
+  {label:'8/4',beats:8,beatType:4},
+  {label:'3/8',beats:3,beatType:8},{label:'5/8',beats:5,beatType:8},
+  {label:'6/8',beats:6,beatType:8},{label:'7/8',beats:7,beatType:8},
+  {label:'8/8',beats:8,beatType:8},{label:'9/8',beats:9,beatType:8},
+  {label:'12/8',beats:12,beatType:8},
+  {label:'2/2',beats:2,beatType:2},{label:'4/2',beats:4,beatType:2},
 ]
+
+const DUR_LABELS = {
+  4: { sym:'d',    desc:'Whole beat',   hint:'d' },
+  3: { sym:'d.‚',  desc:'3/4 beat',     hint:'d.,' },
+  2: { sym:'d.',   desc:'Half beat',    hint:'d.' },
+  1: { sym:'d,',   desc:'Quarter beat', hint:'d,' },
+}
 
 function OctLabel({o}) {
   const s={fontFamily:'"Times New Roman",serif',fontSize:13,lineHeight:1}
@@ -44,114 +66,142 @@ function OctLabel({o}) {
   return null
 }
 
-export default function SolfaApp({user, onGoHome}) {
+export default function SolfaApp({user,onGoHome}) {
   const score              = useSolfaStore(s=>s.score)
   const inputMode          = useSolfaStore(s=>s.inputMode)
+  const selDuration        = useSolfaStore(s=>s.selectedDuration)
   const selOctave          = useSolfaStore(s=>s.selectedOctave)
   const selectedPartId     = useSolfaStore(s=>s.selectedPartId)
   const selectedMeasureIdx = useSolfaStore(s=>s.selectedMeasureIdx)
   const selectedBeatIdx    = useSolfaStore(s=>s.selectedBeatIdx)
-  const selectedSlotIdx    = useSolfaStore(s=>s.selectedSlotIdx)
+  const selectedEventIdx   = useSolfaStore(s=>s.selectedEventIdx)
 
-  const setInputMode   = useSolfaStore(s=>s.setInputMode)
-  const setTitle       = useSolfaStore(s=>s.setTitle)
-  const setKey         = useSolfaStore(s=>s.setKey)
-  const placeNote      = useSolfaStore(s=>s.placeNote)
-  const placeSustain   = useSolfaStore(s=>s.placeSustain)
-  const subdivideBeat  = useSolfaStore(s=>s.subdivideBeat)
-  const addMeasure     = useSolfaStore(s=>s.addMeasure)
-  const deleteMeasure  = useSolfaStore(s=>s.deleteMeasure)
-  const undo           = useSolfaStore(s=>s.undo)
-  const selectSlot     = useSolfaStore(s=>s.selectSlot)
-  const navigateSlot   = useSolfaStore(s=>s.navigateSlot)
+  const setInputMode       = useSolfaStore(s=>s.setInputMode)
+  const setSelectedDuration= useSolfaStore(s=>s.setSelectedDuration)
+  const setTitle           = useSolfaStore(s=>s.setTitle)
+  const setKey             = useSolfaStore(s=>s.setKey)
+  const placeEvent         = useSolfaStore(s=>s.placeEvent)
+  const placeSustain       = useSolfaStore(s=>s.placeSustain)
+  const changeEventDuration= useSolfaStore(s=>s.changeEventDuration)
+  const addMeasure         = useSolfaStore(s=>s.addMeasure)
+  const deleteMeasure      = useSolfaStore(s=>s.deleteMeasure)
+  const deleteEvent        = useSolfaStore(s=>s.deleteEvent)
+  const undo               = useSolfaStore(s=>s.undo)
+  const selectEvent        = useSolfaStore(s=>s.selectEvent)
+  const navigateEvent      = useSolfaStore(s=>s.navigateEvent)
 
   const setOctave=useCallback((o)=>{
     useSolfaStore.getState().setSelectedOctave(o)
     const st=useSolfaStore.getState()
     if (st.selectedPartId!==null&&st.selectedMeasureIdx!==null&&
-        st.selectedBeatIdx!==null&&st.selectedSlotIdx!==null) {
-      useSolfaStore.getState().changeSlotOctave(
+        st.selectedBeatIdx!==null&&st.selectedEventIdx!==null) {
+      useSolfaStore.getState().changeEventOctave(
         st.selectedPartId,st.selectedMeasureIdx,
-        st.selectedBeatIdx,st.selectedSlotIdx,o
+        st.selectedBeatIdx,st.selectedEventIdx,o
       )
     }
   },[])
 
-  const [showChromatic,setShowChromatic] = useState(false)
+  const {
+    play, pause, stop, seekToBeat, setTempo: setPbTempo,
+    toggleMetronome, toggleLoop,
+    getCurrentSec, getTotalSecs, getCurrentTempo,
+    setPartVolume, setPartMute, getPartVolume, getPartMuted,
+    onPlaying, onBeat,
+    isMetronomeOn, isLooping, isPaused,
+  } = useSolfaPlayback()
+
+  const [isPlaying,    setIsPlaying]    = useState(false)
+  const [playbackBeat, setPlaybackBeat] = useState(null)
+  const [metronomeOn,  setMetronomeOn]  = useState(false)
+  const [looping,      setLooping]      = useState(false)
+  const [tempoOverride,setTempoOverride]= useState('')
+  const [totalSecs,    setTotalSecs]    = useState(0)
+  const seekBarRef = useRef(null)
+
+  // Subscribe to playback events
+  useEffect(() => {
+    onPlaying(v => setIsPlaying(v))
+    onBeat(b => {
+      setPlaybackBeat(b)
+      setTotalSecs(getTotalSecs())
+    })
+  }, [])
+
+  const currentSec  = getCurrentSec()
+  const displayTempo= tempoOverride ? Number(tempoOverride) : (score.tempo||80)
   const [saving,setSaving]               = useState(false)
   const [saveMsg,setSaveMsg]             = useState('')
+  const [showChromatic,setShowChromatic] = useState(false)
+  const [showMixer,    setShowMixer]     = useState(false)
+  // partVolumes: { [partId]: number 0-100 (%) }  100=full, 0=silent
+  const [partVolumes,  setPartVolumes]   = useState({})
   const [zoom,setZoom]                   = useState(1.0)
 
-  // Current beat subdivision
-  const currentSub = (()=>{
-    if (selectedPartId===null||selectedMeasureIdx===null||selectedBeatIdx===null) return 1
+  // ── Get current beat cursor offset ────────────────────────────────────────
+  // The cursor within a beat = sum of durations of all events up to and
+  // including the selected event. This is where the NEXT note will land.
+  function getCursorOffset() {
+    if (selectedPartId===null||selectedMeasureIdx===null||selectedBeatIdx===null) return 0
     const part=score.parts.find(p=>p.id===selectedPartId)
-    const beat=part?.measures[selectedMeasureIdx]?.beats[selectedBeatIdx]
-    return beat?.specialSub==='3q' ? '3q' : beat?.subdivision||1
-  })()
-
-  // Selected slot
-  const selectedSlot=(()=>{
-    if (selectedPartId===null||selectedMeasureIdx===null||
-        selectedBeatIdx===null||selectedSlotIdx===null) return null
-    const part=score.parts.find(p=>p.id===selectedPartId)
-    return part?.measures[selectedMeasureIdx]?.beats[selectedBeatIdx]?.slots[selectedSlotIdx]||null
-  })()
-  const dispOct=selectedSlot?.type==='note'?selectedSlot.octave:selOctave
-
-  // ── Time signature change ─────────────────────────────────────────────────
-  function changeTimeSig(ts) {
-    useSolfaStore.setState(s=>{
-      const newTS={beats:ts.beats,beatType:ts.beatType}
-      const parts=s.score.parts.map(p=>({
-        ...p,
-        measures:p.measures.map(m=>{
-          const numBeats=ts.beats
-          const currentBeats=m.beats||[]
-          // Extend or trim beats to match new time sig
-          let newBeats=[...currentBeats]
-          while (newBeats.length<numBeats) {
-            newBeats.push({
-              id:crypto.randomUUID(),subdivision:1,specialSub:null,
-              slots:[{id:crypto.randomUUID(),type:'rest',syllable:null,octave:0,lyric:null}],
-            })
-          }
-          if (newBeats.length>numBeats) newBeats=newBeats.slice(0,numBeats)
-          return {...m,timeSignature:newTS,beats:newBeats}
-        }),
-      }))
-      return {score:{...s.score,timeSignature:newTS,parts}}
-    })
+    const beat=migrateMeasure(part?.measures[selectedMeasureIdx])?.beats[selectedBeatIdx]
+    if (!beat?.events) return 0
+    let offset=0
+    for (let i=0;i<beat.events.length;i++) {
+      if (i===(selectedEventIdx??0)) return offset
+      offset+=beat.events[i].duration
+    }
+    return offset
   }
 
-  function doSubdivide(newSub,specialSub=null) {
+  // ── Selected event info ────────────────────────────────────────────────────
+  const selectedEvent=(()=>{
+    if (selectedPartId===null||selectedMeasureIdx===null||
+        selectedBeatIdx===null||selectedEventIdx===null) return null
+    const part=score.parts.find(p=>p.id===selectedPartId)
+    const beat=migrateMeasure(part?.measures[selectedMeasureIdx])?.beats[selectedBeatIdx]
+    return beat?.events?.[selectedEventIdx]||null
+  })()
+  const dispOct=selectedEvent?.type==='note'?selectedEvent.octave:selOctave
+  const dispDur=selectedEvent?selectedEvent.duration:selDuration
+
+  // ── Insert note at current cursor ──────────────────────────────────────────
+  function doInsert(syllable) {
     if (selectedPartId===null||selectedMeasureIdx===null||selectedBeatIdx===null) return
-    subdivideBeat(selectedPartId,selectedMeasureIdx,selectedBeatIdx,newSub,specialSub)
-    selectSlot(selectedPartId,selectedMeasureIdx,selectedBeatIdx,0)
-  }
-
-  function doInsert(syl) {
-    if (selectedPartId===null||selectedMeasureIdx===null||
-        selectedBeatIdx===null||selectedSlotIdx===null) return
-    placeNote(selectedPartId,selectedMeasureIdx,selectedBeatIdx,selectedSlotIdx,syl)
-    setTimeout(()=>navigateSlot('right'),0)
-  }
-
-  function doSustain() {
-    if (selectedPartId===null||selectedMeasureIdx===null||
-        selectedBeatIdx===null||selectedSlotIdx===null) return
-    placeSustain(selectedPartId,selectedMeasureIdx,selectedBeatIdx,selectedSlotIdx)
-    setTimeout(()=>navigateSlot('right'),0)
+    const offset=getCursorOffset()
+    const st=useSolfaStore.getState()
+    placeEvent(selectedPartId,selectedMeasureIdx,selectedBeatIdx,offset,syllable,st.selectedDuration)
+    // After placing, advance selection to next event
+    setTimeout(()=>navigateEvent('right'),0)
   }
 
   function doRest() {
-    if (selectedPartId===null||selectedMeasureIdx===null||
-        selectedBeatIdx===null||selectedSlotIdx===null) return
-    placeNote(selectedPartId,selectedMeasureIdx,selectedBeatIdx,selectedSlotIdx,null)
-    setTimeout(()=>navigateSlot('right'),0)
+    if (selectedPartId===null||selectedMeasureIdx===null||selectedBeatIdx===null) return
+    const offset=getCursorOffset()
+    const st=useSolfaStore.getState()
+    // Place a rest event (type='rest', no syllable)
+    placeEvent(selectedPartId,selectedMeasureIdx,selectedBeatIdx,offset,null,st.selectedDuration)
+    setTimeout(()=>navigateEvent('right'),0)
   }
 
-  // ── Keyboard ──────────────────────────────────────────────────────────────
+  function doSustain() {
+    if (selectedPartId===null||selectedMeasureIdx===null||selectedBeatIdx===null) return
+    const offset=getCursorOffset()
+    const st=useSolfaStore.getState()
+    placeSustain(selectedPartId,selectedMeasureIdx,selectedBeatIdx,offset,st.selectedDuration)
+    setTimeout(()=>navigateEvent('right'),0)
+  }
+
+  // Change duration of selected event
+  function changeDur(newDur) {
+    setSelectedDuration(newDur)
+    if (selectedPartId!==null&&selectedMeasureIdx!==null&&
+        selectedBeatIdx!==null&&selectedEventIdx!==null) {
+      changeEventDuration(selectedPartId,selectedMeasureIdx,selectedBeatIdx,selectedEventIdx,newDur)
+    }
+  }
+
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(()=>{
     const onKey=e=>{
       const tag=e.target.tagName
@@ -160,13 +210,18 @@ export default function SolfaApp({user, onGoHome}) {
       if (e.key==='Escape')          {setInputMode('select');return}
       if (e.key==='n'||e.key==='N') {setInputMode('note');  return}
       if ((e.ctrlKey||e.metaKey)&&e.key==='z'){e.preventDefault();undo();return}
+      // Space = play/pause when no beat is selected for note entry
+      if (e.key===' '&&selectedBeatIdx===null) {
+        e.preventDefault()
+        isPlaying ? pause() : play()
+        return
+      }
 
-      // Beat subdivisions
-      if (e.key==='1'){doSubdivide(1);     return}
-      if (e.key==='2'){doSubdivide(2);     return}
-      if (e.key==='3'){doSubdivide(3);     return}  // triplet/thirds
-      if (e.key==='4'){doSubdivide(4);     return}
-      if (e.key==='5'){doSubdivide(2,'3q');return}  // 3-quarter beat (half+quarter)
+      // Duration keys (change toolbar + selected event if any)
+      if (e.key==='1'){changeDur(1);return}
+      if (e.key==='2'){changeDur(2);return}
+      if (e.key==='3'){changeDur(3);return}
+      if (e.key==='4'){changeDur(4);return}
 
       // Octave
       if (e.key===','){setOctave(-1);return}
@@ -175,18 +230,38 @@ export default function SolfaApp({user, onGoHome}) {
       if (e.key==='<'){setOctave(-2);return}
       if (e.key==='>'){setOctave(2); return}
 
-      // Bar
-      if (e.key==='m'||e.key==='M')             {addMeasure();return}
-      if (e.key==='Backspace'||e.key==='Delete'){e.preventDefault();deleteMeasure();return}
+      // Delete key: remove selected EVENT (replace with rest)
+      // Backspace with no event selected: delete the bar
+      if (e.key==='Delete') {
+        e.preventDefault()
+        if (selectedPartId!==null&&selectedMeasureIdx!==null&&
+            selectedBeatIdx!==null&&selectedEventIdx!==null) {
+          deleteEvent(selectedPartId,selectedMeasureIdx,selectedBeatIdx,selectedEventIdx)
+        }
+        return
+      }
+      if (e.key==='Backspace') {
+        e.preventDefault()
+        // If an event is selected, delete just that event
+        if (selectedPartId!==null&&selectedMeasureIdx!==null&&
+            selectedBeatIdx!==null&&selectedEventIdx!==null) {
+          deleteEvent(selectedPartId,selectedMeasureIdx,selectedBeatIdx,selectedEventIdx)
+        } else {
+          // Nothing selected — delete the whole bar
+          deleteMeasure()
+        }
+        return
+      }
 
-      // Navigation
-      if (e.key==='ArrowRight'){e.preventDefault();navigateSlot('right');return}
-      if (e.key==='ArrowLeft') {e.preventDefault();navigateSlot('left'); return}
-      if (e.key==='ArrowDown') {e.preventDefault();navigateSlot('down'); return}
-      if (e.key==='ArrowUp')   {e.preventDefault();navigateSlot('up');   return}
+      // Bar management
+      if (e.key==='m'||e.key==='M'){addMeasure();return}
+      if (e.key==='ArrowRight'){e.preventDefault();navigateEvent('right');return}
+      if (e.key==='ArrowLeft') {e.preventDefault();navigateEvent('left'); return}
+      if (e.key==='ArrowDown') {e.preventDefault();navigateEvent('down'); return}
+      if (e.key==='ArrowUp')   {e.preventDefault();navigateEvent('up');   return}
 
-      // Notes
-      if (inputMode==='note'){
+      // Note entry (always available if a beat is selected)
+      if (selectedBeatIdx!==null) {
         const map={d:'d',r:'r',m:'m',f:'f',s:'s',l:'l',t:'t'}
         if (map[e.key?.toLowerCase()]){e.preventDefault();doInsert(map[e.key.toLowerCase()]);return}
         if (e.key==='-'){doSustain();return}
@@ -195,7 +270,7 @@ export default function SolfaApp({user, onGoHome}) {
     }
     window.addEventListener('keydown',onKey)
     return ()=>window.removeEventListener('keydown',onKey)
-  },[inputMode,selectedPartId,selectedMeasureIdx,selectedBeatIdx,selectedSlotIdx])
+  },[inputMode,selectedPartId,selectedMeasureIdx,selectedBeatIdx,selectedEventIdx,selDuration,isPlaying])
 
   async function saveToCloud(){
     if (!user) return
@@ -214,12 +289,23 @@ export default function SolfaApp({user, onGoHome}) {
     setSaving(false)
   }
 
+  function formatTime(sec) {
+    const s=Math.floor(sec||0)
+    const m=Math.floor(s/60)
+    return `${m}:${String(s%60).padStart(2,'0')}`
+  }
+
   const comboInfo=VOICE_COMBOS[score.voiceCombo]||VOICE_COMBOS.satb
   const currentTS=`${score.timeSignature?.beats||4}/${score.timeSignature?.beatType||4}`
 
-  const posDisp=(selectedBeatIdx!==null&&selectedSlotIdx!==null&&selectedMeasureIdx!==null)
-    ?`Bar ${selectedMeasureIdx+1} · Beat ${selectedBeatIdx+1} · Slot ${selectedSlotIdx+1}`
-    :''
+  const posDisp=(()=>{
+    if (selectedBeatIdx===null||selectedMeasureIdx===null) return ''
+    const part=score.parts.find(p=>p.id===selectedPartId)
+    const beat=migrateMeasure(part?.measures[selectedMeasureIdx])?.beats[selectedBeatIdx]
+    const used=beat?.events?.reduce((s,e)=>s+e.duration,0)||0
+    const free=4-used
+    return `Bar ${selectedMeasureIdx+1} · Beat ${selectedBeatIdx+1} · ${free} quarter${free===1?'':'s'} free`
+  })()
 
   const Sep=()=><div style={{width:1,height:20,background:'#e5e7eb',flexShrink:0}}/>
   const abtn=(active,color='#2563eb')=>({
@@ -228,15 +314,6 @@ export default function SolfaApp({user, onGoHome}) {
     background:active?color+'18':'white',color:active?color:'#374151',
     borderRadius:5,cursor:'pointer',transition:'all 0.1s',whiteSpace:'nowrap',
   })
-
-  // Beat split button definitions
-  const beatBtns=[
-    {sub:1,  sp:null, label:'d',     title:'Whole beat (key 1)'},
-    {sub:2,  sp:null, label:'d.d',   title:'2 halves — dot connector "d.r" (key 2)'},
-    {sub:3,  sp:null, label:'d,d,d', title:'3 thirds/triplet — comma connector "d,r,m" (key 3)'},
-    {sub:4,  sp:null, label:'d,d',   title:'4 quarters — comma connector "d,r,m,f" (key 4)'},
-    {sub:2,  sp:'3q', label:'d. ,',  title:'3/4 beat: half+quarter "d. ," (key 5)'},
-  ]
 
   return (
     <div style={{minHeight:'100vh',display:'flex',flexDirection:'column',
@@ -262,7 +339,6 @@ export default function SolfaApp({user, onGoHome}) {
           background:'#fef3c7',color:'#92400e',letterSpacing:'0.05em'}}>
           SOLFA · {comboInfo.label}
         </span>
-
         <Sep/>
 
         <input value={score.title} onChange={e=>setTitle(e.target.value)}
@@ -289,7 +365,6 @@ export default function SolfaApp({user, onGoHome}) {
         <button onClick={()=>setZoom(z=>Math.min(2,z+0.1))}
           style={{width:24,height:24,border:'1px solid #e5e7eb',borderRadius:4,
             background:'white',cursor:'pointer',fontSize:14,color:'#6b7280'}}>+</button>
-
         <Sep/>
 
         {saveMsg&&<span style={{fontSize:11,color:saveMsg.includes('fail')?'#dc2626':'#16a34a'}}>{saveMsg}</span>}
@@ -320,20 +395,16 @@ export default function SolfaApp({user, onGoHome}) {
           <button style={abtn(inputMode==='select')} onClick={()=>setInputMode('select')} title="Esc">○ Select</button>
           <button style={abtn(inputMode==='note','#16a34a')} onClick={()=>setInputMode('note')} title="N">● Note</button>
         </div>
-
         <Sep/>
 
         {/* Syllables */}
         <div style={{display:'flex',gap:2,alignItems:'center'}}>
           {SYLLABLES.map(syl=>(
-            <button key={syl} onClick={()=>{if(inputMode==='note')doInsert(syl)}}
-              title={`${syl} (key: ${syl})`}
+            <button key={syl} onClick={()=>doInsert(syl)}
+              title={`Insert ${syl} (key: ${syl})`}
               style={{width:26,height:26,border:'1px solid #d1d5db',borderRadius:4,
-                cursor:inputMode==='note'?'pointer':'not-allowed',
-                background:inputMode==='note'?'white':'#f9fafb',
-                fontSize:14,fontWeight:600,
-                color:inputMode==='note'?'#1e2433':'#c0c0c0',
-                fontFamily:'"Times New Roman",serif'}}>
+                cursor:'pointer',background:'white',fontSize:14,fontWeight:600,
+                color:'#1e2433',fontFamily:'"Times New Roman",serif'}}>
               {syl}
             </button>
           ))}
@@ -341,7 +412,7 @@ export default function SolfaApp({user, onGoHome}) {
             style={{padding:'0 7px',height:26,border:'1px solid #d1d5db',borderRadius:4,
               cursor:'pointer',background:showChromatic?'#fef3c7':'white',fontSize:10,color:'#6b7280'}}>♯♭</button>
           {showChromatic&&CHROMATIC.map(syl=>(
-            <button key={syl} onClick={()=>{if(inputMode==='note')doInsert(syl)}}
+            <button key={syl} onClick={()=>doInsert(syl)}
               style={{padding:'0 7px',height:26,border:'1px solid #fbbf24',borderRadius:4,
                 cursor:'pointer',background:'#fef3c7',fontSize:12,fontWeight:600,
                 color:'#92400e',fontFamily:'"Times New Roman",serif'}}>
@@ -349,31 +420,29 @@ export default function SolfaApp({user, onGoHome}) {
             </button>
           ))}
         </div>
-
         <Sep/>
 
-        <button onClick={doRest} title="Rest (Space)"
+        <button onClick={doRest} title="Rest — blank space (Space)"
           style={{...abtn(false),padding:'3px 10px'}}>○ Rest</button>
-        <button onClick={doSustain} title="Hold dash (key –)"
+        <button onClick={doSustain} title="Hold/sustain dash (key –)"
           style={{...abtn(false),padding:'3px 10px',fontFamily:'"Times New Roman",serif'}}>– Hold</button>
-
         <Sep/>
 
-        {/* Beat split */}
+        {/* Duration — this changes both new notes AND selected existing event */}
         <div style={{display:'flex',alignItems:'center',gap:3}}>
-          <span style={{fontSize:10,color:'#6b7280',fontWeight:600}}>Beat:</span>
-          {beatBtns.map(({sub,sp,label,title})=>{
-            const isActive=sp?currentSub==='3q':(currentSub===sub&&currentSub!=='3q')
+          <span style={{fontSize:10,color:'#6b7280',fontWeight:600}}>Duration:</span>
+          {[4,3,2,1].map(d=>{
+            const info=DUR_LABELS[d]
+            const active=dispDur===d
             return (
-              <button key={label} onClick={()=>doSubdivide(sub,sp)} title={title}
-                style={{...abtn(isActive),minWidth:38,
+              <button key={d} onClick={()=>changeDur(d)} title={`${info.desc} (key ${d})`}
+                style={{...abtn(active),minWidth:40,
                   fontFamily:'"Times New Roman",serif',fontSize:12}}>
-                {label}
+                <span title={info.desc}>{info.sym}</span>
               </button>
             )
           })}
         </div>
-
         <Sep/>
 
         {/* Octave */}
@@ -391,7 +460,6 @@ export default function SolfaApp({user, onGoHome}) {
             </button>
           ))}
         </div>
-
         <Sep/>
 
         {/* Key */}
@@ -403,7 +471,6 @@ export default function SolfaApp({user, onGoHome}) {
             {KEYS.map(k=><option key={k} value={k}>{k}</option>)}
           </select>
         </div>
-
         <Sep/>
 
         {/* Time signature */}
@@ -412,22 +479,18 @@ export default function SolfaApp({user, onGoHome}) {
           <select value={currentTS}
             onChange={e=>{
               const ts=TIME_SIGS.find(t=>t.label===e.target.value)
-              if (ts) changeTimeSig(ts)
+              if (ts) changeTimeSig(ts.beats,ts.beatType)
             }}
             style={{fontSize:12,border:'1px solid #d1d5db',borderRadius:5,
               padding:'2px 6px',background:'white',color:'#374151'}}>
-            {TIME_SIGS.map(t=>(
-              <option key={t.label} value={t.label}>{t.label}</option>
-            ))}
+            {TIME_SIGS.map(t=><option key={t.label} value={t.label}>{t.label}</option>)}
           </select>
         </div>
-
         <Sep/>
 
-        {/* Bar buttons */}
         <button onClick={addMeasure} title="Add bar (M)"
           style={{...abtn(false),padding:'3px 9px',fontSize:11}}>+ Bar</button>
-        <button onClick={()=>deleteMeasure()} title="Delete bar (Backspace)"
+        <button onClick={()=>deleteMeasure()} title="Delete selected bar (− Bar button always deletes bar, not note)"
           style={{padding:'3px 9px',fontSize:11,fontWeight:500,
             border:'1px solid #fca5a5',borderRadius:5,
             background:'#fef2f2',color:'#dc2626',cursor:'pointer'}}>− Bar</button>
@@ -436,20 +499,165 @@ export default function SolfaApp({user, onGoHome}) {
       {/* ── Info bar ── */}
       <div style={{background:'#f0f9ff',borderBottom:'1px solid #bae6fd',
         padding:'3px 14px',fontSize:10,color:'#0369a1',flexShrink:0,
-        display:'flex',gap:14,flexWrap:'wrap',alignItems:'center'}}>
-        <span><strong>Renders as:</strong></span>
-        <span><code style={{background:'white',padding:'0 3px',borderRadius:2}}>d</code>=whole</span>
-        <span><code style={{background:'white',padding:'0 3px',borderRadius:2}}>d.r</code>=halves</span>
-        <span><code style={{background:'white',padding:'0 3px',borderRadius:2}}>d,r,m</code>=thirds</span>
-        <span><code style={{background:'white',padding:'0 3px',borderRadius:2}}>d,r,m,f</code>=quarters</span>
-        <span><code style={{background:'white',padding:'0 3px',borderRadius:2}}>d. ,</code>=¾ beat</span>
-        <span style={{borderLeft:'1px solid #bae6fd',paddingLeft:14}}>
-          <strong>Lyrics:</strong> Click the underline below any note to type a lyric syllable
+        display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
+        <span><strong>Duration keys:</strong> 4=whole · 3=¾ beat · 2=half · 1=quarter</span>
+        <span style={{borderLeft:'1px solid #bae6fd',paddingLeft:12}}>
+          <strong>To change a note's duration:</strong> click the note → press 1/2/3/4
         </span>
-        <span style={{borderLeft:'1px solid #bae6fd',paddingLeft:14}}>
-          <strong>Keys:</strong> N · d r m f s l t · – · Space · 1-5=beat split · , . ' ‹ ›=oct · ← →=nav · M ⌫=bar
+        <span style={{borderLeft:'1px solid #bae6fd',paddingLeft:12}}>
+          <strong>Lyrics:</strong> click the underline below a note
+        </span>
+        <span style={{borderLeft:'1px solid #bae6fd',paddingLeft:12}}>
+          <strong>Keys:</strong> d r m f s l t · – · Space · ← → ↑ ↓ · M=+bar · Del=delete note · ⌫=delete bar
         </span>
       </div>
+
+      {/* ── Transport / Playback bar ── */}
+      <div style={{background:'#1e2433',padding:'6px 16px',display:'flex',
+        alignItems:'center',gap:10,flexShrink:0}}>
+
+        {/* Play / Pause / Stop */}
+        <button onClick={()=>{ isPlaying ? pause() : play() }}
+          title={isPlaying?'Pause (Space)':'Play (Space)'}
+          style={{width:36,height:36,borderRadius:'50%',border:'none',cursor:'pointer',
+            background:isPlaying?'#f59e0b':'#22c55e',color:'white',
+            fontSize:16,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          {isPlaying ? '⏸' : '▶'}
+        </button>
+
+        <button onClick={stop} title="Stop"
+          style={{width:32,height:32,borderRadius:'50%',border:'none',cursor:'pointer',
+            background:'#374151',color:'white',fontSize:14,
+            display:'flex',alignItems:'center',justifyContent:'center'}}>
+          ⏹
+        </button>
+
+        {/* Seek bar */}
+        <div style={{flex:1,display:'flex',alignItems:'center',gap:8}}>
+          <span style={{fontSize:10,color:'#9ca3af',minWidth:36,fontFamily:'monospace'}}>
+            {formatTime(getCurrentSec())}
+          </span>
+          <input ref={seekBarRef} type="range" min={0}
+            max={Math.max(totalSecs,1)} step={0.1}
+            value={Math.min(getCurrentSec(),Math.max(totalSecs,1))}
+            onChange={async e=>{
+              const sec=Number(e.target.value)
+              const bpm=displayTempo
+              await seekToBeat(sec/(60/bpm))
+            }}
+            style={{flex:1,accentColor:'#22c55e',height:4,cursor:'pointer'}}
+          />
+          <span style={{fontSize:10,color:'#9ca3af',minWidth:36,fontFamily:'monospace'}}>
+            {formatTime(totalSecs)}
+          </span>
+        </div>
+
+        {/* Tempo */}
+        <div style={{display:'flex',alignItems:'center',gap:4}}>
+          <span style={{fontSize:10,color:'#9ca3af'}}>♩=</span>
+          <input type="number" min={20} max={300}
+            value={tempoOverride||score.tempo||80}
+            onChange={e=>{
+              const v=e.target.value
+              setTempoOverride(v)
+              const n=Number(v)
+              if (n>=20&&n<=300) setPbTempo(n)
+            }}
+            style={{width:48,background:'#374151',border:'1px solid #4b5563',
+              borderRadius:4,color:'white',fontSize:11,textAlign:'center',
+              padding:'2px 4px',outline:'none'}}
+          />
+        </div>
+
+        {/* Metronome */}
+        <button onClick={()=>{ const v=toggleMetronome(); setMetronomeOn(v) }}
+          title="Toggle metronome"
+          style={{width:32,height:32,borderRadius:6,border:'none',cursor:'pointer',
+            background:metronomeOn?'#2563eb':'#374151',color:'white',fontSize:14,
+            display:'flex',alignItems:'center',justifyContent:'center'}}>
+          🎵
+        </button>
+
+        {/* Loop */}
+        <button onClick={()=>{ const v=toggleLoop(); setLooping(v) }}
+          title="Loop"
+          style={{width:32,height:32,borderRadius:6,border:'none',cursor:'pointer',
+            background:looping?'#7c3aed':'#374151',color:'white',fontSize:13,
+            display:'flex',alignItems:'center',justifyContent:'center'}}>
+          🔁
+        </button>
+
+        {/* Mixer toggle */}
+        <button onClick={()=>setShowMixer(v=>!v)} title="Part volume mixer"
+          style={{width:32,height:32,borderRadius:6,border:'none',cursor:'pointer',
+            background:showMixer?'#0891b2':'#374151',color:'white',fontSize:13,
+            display:'flex',alignItems:'center',justifyContent:'center'}}>
+          🎚
+        </button>
+
+        {/* Beat position indicator */}
+        {playbackBeat!==null && (
+          <span style={{fontSize:10,color:'#6ee7b7',fontFamily:'monospace',minWidth:60}}>
+            beat {(playbackBeat+1).toFixed(1)}
+          </span>
+        )}
+      </div>
+
+      {/* ── Mixer panel (per-part volume) ── */}
+      {showMixer && (
+        <div style={{background:'#111827',borderBottom:'1px solid #374151',
+          padding:'8px 16px',display:'flex',gap:16,flexWrap:'wrap',flexShrink:0,
+          alignItems:'center'}}>
+          <span style={{fontSize:10,color:'#9ca3af',fontWeight:700,letterSpacing:'0.05em'}}>
+            MIXER
+          </span>
+          {(score.parts||[]).map(part=>{
+            const vol   = partVolumes[part.id]??100
+            const muted = vol===0
+            return (
+              <div key={part.id} style={{display:'flex',alignItems:'center',gap:6}}>
+                {/* Part label */}
+                <span style={{fontSize:11,fontWeight:700,color:'#e5e7eb',
+                  minWidth:28,fontFamily:'"Times New Roman",serif'}}>
+                  {part.label}
+                </span>
+
+                {/* Mute button */}
+                <button
+                  onClick={()=>{
+                    const newVol = muted ? 80 : 0
+                    setPartVolumes(v=>({...v,[part.id]:newVol}))
+                    // Convert 0-100 to dB: 100→0dB, 50→-6dB, 0→-60dB
+                    const db = newVol===0 ? -60 : 20*Math.log10(newVol/100)
+                    setPartVolume(part.id, db)
+                    setPartMute(part.id, newVol===0)
+                  }}
+                  style={{width:24,height:24,borderRadius:4,border:'none',cursor:'pointer',
+                    background:muted?'#dc2626':'#374151',color:'white',fontSize:9,fontWeight:700}}>
+                  {muted?'M':'M'}
+                </button>
+
+                {/* Volume slider */}
+                <input type="range" min={0} max={100} value={vol}
+                  onChange={e=>{
+                    const newVol=Number(e.target.value)
+                    setPartVolumes(v=>({...v,[part.id]:newVol}))
+                    const db = newVol===0 ? -60 : 20*Math.log10(newVol/100)
+                    setPartVolume(part.id, db)
+                    setPartMute(part.id, newVol===0)
+                  }}
+                  style={{width:80,accentColor:'#22c55e',cursor:'pointer'}}
+                />
+
+                {/* Level % */}
+                <span style={{fontSize:9,color:'#6b7280',minWidth:28,fontFamily:'monospace'}}>
+                  {vol}%
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* ── Score canvas ── */}
       <main style={{flex:1,overflowY:'auto',overflowX:'hidden',background:'#e5e7eb',padding:'24px'}}>
@@ -464,8 +672,8 @@ export default function SolfaApp({user, onGoHome}) {
               </div>
             </div>
 
-            <SolfaRenderer onSelectSlot={(partId,mIdx,bi,si)=>{
-              useSolfaStore.getState().selectSlot(partId,mIdx,bi,si)
+            <SolfaRenderer onSelectEvent={(partId,mIdx,bi,ei)=>{
+              useSolfaStore.getState().selectEvent(partId,mIdx,bi,ei)
             }}/>
           </div>
         </div>

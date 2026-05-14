@@ -1,40 +1,46 @@
 // src/store/solfaStore.js
 // FaithScore — Solfa Store
 //
-// BEAT MODEL:
-//   Each measure has N beats (N = time sig numerator).
-//   Each beat has a subdivision and that many slots.
+// ══════════════════════════════════════════════════════════════════════════
+// CORE MODEL
+// ══════════════════════════════════════════════════════════════════════════
 //
-//   subdivision=1 → 1 slot  "d"         (whole beat)
-//   subdivision=2 → 2 slots "d.r"       (two halves, dot connector)
-//   subdivision=3 → 3 slots "d,r,m"     (three thirds, comma connector — triplet/compound)
-//   subdivision=4 → 4 slots "d,r,m,f"   (four quarters, comma connector)
-//   subdivision=3q → special: 3 quarter-units (half + quarter = "d. ,")
-//     This is stored as subdivision=3 but with the first slot spanning 2 units
-//     and the last slot spanning 1 unit. We handle this in the renderer.
+// 1 beat = 4 quarter-units (Q1 Q2 Q3 Q4)
 //
-// SEPARATORS:
-//   ":"  before each beat from beat 2 onward
-//   "/"  at fixed midpoints per time signature (visual grouping only)
+// A measure has N beats (N = time-sig numerator).
+// Each beat has an array of EVENTS. An event occupies 1–4 quarter-units.
+// The events in a beat must sum to exactly 4 quarter-units.
+// Any quarter-unit not covered by a note/sustain is a REST (blank).
 //
-// SLASH "/" POSITIONS (beat index AFTER which slash appears, 0-based):
-//   Pattern: the bar is split into equal halves or thirds
-//   2/4  → none          (2 beats, too short to need splitting)
-//   3/4  → none          (3 beats, odd — no clean split)
-//   4/4  → after idx 1   (2+2: d :r / :m :f)
-//   5/4  → after idx 2   (3+2 or 2+3: d :r :m / :f :s)
-//   6/4  → after idx 2   (3+3: d :r :m / :f :s :l)
-//   7/4  → after idx 3   (4+3: d :r :m :f / :s :l :t)
-//   8/4  → after idx 3   (4+4)
-//   6/8  → after idx 2   (3+3)
-//   7/8  → after idx 3   (4+3)
-//   8/8  → after idx 3   (4+4)
-//   9/8  → after idx 2,5 (3+3+3)
-//  12/8  → after idx 2,5,8 (3+3+3+3)
-//   5/8  → after idx 2   (3+2)
-//   3/8  → none
-//   2/2  → none
-//   4/2  → after idx 1
+// EVENT:
+//   { id, type:'note'|'sustain'|'rest', syllable, octave, lyric,
+//     duration: 1|2|3|4 }   // in quarter-units
+//
+// NOTATION RENDERING:
+//   duration=4  → "d"       (whole beat)
+//   duration=3  → "d.,"     (3/4 beat — dot+comma suffix)
+//   duration=2  → "d."      (half beat — dot suffix)   OR ".d" (if offset=2)
+//   duration=1  → "d,"      (quarter — comma suffix)   OR ",d" ",",d etc.
+//
+// The OFFSET of each event = sum of durations of all previous events in beat.
+// From the offset we derive the prefix notation:
+//   offset=0 → no prefix
+//   offset=1 → prefix ","
+//   offset=2 → prefix "."
+//   offset=3 → prefix ".,,"
+//
+// EMPTY BEAT: one rest event of duration=4 → renders as blank (no character)
+//
+// SLASH "/" positions (beat index AFTER which "/" appears — fixed per time sig):
+//   2/x → none
+//   3/x → none
+//   4/x → after idx 1   → d :r / :m :f
+//   5/x → after idx 2   → 3+2
+//   6/x → after idx 2   → 3+3
+//   7/x → after idx 3   → 4+3
+//   8/x → after idx 3   → 4+4
+//   9/x → after idx 2,5 → 3+3+3
+//  12/x → after idx 2,5,8
 
 import { create } from 'zustand'
 
@@ -60,33 +66,29 @@ export const VOICE_COMBOS = {
 
 function uid() { return crypto.randomUUID() }
 
-function makeSlot(type='rest') {
-  return {id:uid(), type, syllable:null, octave:0, lyric:null}
+// One event inside a beat
+function makeEvent(type='rest', duration=4, syllable=null, octave=0, lyric=null) {
+  return { id:uid(), type, syllable, octave, lyric, duration }
 }
 
-// subdivision: 1=whole, 2=halves, 3=thirds/triplet, 4=quarters
-// specialSub: '3q' = three-quarter beat (half+quarter: slots of size 2+1 units)
-function makeBeat(subdivision=1, specialSub=null) {
+// An empty beat = one rest of duration 4 (fills whole beat, renders as blank)
+function makeEmptyBeat() {
+  return { id:uid(), events:[makeEvent('rest',4)] }
+}
+
+// A measure with `numBeats` empty beats
+function makeEmptyMeasure(numBeats=4) {
   return {
-    id: uid(),
-    subdivision,
-    specialSub: specialSub||null,
-    slots: Array.from({length: subdivision}, ()=>makeSlot('rest')),
+    id:uid(),
+    timeSignature:{beats:numBeats,beatType:4},
+    beats:Array.from({length:numBeats},()=>makeEmptyBeat()),
   }
 }
 
-function makeEmptyMeasure(beats=4) {
-  return {
-    id: uid(),
-    timeSignature: {beats, beatType:4},
-    beats: Array.from({length:beats}, ()=>makeBeat(1)),
-  }
-}
-
-function makePart(voiceDef, numMeasures=12, beats=4) {
+function makePart(voiceDef, numMeasures=12, numBeats=4) {
   return {
     id:voiceDef.id, name:voiceDef.name, label:voiceDef.label,
-    measures: Array.from({length:numMeasures}, ()=>makeEmptyMeasure(beats)),
+    measures:Array.from({length:numMeasures},()=>makeEmptyMeasure(numBeats)),
   }
 }
 
@@ -101,17 +103,30 @@ export function buildEmptySolfaScore(voiceComboKey='satb',key='C',beats=4,numMea
   }
 }
 
-// ── Migration ─────────────────────────────────────────────────────────────────
+// ── MIGRATION from old formats ────────────────────────────────────────────────
 export function migrateMeasure(measure) {
   if (!measure) return makeEmptyMeasure(4)
-  if (Array.isArray(measure.beats)) return measure
+  // Already new format (has beats with events arrays)
+  if (Array.isArray(measure.beats) && measure.beats[0]?.events) return measure
+  // Old slot-based format (beats with slots[])
+  if (Array.isArray(measure.beats) && measure.beats[0]?.slots) {
+    const nb=measure.beats.length
+    const beats=measure.beats.map(b=>{
+      const s=b.slots[0]
+      if (s&&s.type!=='rest') {
+        return {id:uid(), events:[makeEvent(s.type,4,s.syllable,s.octave||0,s.lyric||null)]}
+      }
+      return makeEmptyBeat()
+    })
+    return {...measure,beats}
+  }
+  // Old notes[] format
   const top=measure.timeSignature?.beats||4
   const beats=Array.from({length:top},(_,bi)=>{
-    const beat=makeBeat(1)
     const note=(measure.notes||[]).find(n=>Math.abs(Math.floor(n.beatPos)-bi)<0.01)
     if (note&&note.type!=='rest')
-      beat.slots[0]={id:uid(),type:note.type,syllable:note.syllable||null,octave:note.octave||0,lyric:note.lyric||null}
-    return beat
+      return {id:uid(),events:[makeEvent(note.type,4,note.syllable||null,note.octave||0,note.lyric||null)]}
+    return makeEmptyBeat()
   })
   return {...measure,beats}
 }
@@ -121,51 +136,36 @@ export function migrateScore(score) {
   return {
     ...score,
     parts:(score.parts||[]).map(p=>({
-      ...p, measures:(p.measures||[]).map(m=>migrateMeasure(m)),
+      ...p,measures:(p.measures||[]).map(m=>migrateMeasure(m)),
     })),
   }
 }
 
 // ── SLASH POSITIONS ───────────────────────────────────────────────────────────
-// Returns a Set of beat indices (0-based) AFTER which "/" appears.
-// The slash splits the bar into equal visual groups for readability.
-// It REPLACES the ":" at that beat boundary.
-//
-// RULE: slash goes at the midpoint(s) of the bar.
-// For a bar of N beats:
-//   N=2: no slash (too short)
-//   N=3: no slash (odd, no clean midpoint)
-//   N=4: slash after beat 1 (idx 1) → 2+2
-//   N=5: slash after beat 2 (idx 2) → 3+2  (common grouping)
-//   N=6: slash after beat 2 (idx 2) → 3+3
-//   N=7: slash after beat 3 (idx 3) → 4+3
-//   N=8: slash after beat 3 (idx 3) → 4+4
-//   N=9: slash after beats 2,5       → 3+3+3
-//   N=12: slash after beats 2,5,8    → 3+3+3+3
-export function slashPositions(beats, beatType) {
-  // Normalise: compound time (bottom=8) with groups of 3
-  // 6/8 = 2 big beats of 3 quavers, 9/8 = 3 big beats, 12/8 = 4 big beats
-  // We store beats as the raw top number, so 6/8 has 6 beat slots
-  const n = beats
-  if (n <= 3) return new Set()          // 2/x, 3/x — no slash
-  if (n === 4) return new Set([1])       // 4/x → 2+2
-  if (n === 5) return new Set([2])       // 5/x → 3+2
-  if (n === 6) return new Set([2])       // 6/x → 3+3
-  if (n === 7) return new Set([3])       // 7/x → 4+3
-  if (n === 8) return new Set([3])       // 8/x → 4+4
-  if (n === 9) return new Set([2,5])     // 9/x → 3+3+3
-  if (n === 10) return new Set([4])      // 10/x → 5+5
-  if (n === 12) return new Set([2,5,8])  // 12/x → 3+3+3+3
+// Returns Set of beat indices (0-based) AFTER which "/" appears.
+export function slashPositions(beats,_beatType) {
+  const n=beats
+  if (n<=3)  return new Set()
+  if (n===4) return new Set([1])
+  if (n===5) return new Set([2])
+  if (n===6) return new Set([2])
+  if (n===7) return new Set([3])
+  if (n===8) return new Set([3])
+  if (n===9) return new Set([2,5])
+  if (n===10)return new Set([4])
+  if (n===12)return new Set([2,5,8])
   return new Set()
 }
 
-// Connector character between slots within a beat
-// subdivision=2 → "."  (half-beat: d.r)
-// subdivision=3 → ","  (triplet/third: d,r,m)
-// subdivision=4 → ","  (quarter: d,r,m,f)
-// specialSub='3q' → no connector needed (handled specially)
-export function slotConnector(subdivision) {
-  return subdivision === 2 ? '.' : ','
+// ── BEAT MATH ────────────────────────────────────────────────────────────────
+// Given a beat's events array, return the total quarter-units used
+export function beatUsed(events) {
+  return (events||[]).reduce((s,e)=>s+e.duration,0)
+}
+
+// Given a beat, return remaining quarter-units available (max 4)
+export function beatRemaining(beat) {
+  return 4 - beatUsed(beat?.events||[])
 }
 
 // ── STORE ────────────────────────────────────────────────────────────────────
@@ -174,8 +174,9 @@ export const useSolfaStore = create((set,get) => ({
   selectedPartId:     null,
   selectedMeasureIdx: null,
   selectedBeatIdx:    null,
-  selectedSlotIdx:    null,
+  selectedEventIdx:   null,   // which event within the beat
   inputMode:          'select',
+  selectedDuration:   4,      // quarter-units: 4=whole, 3=3/4, 2=half, 1=quarter
   selectedOctave:     0,
   _undoStack:         [],
 
@@ -183,21 +184,23 @@ export const useSolfaStore = create((set,get) => ({
   setKey:     k  => set(s=>({score:{...s.score,key:k}})),
   setTempo:   t  => set(s=>({score:{...s.score,tempo:t}})),
   setCloudId: id => set(s=>({score:{...s.score,_cloudId:id}})),
-  setInputMode:      m => set({inputMode:m}),
-  setSelectedOctave: o => set({selectedOctave:o}),
+  setInputMode:       m => set({inputMode:m}),
+  setSelectedDuration:d => set({selectedDuration:d}),
+  setSelectedOctave:  o => set({selectedOctave:o}),
 
   loadScore: rawScore => {
     const score=migrateScore(rawScore)
     set({score,selectedPartId:score.parts[0]?.id??null,
-      selectedMeasureIdx:null,selectedBeatIdx:null,selectedSlotIdx:null})
+      selectedMeasureIdx:null,selectedBeatIdx:null,selectedEventIdx:null})
   },
 
-  selectSlot: (partId,measureIdx,beatIdx,slotIdx) => set({
-    selectedPartId:partId,selectedMeasureIdx:measureIdx,
-    selectedBeatIdx:beatIdx,selectedSlotIdx:slotIdx,
+  // Select an event within a beat
+  selectEvent: (partId,measureIdx,beatIdx,eventIdx) => set({
+    selectedPartId:partId, selectedMeasureIdx:measureIdx,
+    selectedBeatIdx:beatIdx, selectedEventIdx:eventIdx,
   }),
   clearSelection: () => set({
-    selectedPartId:null,selectedMeasureIdx:null,selectedBeatIdx:null,selectedSlotIdx:null,
+    selectedPartId:null,selectedMeasureIdx:null,selectedBeatIdx:null,selectedEventIdx:null,
   }),
 
   _snapshot: () => {
@@ -210,11 +213,24 @@ export const useSolfaStore = create((set,get) => ({
     set({score:_undoStack[_undoStack.length-1],_undoStack:_undoStack.slice(0,-1)})
   },
 
-  // ── Subdivide beat ────────────────────────────────────────────────────────
-  // newSub: 1=whole, 2=halves, 3=triplet/thirds, 4=quarters
-  // specialSub: '3q' = three-quarter beat (half+quarter)
-  subdivideBeat: (partId,measureIdx,beatIdx,newSub,specialSub=null) => {
+  // ── Place a note/rest/sustain event into a beat ───────────────────────────
+  // This replaces whatever was at the cursor position (beatIdx) with a new
+  // event of the given syllable and selectedDuration, adjusting the beat's
+  // event array so it always sums to 4.
+  //
+  // Strategy:
+  //   1. Start fresh: the beat gets one rest of duration 4.
+  //   2. If there are existing events we want to keep, we preserve them.
+  //   But the simplest correct model:
+  //   - placeEvent inserts at beatOffset (quarter-unit offset within beat).
+  //   - It removes any events that overlap, then fills the rest with rests.
+  placeEvent: (partId,measureIdx,beatIdx,beatOffset,syllable,duration) => {
     get()._snapshot()
+    const st=get()
+    const dur = duration!==undefined ? duration : st.selectedDuration
+    const oct = st.selectedOctave
+    const type = syllable ? 'note' : 'rest'
+
     set(s=>{
       const parts=s.score.parts.map(p=>{
         if (p.id!==partId) return p
@@ -222,39 +238,88 @@ export const useSolfaStore = create((set,get) => ({
           if (mi!==measureIdx) return m
           const beats=m.beats.map((b,bi)=>{
             if (bi!==beatIdx) return b
-            if (b.subdivision===newSub&&b.specialSub===specialSub) return b
-            const first=b.slots[0]
-            // For 3q (three-quarter), we use 2 slots: [half, quarter]
-            const numSlots = specialSub==='3q' ? 2 : newSub
-            const newSlots=Array.from({length:numSlots},(_,si)=>{
-              if (si===0&&first&&first.type!=='rest')
-                return {...makeSlot(first.type),syllable:first.syllable,octave:first.octave,lyric:first.lyric}
-              return makeSlot('rest')
+
+            // Build new events array:
+            // Remove events that overlap [beatOffset, beatOffset+dur)
+            // then insert the new event, then fill gaps with rests
+            const existing=b.events||[makeEvent('rest',4)]
+            const newEnd=beatOffset+dur
+            const kept=[]
+            let cursor=0
+
+            for (const ev of existing) {
+              const evEnd=cursor+ev.duration
+              // Does this event overlap the new range?
+              if (evEnd<=beatOffset || cursor>=newEnd) {
+                // no overlap — keep it
+                kept.push({...ev, _start:cursor})
+              }
+              cursor+=ev.duration
+            }
+
+            // Rebuild events array with kept events + new event + rests for gaps
+            const newEvent=makeEvent(type,dur,syllable||null,oct,null)
+            const allEvents=[
+              ...kept.map(e=>({...e})),
+              {_start:beatOffset, ...newEvent},
+            ].sort((a,b)=>a._start-b._start)
+
+            // Fill gaps
+            const final=[]
+            let pos=0
+            for (const ev of allEvents) {
+              const st2=ev._start
+              if (st2>pos) final.push(makeEvent('rest',st2-pos))
+              const evDur=ev.duration
+              const cleanEv={...ev}
+              delete cleanEv._start
+              final.push(cleanEv)
+              pos=st2+evDur
+            }
+            if (pos<4) final.push(makeEvent('rest',4-pos))
+
+            return {...b, events:final}
+          })
+          return {...m,beats}
+        })
+        return {...p,measures}
+      })
+      return {score:{...s.score,parts}}
+    })
+  },
+
+  // Place a sustain/hold into the beat at beatOffset
+  placeSustain: (partId,measureIdx,beatIdx,beatOffset,duration) => {
+    const st=get()
+    const dur=duration!==undefined?duration:st.selectedDuration
+    get().placeEvent(partId,measureIdx,beatIdx,beatOffset,null,dur)
+    // Then mark it as sustain
+    set(s=>{
+      const parts=s.score.parts.map(p=>{
+        if (p.id!==partId) return p
+        const measures=p.measures.map((m,mi)=>{
+          if (mi!==measureIdx) return m
+          const beats=m.beats.map((b,bi)=>{
+            if (bi!==beatIdx) return b
+            const events=b.events.map(ev=>{
+              // find the event at beatOffset
+              let pos=0
+              let found=false
+              for (const e of b.events) {
+                if (pos===beatOffset) { found=true; break }
+                pos+=e.duration
+              }
+              return ev
             })
-            return {...b,subdivision:newSub,specialSub,slots:newSlots}
-          })
-          return {...m,beats}
-        })
-        return {...p,measures}
-      })
-      return {score:{...s.score,parts}}
-    })
-  },
-
-  placeNote: (partId,measureIdx,beatIdx,slotIdx,syllable) => {
-    get()._snapshot()
-    const octave=get().selectedOctave
-    set(s=>{
-      const parts=s.score.parts.map(p=>{
-        if (p.id!==partId) return p
-        const measures=p.measures.map((m,mi)=>{
-          if (mi!==measureIdx) return m
-          const beats=m.beats.map((b,bi)=>{
-            if (bi!==beatIdx) return b
-            const slots=b.slots.map((sl,si)=>si!==slotIdx?sl:{
-              ...sl,type:syllable?'note':'rest',syllable:syllable||null,octave,
+            // Actually just update the event at beatOffset
+            let pos=0
+            const updEvents=b.events.map(ev=>{
+              const start=pos
+              pos+=ev.duration
+              if (start===beatOffset) return {...ev,type:'sustain',syllable:null}
+              return ev
             })
-            return {...b,slots}
+            return {...b,events:updEvents}
           })
           return {...m,beats}
         })
@@ -264,7 +329,8 @@ export const useSolfaStore = create((set,get) => ({
     })
   },
 
-  placeSustain: (partId,measureIdx,beatIdx,slotIdx) => {
+  // Change the duration of a selected event
+  changeEventDuration: (partId,measureIdx,beatIdx,eventIdx,newDuration) => {
     get()._snapshot()
     set(s=>{
       const parts=s.score.parts.map(p=>{
@@ -273,8 +339,28 @@ export const useSolfaStore = create((set,get) => ({
           if (mi!==measureIdx) return m
           const beats=m.beats.map((b,bi)=>{
             if (bi!==beatIdx) return b
-            const slots=b.slots.map((sl,si)=>si!==slotIdx?sl:{...sl,type:'sustain',syllable:null})
-            return {...b,slots}
+            const events=[...b.events]
+            if (eventIdx>=events.length) return b
+            const ev=events[eventIdx]
+            const oldDur=ev.duration
+            const delta=newDuration-oldDur
+            // Can we extend? Check remaining space
+            const used=beatUsed(events)
+            if (used+delta>4) return b  // no room
+            if (newDuration<1) return b // min 1 quarter
+
+            const updated={...ev,duration:newDuration}
+            events[eventIdx]=updated
+            // Adjust trailing rest if needed
+            if (delta!==0) {
+              // Rebuild: after this event, fill remainder with rests
+              const before=events.slice(0,eventIdx+1)
+              const usedBefore=before.reduce((s,e)=>s+e.duration,0)
+              const remaining=4-usedBefore
+              if (remaining>0) before.push(makeEvent('rest',remaining))
+              return {...b,events:before}
+            }
+            return {...b,events}
           })
           return {...m,beats}
         })
@@ -284,7 +370,8 @@ export const useSolfaStore = create((set,get) => ({
     })
   },
 
-  changeSlotOctave: (partId,measureIdx,beatIdx,slotIdx,newOctave) => {
+  // Change octave of selected event
+  changeEventOctave: (partId,measureIdx,beatIdx,eventIdx,newOctave) => {
     get()._snapshot()
     set(s=>{
       const parts=s.score.parts.map(p=>{
@@ -293,8 +380,8 @@ export const useSolfaStore = create((set,get) => ({
           if (mi!==measureIdx) return m
           const beats=m.beats.map((b,bi)=>{
             if (bi!==beatIdx) return b
-            const slots=b.slots.map((sl,si)=>si!==slotIdx?sl:{...sl,octave:newOctave})
-            return {...b,slots}
+            const events=b.events.map((ev,ei)=>ei===eventIdx?{...ev,octave:newOctave}:ev)
+            return {...b,events}
           })
           return {...m,beats}
         })
@@ -304,7 +391,7 @@ export const useSolfaStore = create((set,get) => ({
     })
   },
 
-  setLyric: (partId,measureIdx,beatIdx,slotIdx,lyric) => {
+  setLyric: (partId,measureIdx,beatIdx,eventIdx,lyric) => {
     set(s=>{
       const parts=s.score.parts.map(p=>{
         if (p.id!==partId) return p
@@ -312,21 +399,61 @@ export const useSolfaStore = create((set,get) => ({
           if (mi!==measureIdx) return m
           const beats=m.beats.map((b,bi)=>{
             if (bi!==beatIdx) return b
-            const slots=b.slots.map((sl,si)=>si!==slotIdx?sl:{...sl,lyric})
-            return {...b,slots}
+            const events=b.events.map((ev,ei)=>ei===eventIdx?{...ev,lyric}:ev)
+            return {...b,events}
           })
           return {...m,beats}
         })
         return {...p,measures}
       })
       return {score:{...s.score,parts}}
+    })
+  },
+
+  // ── Measures ──────────────────────────────────────────────────────────────
+  // Delete selected event — replaces it with a rest of same duration,
+  // then merges adjacent rests so the beat stays clean.
+  deleteEvent: (partId, measureIdx, beatIdx, eventIdx) => {
+    get()._snapshot()
+    set(s => {
+      const parts = s.score.parts.map(p => {
+        if (p.id !== partId) return p
+        const measures = p.measures.map((m, mi) => {
+          if (mi !== measureIdx) return m
+          const beats = m.beats.map((b, bi) => {
+            if (bi !== beatIdx) return b
+            const events = [...(b.events || [])]
+            if (eventIdx >= events.length) return b
+            // Replace with rest of same duration
+            const ev = events[eventIdx]
+            events[eventIdx] = { id: crypto.randomUUID(), type: 'rest',
+              syllable: null, octave: 0, lyric: null, duration: ev.duration }
+            // Merge adjacent rests
+            const merged = []
+            for (const e of events) {
+              const last = merged[merged.length - 1]
+              if (last && last.type === 'rest' && e.type === 'rest') {
+                last.duration += e.duration
+              } else {
+                merged.push({...e})
+              }
+            }
+            return { ...b, events: merged }
+          })
+          return { ...m, beats }
+        })
+        return { ...p, measures }
+      })
+      return { score: { ...s.score, parts } }
     })
   },
 
   addMeasure: () => {
     set(s=>{
       const beats=s.score.timeSignature.beats
-      const parts=s.score.parts.map(p=>({...p,measures:[...p.measures,makeEmptyMeasure(beats)]}))
+      const parts=s.score.parts.map(p=>({
+        ...p,measures:[...p.measures,makeEmptyMeasure(beats)],
+      }))
       return {score:{...s.score,parts}}
     })
   },
@@ -339,8 +466,26 @@ export const useSolfaStore = create((set,get) => ({
     const idx=measureIdx!==undefined?measureIdx:selectedMeasureIdx!==null?selectedMeasureIdx:numM-1
     const newSel=Math.max(0,Math.min(idx,numM-2))
     set(s=>{
-      const parts=s.score.parts.map(p=>({...p,measures:p.measures.filter((_,i)=>i!==idx)}))
-      return {score:{...s.score,parts},selectedMeasureIdx:newSel,selectedBeatIdx:null,selectedSlotIdx:null}
+      const parts=s.score.parts.map(p=>({
+        ...p,measures:p.measures.filter((_,i)=>i!==idx),
+      }))
+      return {score:{...s.score,parts},selectedMeasureIdx:newSel,selectedBeatIdx:null,selectedEventIdx:null}
+    })
+  },
+
+  changeTimeSig: (newBeats,newBeatType) => {
+    set(s=>{
+      const ts={beats:newBeats,beatType:newBeatType}
+      const parts=s.score.parts.map(p=>({
+        ...p,
+        measures:p.measures.map(m=>{
+          let beats=[...(m.beats||[])]
+          while (beats.length<newBeats) beats.push(makeEmptyBeat())
+          if (beats.length>newBeats) beats=beats.slice(0,newBeats)
+          return {...m,timeSignature:ts,beats}
+        }),
+      }))
+      return {score:{...s.score,timeSignature:ts,parts}}
     })
   },
 
@@ -348,43 +493,51 @@ export const useSolfaStore = create((set,get) => ({
     set(s=>({score:{...s.score,sections:[...s.score.sections,{id:uid(),label,startMeasure,endMeasure}]}}))
   },
 
-  navigateSlot: (direction) => {
-    const {score,selectedPartId,selectedMeasureIdx,selectedBeatIdx,selectedSlotIdx}=get()
-    const sel=get().selectSlot
+  // ── Navigation ────────────────────────────────────────────────────────────
+  // Navigates event by event within a beat, then beat by beat, then measure
+  navigateEvent: (direction) => {
+    const {score,selectedPartId,selectedMeasureIdx,selectedBeatIdx,selectedEventIdx}=get()
+    const sel=get().selectEvent
+
     if (selectedPartId===null||selectedMeasureIdx===null) {
       const p=score.parts[0],m=p?.measures[0]
-      if (m?.beats[0]?.slots[0]) sel(p.id,0,0,0)
+      if (m?.beats[0]) sel(p.id,0,0,0)
       return
     }
     const pi=score.parts.findIndex(p=>p.id===selectedPartId)
     const part=score.parts[pi]; if (!part) return
     const meas=migrateMeasure(part.measures[selectedMeasureIdx]); if (!meas) return
-    const bi=selectedBeatIdx??0, si=selectedSlotIdx??0
+    const bi=selectedBeatIdx??0
+    const ei=selectedEventIdx??0
     const beat=meas.beats[bi]; if (!beat) return
+    const evts=beat.events||[]
 
     if (direction==='right') {
-      if (si<beat.slots.length-1){sel(selectedPartId,selectedMeasureIdx,bi,si+1);return}
+      if (ei<evts.length-1){sel(selectedPartId,selectedMeasureIdx,bi,ei+1);return}
       if (bi<meas.beats.length-1){sel(selectedPartId,selectedMeasureIdx,bi+1,0);return}
       if (selectedMeasureIdx<part.measures.length-1){sel(selectedPartId,selectedMeasureIdx+1,0,0);return}
     } else if (direction==='left') {
-      if (si>0){sel(selectedPartId,selectedMeasureIdx,bi,si-1);return}
-      if (bi>0){const pb=meas.beats[bi-1];sel(selectedPartId,selectedMeasureIdx,bi-1,pb.slots.length-1);return}
+      if (ei>0){sel(selectedPartId,selectedMeasureIdx,bi,ei-1);return}
+      if (bi>0){
+        const pb=migrateMeasure(part.measures[selectedMeasureIdx])?.beats[bi-1]
+        sel(selectedPartId,selectedMeasureIdx,bi-1,(pb?.events?.length||1)-1);return
+      }
       if (selectedMeasureIdx>0){
         const pm=migrateMeasure(part.measures[selectedMeasureIdx-1])
         const lb=pm.beats[pm.beats.length-1]
-        sel(selectedPartId,selectedMeasureIdx-1,pm.beats.length-1,lb.slots.length-1);return
+        sel(selectedPartId,selectedMeasureIdx-1,pm.beats.length-1,(lb?.events?.length||1)-1);return
       }
     } else if (direction==='down') {
       if (pi<score.parts.length-1){
         const np=score.parts[pi+1]
         const nb=migrateMeasure(np.measures[selectedMeasureIdx])?.beats[bi]
-        sel(np.id,selectedMeasureIdx,bi,Math.min(si,(nb?.slots.length||1)-1))
+        sel(np.id,selectedMeasureIdx,bi,Math.min(ei,(nb?.events?.length||1)-1))
       }
     } else if (direction==='up') {
       if (pi>0){
         const pp=score.parts[pi-1]
         const pb=migrateMeasure(pp.measures[selectedMeasureIdx])?.beats[bi]
-        sel(pp.id,selectedMeasureIdx,bi,Math.min(si,(pb?.slots.length||1)-1))
+        sel(pp.id,selectedMeasureIdx,bi,Math.min(ei,(pb?.events?.length||1)-1))
       }
     }
   },
