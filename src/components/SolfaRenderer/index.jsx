@@ -418,7 +418,7 @@ export default function SolfaRenderer({onSelectEvent}) {
   }
 
   return (
-    <div ref={wrapRef} style={{width:'100%',overflowX:'auto'}}>
+    <div ref={wrapRef} style={{width:'100%',overflowX:'auto',position:'relative',zIndex:46}}>
       <svg width={svgW} height={totalH} style={{display:'block',fontFamily:FONT,userSelect:'none'}}>
         {elems}
       </svg>
