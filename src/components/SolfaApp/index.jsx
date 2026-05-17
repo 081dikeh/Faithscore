@@ -27,9 +27,10 @@
 //   The remaining space in the beat is adjusted automatically.
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import * as Tone from 'tone'
 import SolfaRenderer from '../SolfaRenderer'
 import { useSolfaStore, VOICE_COMBOS, migrateMeasure } from '../../store/solfaStore'
-import { useSolfaPlayback } from '../../hooks/useSolfaPlayback'
+import { useSolfaPlayback, SOUND_PRESETS } from '../../hooks/useSolfaPlayback'
 import { supabase } from '../../lib/supabase'
 
 const SYLLABLES = ['d','r','m','f','s','l','t']
@@ -107,6 +108,7 @@ export default function SolfaApp({user,onGoHome}) {
     toggleMetronome, toggleLoop,
     getCurrentSec, getTotalSecs, getCurrentTempo,
     setPartVolume, setPartMute, getPartVolume, getPartMuted,
+    setPreset, getPreset,
     onPlaying, onBeat,
     isMetronomeOn, isLooping, isPaused,
   } = useSolfaPlayback()
@@ -134,6 +136,7 @@ export default function SolfaApp({user,onGoHome}) {
   const [saveMsg,setSaveMsg]             = useState('')
   const [showChromatic,setShowChromatic] = useState(false)
   const [showMixer,    setShowMixer]     = useState(false)
+  const [selectedPreset, setSelectedPreset] = useState('choir_african')
   // partVolumes: { [partId]: number 0-100 (%) }  100=full, 0=silent
   const [partVolumes,  setPartVolumes]   = useState({})
   const [zoom,setZoom]                   = useState(1.0)
@@ -587,6 +590,26 @@ export default function SolfaApp({user,onGoHome}) {
           🔁
         </button>
 
+        {/* Preset picker */}
+        <select
+          value={selectedPreset}
+          onChange={async e => {
+            const id = e.target.value
+            setSelectedPreset(id)
+            await setPreset(id)
+          }}
+          title="Sound preset"
+          style={{
+            background:'#374151', border:'1px solid #4b5563',
+            borderRadius:5, color:'white', fontSize:11,
+            padding:'3px 6px', cursor:'pointer', outline:'none',
+            maxWidth:160,
+          }}>
+          {SOUND_PRESETS.map(p => (
+            <option key={p.id} value={p.id}>{p.label}</option>
+          ))}
+        </select>
+
         {/* Mixer toggle */}
         <button onClick={()=>setShowMixer(v=>!v)} title="Part volume mixer"
           style={{width:32,height:32,borderRadius:6,border:'none',cursor:'pointer',
@@ -603,59 +626,102 @@ export default function SolfaApp({user,onGoHome}) {
         )}
       </div>
 
-      {/* ── Mixer panel (per-part volume) ── */}
+      {/* ── Mixer panel (per-part volume + preset info) ── */}
       {showMixer && (
         <div style={{background:'#111827',borderBottom:'1px solid #374151',
-          padding:'8px 16px',display:'flex',gap:16,flexWrap:'wrap',flexShrink:0,
-          alignItems:'center'}}>
-          <span style={{fontSize:10,color:'#9ca3af',fontWeight:700,letterSpacing:'0.05em'}}>
-            MIXER
-          </span>
-          {(score.parts||[]).map(part=>{
-            const vol   = partVolumes[part.id]??100
-            const muted = vol===0
-            return (
-              <div key={part.id} style={{display:'flex',alignItems:'center',gap:6}}>
-                {/* Part label */}
-                <span style={{fontSize:11,fontWeight:700,color:'#e5e7eb',
-                  minWidth:28,fontFamily:'"Times New Roman",serif'}}>
-                  {part.label}
-                </span>
+          padding:'10px 16px',display:'flex',flexDirection:'column',
+          gap:10,flexShrink:0}}>
 
-                {/* Mute button */}
-                <button
-                  onClick={()=>{
-                    const newVol = muted ? 80 : 0
-                    setPartVolumes(v=>({...v,[part.id]:newVol}))
-                    // Convert 0-100 to dB: 100→0dB, 50→-6dB, 0→-60dB
-                    const db = newVol===0 ? -60 : 20*Math.log10(newVol/100)
-                    setPartVolume(part.id, db)
-                    setPartMute(part.id, newVol===0)
-                  }}
-                  style={{width:24,height:24,borderRadius:4,border:'none',cursor:'pointer',
-                    background:muted?'#dc2626':'#374151',color:'white',fontSize:9,fontWeight:700}}>
-                  {muted?'M':'M'}
-                </button>
+          {/* Preset description */}
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:11,color:'#6ee7b7',fontWeight:700}}>
+              {SOUND_PRESETS.find(p=>p.id===selectedPreset)?.label}
+            </span>
+            <span style={{fontSize:10,color:'#6b7280'}}>
+              {SOUND_PRESETS.find(p=>p.id===selectedPreset)?.desc}
+            </span>
+          </div>
 
-                {/* Volume slider */}
-                <input type="range" min={0} max={100} value={vol}
-                  onChange={e=>{
-                    const newVol=Number(e.target.value)
-                    setPartVolumes(v=>({...v,[part.id]:newVol}))
-                    const db = newVol===0 ? -60 : 20*Math.log10(newVol/100)
-                    setPartVolume(part.id, db)
-                    setPartMute(part.id, newVol===0)
+          {/* Per-part sliders */}
+          <div style={{display:'flex',gap:20,flexWrap:'wrap',alignItems:'center'}}>
+            {(score.parts||[]).map(part => {
+              const vol   = partVolumes[part.id] ?? 100
+              const muted = vol === 0
+              return (
+                <div key={part.id}
+                  style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4,
+                    background:'#1f2937',borderRadius:8,padding:'8px 10px',minWidth:64}}>
+
+                  {/* Part label */}
+                  <span style={{fontSize:12,fontWeight:700,color:'#e5e7eb',
+                    fontFamily:'"Times New Roman",serif'}}>
+                    {part.label}
+                  </span>
+
+                  {/* Vertical volume slider */}
+                  <input type="range" min={0} max={100} value={vol}
+                    orient="vertical"
+                    onChange={e => {
+                      const v = Number(e.target.value)
+                      setPartVolumes(pv => ({...pv, [part.id]:v}))
+                      setPartVolume(part.id, v)
+                      setPartMute(part.id, v === 0)
+                    }}
+                    style={{
+                      writingMode:'vertical-lr',
+                      direction:'rtl',
+                      WebkitAppearance:'slider-vertical',
+                      width:28, height:80,
+                      accentColor: muted ? '#dc2626' : '#22c55e',
+                      cursor:'pointer',
+                    }}
+                  />
+
+                  {/* Level % */}
+                  <span style={{fontSize:9,color: muted?'#dc2626':'#6ee7b7',
+                    fontFamily:'monospace',fontWeight:700}}>
+                    {muted ? 'MUTE' : `${vol}%`}
+                  </span>
+
+                  {/* Mute button */}
+                  <button
+                    onClick={() => {
+                      const newVol = muted ? 80 : 0
+                      setPartVolumes(pv => ({...pv, [part.id]:newVol}))
+                      setPartVolume(part.id, newVol)
+                      setPartMute(part.id, newVol === 0)
+                    }}
+                    style={{
+                      width:40, height:20, borderRadius:4, border:'none',
+                      cursor:'pointer', fontSize:9, fontWeight:700,
+                      background: muted ? '#dc2626' : '#374151',
+                      color:'white',
+                    }}>
+                    {muted ? 'UNMUTE' : 'MUTE'}
+                  </button>
+                </div>
+              )
+            })}
+
+              {/* Master volume */}
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4,
+                background:'#1a2744',borderRadius:8,padding:'8px 10px',minWidth:64,
+                border:'1px solid #2563eb33'}}>
+                <span style={{fontSize:10,fontWeight:700,color:'#93c5fd'}}>MASTER</span>
+                <input type="range" min={-20} max={6} defaultValue={0}
+                  orient="vertical"
+                  onChange={e => {
+                    Tone.getDestination().volume.value = Number(e.target.value)
                   }}
-                  style={{width:80,accentColor:'#22c55e',cursor:'pointer'}}
+                  style={{
+                    writingMode:'vertical-lr', direction:'rtl',
+                    WebkitAppearance:'slider-vertical',
+                    width:28, height:80, accentColor:'#3b82f6', cursor:'pointer',
+                  }}
                 />
-
-                {/* Level % */}
-                <span style={{fontSize:9,color:'#6b7280',minWidth:28,fontFamily:'monospace'}}>
-                  {vol}%
-                </span>
+                <span style={{fontSize:9,color:'#93c5fd',fontFamily:'monospace'}}>VOL</span>
               </div>
-            )
-          })}
+          </div>
         </div>
       )}
 

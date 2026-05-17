@@ -78,7 +78,7 @@ function measureWidth(measure, slashSet) {
   for (let bi=0;bi<nb;bi++) {
     const beat=measure.beats[bi]
     const events=beat?.events||[]
-    let beatW=0
+    let beatW=0 
     let offset=0
     events.forEach((ev,ei)=>{
       const isRest=ev.type==='rest'
