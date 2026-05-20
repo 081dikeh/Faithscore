@@ -25,9 +25,10 @@ const NOTE_SZ = 14
 const OCT_SZ  = 8
 const SYM_SZ  = 10
 const LYR_SZ  = 10
-const ROW_H   = 26
-const LYRIC_H = 17
-const VOICE_G = 5
+const ROW_H      = 22    // note row height (baseline of note text)
+const LYRIC_H    = 18    // lyric row height
+const VOICE_G    = 14    // gap between voice blocks — large enough to prevent overlap
+const NOTE_HIT_H = NOTE_SZ + 4   // note click target — only above baseline, not below
 const SYS_GAP = 46
 const BRAK_W  = 10
 const LABEL_W = 26
@@ -78,7 +79,7 @@ function measureWidth(measure, slashSet) {
   for (let bi=0;bi<nb;bi++) {
     const beat=measure.beats[bi]
     const events=beat?.events||[]
-    let beatW=0 
+    let beatW=0
     let offset=0
     events.forEach((ev,ei)=>{
       const isRest=ev.type==='rest'
@@ -99,11 +100,16 @@ function InlineLyricEditor({x,y,w,value,onCommit,onCancel}) {
   const ref=useRef(null)
   useEffect(()=>{setTimeout(()=>{ref.current?.focus();ref.current?.select()},30)},[])
   return (
-    <foreignObject x={x-2} y={y-1} width={Math.max(w+6,60)} height={15}>
+    <foreignObject x={x} y={y} width={Math.max(w+4,70)} height={18}>
       <input ref={ref} defaultValue={value}
-        style={{width:'100%',height:'100%',border:'1px solid #2563eb',borderRadius:2,
-          fontSize:10,fontFamily:FONT,padding:'0 2px',boxSizing:'border-box',
-          background:'white',color:'#111',outline:'none'}}
+        placeholder="lyric…"
+        style={{
+          width:'100%', height:'100%',
+          border:'1.5px solid #2563eb', borderRadius:3,
+          fontSize:10, fontFamily:FONT, padding:'0 3px',
+          boxSizing:'border-box', background:'#eff6ff',
+          color:'#111', outline:'none',
+        }}
         onKeyDown={e=>{
           if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();onCommit(e.target.value)}
           if(e.key==='Escape'){e.preventDefault();onCancel()}
@@ -217,11 +223,13 @@ export default function SolfaRenderer({onSelectEvent}) {
         const rawW     = measureWidth(measure,slashSet)
         const sc3      = rawW>0?scaledMW/rawW:1
 
+        // Alternating measure background — covers note row + lyric row
         if (col%2!==0) {
           elems.push(
             <rect key={`bg-${lineIdx}-${pIdx}-${ci}`}
-              x={colXs[ci]} y={rowY-NOTE_SZ-3}
-              width={scaledMW} height={VOICE_H-VOICE_G}
+              x={colXs[ci]} y={rowY - NOTE_SZ - 2}
+              width={scaledMW}
+              height={NOTE_SZ + 2 + 4 + LYRIC_H + 2}
               fill={C.mBgAlt}/>
           )
         }
@@ -269,21 +277,22 @@ export default function SolfaRenderer({onSelectEvent}) {
 
             const noteX  = x+preW
             const noteCX = noteX+bodyW/2
-            const lyricY = rowY+ROW_H+LYRIC_H-5
 
-            // Selection bg
+            // Selection bg (note zone only — above baseline)
             if (isSel) {
               elems.push(
                 <rect key={`sel-${ev.id}`}
-                  x={x} y={rowY-NOTE_SZ-2} width={Math.max(totalW,8*sc3)} height={NOTE_SZ+5}
+                  x={x} y={rowY - NOTE_SZ - 2}
+                  width={Math.max(totalW, 8*sc3)} height={NOTE_HIT_H}
                   fill={C.selBg} rx={2}/>
               )
             }
 
-            // Click target (always present, even for rests)
+            // Note click target — covers ONLY above the note baseline, never into lyric zone
             elems.push(
               <rect key={`hit-${ev.id}`}
-                x={x} y={rowY-NOTE_SZ-2} width={Math.max(totalW,8*sc3)} height={NOTE_SZ+5}
+                x={x} y={rowY - NOTE_SZ - 2}
+                width={Math.max(totalW, 8*sc3)} height={NOTE_HIT_H}
                 fill="transparent" style={{cursor:'pointer'}}
                 onClick={()=>{
                   selectEvent(part.id,col,bi,ei)
@@ -356,26 +365,59 @@ export default function SolfaRenderer({onSelectEvent}) {
               })
             }
 
-            // Lyric (note only)
-            if (isNote) {
-              elems.push(
-                <text key={`ly-${ev.id}`}
-                  x={noteCX} y={lyricY} textAnchor="middle"
-                  fontFamily={FONT} fontSize={LYR_SZ} fill={C.lyric} style={{cursor:'text'}}
-                  onClick={e=>{
-                    e.stopPropagation()
-                    setLyricEdit({partId:part.id,measureIdx:col,beatIdx:bi,eventIdx:ei,
-                      x:noteX,y:lyricY,w:bodyW,current:ev.lyric||''})
-                  }}>
-                  {ev.lyric||''}
-                </text>
-              )
-              elems.push(
-                <line key={`lu-${ev.id}`}
-                  x1={noteX} y1={lyricY+2} x2={noteX+bodyW} y2={lyricY+2}
-                  stroke={C.lyricRul} strokeWidth={0.5}/>
-              )
-            }
+            // Lyric zone — sits immediately below note baseline
+            // Top of lyric zone = rowY + 4 (small gap after note)
+            // This keeps it well above the next voice's note hit rect
+            const lyricZoneY  = rowY + 4
+            const lyricZoneH  = LYRIC_H
+            const lyricTextY  = lyricZoneY + LYRIC_H * 0.7
+            const lyricSlotW  = Math.max(totalW, 8 * sc3)
+
+            // Lyric underline — always visible (tells user this row is for lyrics)
+            elems.push(
+              <line key={`lu-${ev.id}`}
+                x1={x} y1={lyricZoneY + lyricZoneH - 2}
+                x2={x + lyricSlotW} y2={lyricZoneY + lyricZoneH - 2}
+                stroke={C.lyricRul} strokeWidth={0.6}
+                style={{pointerEvents:'none'}}
+              />
+            )
+
+            // Lyric text — pointer-events none so the rect below handles the click
+            elems.push(
+              <text key={`ly-${ev.id}`}
+                x={x + lyricSlotW / 2} y={lyricTextY}
+                textAnchor="middle" fontFamily={FONT}
+                fontSize={LYR_SZ} fill={C.lyric}
+                style={{pointerEvents:'none', userSelect:'none'}}>
+                {(isNote && ev.lyric) ? ev.lyric : ''}
+              </text>
+            )
+
+            // Lyric click target — a transparent rect covering the LYRIC ZONE ONLY
+            // Sits entirely below the note hit rect so they never overlap
+            elems.push(
+              <rect key={`lhit-${ev.id}`}
+                x={x} y={lyricZoneY}
+                width={lyricSlotW} height={lyricZoneH}
+                fill="transparent"
+                style={{cursor:'text'}}
+                onClick={e => {
+                  e.stopPropagation()
+                  if (!isNote) return   // only notes have lyrics
+                  setLyricEdit({
+                    partId:     part.id,
+                    measureIdx: col,
+                    beatIdx:    bi,
+                    eventIdx:   ei,
+                    x:          x,
+                    y:          lyricZoneY + 1,
+                    w:          lyricSlotW,
+                    current:    ev.lyric || '',
+                  })
+                }}
+              />
+            )
 
             x+=totalW
             offset+=ev.duration
@@ -383,12 +425,14 @@ export default function SolfaRenderer({onSelectEvent}) {
         })
       })
 
-      if (pIdx<parts.length-1) {
-        const sepY=rowY+ROW_H+LYRIC_H+VOICE_G/2
+      // Voice separator — sits below lyric zone, above next voice's note area
+      if (pIdx < parts.length - 1) {
+        // rowY + 4 (lyricZoneY) + LYRIC_H + 3 = bottom of lyric + small gap
+        const sepY = rowY + 4 + LYRIC_H + 3
         elems.push(
           <line key={`vsep-${lineIdx}-${pIdx}`}
             x1={leftEdge} y1={sepY}
-            x2={leftEdge+lineCols.reduce((s,c)=>s+rawMWs[c]*sc2,0)} y2={sepY}
+            x2={leftEdge + lineCols.reduce((s,c) => s + rawMWs[c]*sc2, 0)} y2={sepY}
             stroke={C.voiceSep} strokeWidth={0.6}/>
         )
       }
@@ -418,7 +462,7 @@ export default function SolfaRenderer({onSelectEvent}) {
   }
 
   return (
-    <div ref={wrapRef} style={{width:'100%',overflowX:'auto',position:'relative',zIndex:46}}>
+    <div ref={wrapRef} style={{width:'100%',overflowX:'auto'}}>
       <svg width={svgW} height={totalH} style={{display:'block',fontFamily:FONT,userSelect:'none'}}>
         {elems}
       </svg>
