@@ -56,7 +56,7 @@ function getPrefix(offset) {
   if (offset===0) return ''
   if (offset===1) return ''
   if (offset===2) return ''
-  if (offset===3) return ''
+  if (offset===3) return '..'
   return ''
 }
 
