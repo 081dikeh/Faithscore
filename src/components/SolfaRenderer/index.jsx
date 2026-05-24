@@ -54,9 +54,9 @@ const C = {
 // Prefix string for event starting at quarter-unit `offset` within its beat
 function getPrefix(offset) {
   if (offset===0) return ''
-  if (offset===1) return ''
-  if (offset===2) return ''
-  if (offset===3) return '..'
+  if (offset===1) return ','
+  if (offset===2) return '.'
+  if (offset===3) return '.,,'
   return ''
 }
 
@@ -373,51 +373,43 @@ export default function SolfaRenderer({onSelectEvent}) {
             const lyricTextY  = lyricZoneY + LYRIC_H * 0.7
             const lyricSlotW  = Math.max(totalW, 8 * sc3)
 
-            // Lyric underline — always visible (tells user this row is for lyrics)
-            elems.push(
-              <line key={`lu-${ev.id}`}
-                x1={x} y1={lyricZoneY + lyricZoneH - 2}
-                x2={x + lyricSlotW} y2={lyricZoneY + lyricZoneH - 2}
-                stroke={C.lyricRul} strokeWidth={0.6}
-                style={{pointerEvents:'none'}}
-              />
-            )
+            // Lyric zone — only for notes
+            if (isNote) {
+              const lyricZoneY  = rowY + 4
+              const lyricZoneH  = LYRIC_H
+              const lyricTextY  = lyricZoneY + LYRIC_H * 0.7
+              const lyricSlotW  = Math.max(totalW, 8 * sc3)
 
-            // Lyric text — pointer-events none so the rect below handles the click
-            elems.push(
-              <text key={`ly-${ev.id}`}
-                x={x + lyricSlotW / 2} y={lyricTextY}
-                textAnchor="middle" fontFamily={FONT}
-                fontSize={LYR_SZ} fill={C.lyric}
-                style={{pointerEvents:'none', userSelect:'none'}}>
-                {(isNote && ev.lyric) ? ev.lyric : ''}
-              </text>
-            )
-
-            // Lyric click target — a transparent rect covering the LYRIC ZONE ONLY
-            // Sits entirely below the note hit rect so they never overlap
-            elems.push(
-              <rect key={`lhit-${ev.id}`}
-                x={x} y={lyricZoneY}
-                width={lyricSlotW} height={lyricZoneH}
-                fill="transparent"
-                style={{cursor:'text'}}
-                onClick={e => {
-                  e.stopPropagation()
-                  if (!isNote) return   // only notes have lyrics
-                  setLyricEdit({
-                    partId:     part.id,
-                    measureIdx: col,
-                    beatIdx:    bi,
-                    eventIdx:   ei,
-                    x:          x,
-                    y:          lyricZoneY + 1,
-                    w:          lyricSlotW,
-                    current:    ev.lyric || '',
-                  })
-                }}
-              />
-            )
+              elems.push(
+                <line key={`lu-${ev.id}`}
+                  x1={x} y1={lyricZoneY + lyricZoneH - 2}
+                  x2={x + lyricSlotW} y2={lyricZoneY + lyricZoneH - 2}
+                  stroke={C.lyricRul} strokeWidth={0.6}
+                  style={{pointerEvents:'none'}}/>
+              )
+              elems.push(
+                <text key={`ly-${ev.id}`}
+                  x={x + lyricSlotW/2} y={lyricTextY}
+                  textAnchor="middle" fontFamily={FONT}
+                  fontSize={LYR_SZ} fill={C.lyric}
+                  style={{pointerEvents:'none', userSelect:'none'}}>
+                  {ev.lyric || ''}
+                </text>
+              )
+              elems.push(
+                <rect key={`lhit-${ev.id}`}
+                  x={x} y={lyricZoneY}
+                  width={lyricSlotW} height={lyricZoneH}
+                  fill="transparent" style={{cursor:'text'}}
+                  onClick={e=>{
+                    e.stopPropagation()
+                    setLyricEdit({
+                      partId:part.id, measureIdx:col, beatIdx:bi, eventIdx:ei,
+                      x, y:lyricZoneY+1, w:lyricSlotW, current:ev.lyric||'',
+                    })
+                  }}/>
+              )
+            }
 
             x+=totalW
             offset+=ev.duration
