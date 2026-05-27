@@ -512,43 +512,91 @@ export default function ScoreRenderer() {
             });
 
             // ── Beaming ─────────────────────────────────────────────────────
-            // Our buildVfNote already set stem_direction correctly per engraving rules.
-            // We pass auto_stem:false so generateBeams respects our explicit stem dirs.
-            // Flag transparency is set BEFORE voice.draw() to suppress individual flags.
+            // IMPORTANT: We must NOT use Beam.generateBeams(beamable) — it only
+            // receives beamable notes stripped of their position context, so it
+            // happily beams two 8th notes across an intervening quarter note.
+            //
+            // Instead we walk vfNotes in order. Any non-beamable note (quarter,
+            // half, whole, rest, dotted, etc.) immediately closes the current run.
+            // Only runs of 2+ consecutive beamable notes become a Beam.
+            // Beat boundaries (per time signature) also close runs.
             let beamGroups = [];
             try {
-              const beamable = vfNotes.filter((n) => {
-                try {
-                  const dur = n.getDuration();
-                  return (
-                    (dur === "8" ||
-                      dur === "16" ||
-                      dur === "32" ||
-                      dur === "64") &&
-                    !n.isRest?.()
-                  );
-                } catch (_) {
-                  return false;
+              const BEAMABLE_DURS = new Set(["8", "16", "32", "64"]);
+              const beatsInMeasure = measure.timeSignature.beats;
+              const beatType = measure.timeSignature.beatType; // usually 4
+
+              // Build a tick-position accumulator so we know which beat each
+              // note starts on. VexFlow tick resolution: whole = 4096 ticks.
+              const TICKS_PER_WHOLE = 4096;
+              const ticksPerBeat = TICKS_PER_WHOLE / beatType;
+
+              let currentRun = [];
+              let runTick = 0;           // tick position of start of current run
+              let tickCursor = 0;        // running tick position through the measure
+
+              const flushRun = () => {
+                if (currentRun.length >= 2) {
+                  try {
+                    const beam = new Beam(currentRun);
+                    // Hide individual flags on all notes in this beam group
+                    currentRun.forEach((note) => {
+                      try {
+                        note.setFlagStyle({
+                          fillStyle: "transparent",
+                          strokeStyle: "transparent",
+                        });
+                      } catch (_) {}
+                    });
+                    beamGroups.push(beam);
+                  } catch (_) {}
                 }
+                currentRun = [];
+              };
+
+              vfNotes.forEach((vfNote, ni) => {
+                let dur, isBeamable, noteTicks;
+                try {
+                  dur = vfNote.getDuration();
+                  const isRest = vfNote.isRest?.() ?? false;
+                  isBeamable = BEAMABLE_DURS.has(dur) && !isRest;
+                  // Ticks for this note: whole=4096, half=2048, quarter=1024, 8th=512, 16th=256 …
+                  const denom = parseInt(dur, 10) || 4;
+                  noteTicks = TICKS_PER_WHOLE / denom;
+                  // Account for dots (each dot adds half the previous value)
+                  const dots = vfNote.dots ?? 0;
+                  let dotAdd = noteTicks / 2;
+                  for (let d = 0; d < dots; d++) { noteTicks += dotAdd; dotAdd /= 2; }
+                } catch (_) {
+                  isBeamable = false;
+                  noteTicks = 1024; // safe fallback (quarter)
+                }
+
+                if (!isBeamable) {
+                  // Non-beamable note → close any open run
+                  flushRun();
+                } else {
+                  // Check beat boundary: if this note starts on a new beat
+                  // compared to where the current run started, close the run first.
+                  const currentBeat = Math.floor(tickCursor / ticksPerBeat);
+                  const runBeat     = Math.floor(runTick   / ticksPerBeat);
+                  // Only break on beat boundary when the run isn't empty and
+                  // we've crossed into a new beat.
+                  if (currentRun.length > 0 && currentBeat !== runBeat) {
+                    flushRun();
+                    runTick = tickCursor;
+                  }
+                  if (currentRun.length === 0) {
+                    runTick = tickCursor;
+                  }
+                  currentRun.push(vfNote);
+                }
+
+                tickCursor += noteTicks;
               });
-              if (beamable.length > 0) {
-                beamGroups = Beam.generateBeams(beamable, {
-                  auto_stem: false, // respect our pre-calculated stem directions
-                  beam_rests: false,
-                  show_stemlets: false,
-                });
-                beamGroups.forEach((beam) => {
-                  beam.getNotes().forEach((note) => {
-                    try {
-                      // Hide flag so beam line replaces it (not both drawn)
-                      note.setFlagStyle({
-                        fillStyle: "transparent",
-                        strokeStyle: "transparent",
-                      });
-                    } catch (_) {}
-                  });
-                });
-              }
+
+              // Flush any remaining run at end of measure
+              flushRun();
             } catch (_) {}
 
             voice.draw(ctx, stave);

@@ -292,9 +292,9 @@ export default function SolfaRenderer({onSelectEvent}) {
 
             // Record note center position for slur drawing
             const posKey = `${part.id}:${col}:${bi}:${ei}`
-            const lyricBotY = rowY + 4 + LYRIC_H
+            const noteBottomY = rowY + 6   // just below the note baseline, above lyrics
             if (isNote) {
-              eventPosMap.current[posKey] = { cx: noteCX, bottomY: lyricBotY + 4 }
+              eventPosMap.current[posKey] = { cx: noteCX, bottomY: noteBottomY }
             }
 
             // Selection bg (note zone only — above baseline)
@@ -503,18 +503,18 @@ export default function SolfaRenderer({onSelectEvent}) {
 
     const x1 = startPos.cx
     const x2 = endPos.cx
-    const y  = Math.max(startPos.bottomY, endPos.bottomY) + 2
+    const y  = Math.max(startPos.bottomY, endPos.bottomY)
     const w  = x2 - x1
-    const bow = Math.min(Math.max(w * 0.28, 8), 22)
+    const bow = Math.min(Math.max(w * 0.12, 4), 10)  // subtle bow, capped at 10px
 
-    // Cubic bezier: starts and ends at note centers, bows downward
-    const d = `M ${x1} ${y} C ${x1 + w*0.2} ${y + bow}, ${x2 - w*0.2} ${y + bow}, ${x2} ${y}`
+    // Cubic bezier: starts and ends at note centers, bows gently downward
+    const d = `M ${x1} ${y} C ${x1 + w*0.25} ${y + bow}, ${x2 - w*0.25} ${y + bow}, ${x2} ${y}`
     const isHovered = hoveredSlurId === sl.id
 
     elems.push(
       <g key={`slur-${sl.id}`}>
         {/* Wider invisible hit area for hover/click */}
-        <path d={d} fill="none" stroke="transparent" strokeWidth={10}
+        <path d={d} fill="none" stroke="transparent" strokeWidth={8}
           style={{cursor:'pointer'}}
           onMouseEnter={()=>setHoveredSlurId(sl.id)}
           onMouseLeave={()=>setHoveredSlurId(null)}
@@ -523,9 +523,9 @@ export default function SolfaRenderer({onSelectEvent}) {
         {/* Visible slur curve */}
         <path d={d} fill="none"
           stroke={isHovered ? C.slurHover : C.slur}
-          strokeWidth={isHovered ? 1.8 : 1.4}
+          strokeWidth={isHovered ? 1.2 : 0.9}
           strokeLinecap="round"
-          opacity={isHovered ? 1 : 0.75}
+          opacity={isHovered ? 1 : 0.65}
           style={{pointerEvents:'none'}}
         />
       </g>
