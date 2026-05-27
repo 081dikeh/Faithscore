@@ -99,7 +99,7 @@ export function buildEmptySolfaScore(voiceComboKey='satb',key='C',beats=4,numMea
     tempo:80, timeSignature:{beats,beatType:4},
     voiceCombo:voiceComboKey,
     parts:combo.voices.map(v=>makePart(v,numMeasures,beats)),
-    sections:[], _savedAt:null, _cloudId:null,
+    sections:[], slurs:[], _savedAt:null, _cloudId:null,
   }
 }
 
@@ -135,6 +135,7 @@ export function migrateScore(score) {
   if (!score) return buildEmptySolfaScore()
   return {
     ...score,
+    slurs: score.slurs || [],
     parts:(score.parts||[]).map(p=>({
       ...p,measures:(p.measures||[]).map(m=>migrateMeasure(m)),
     })),
@@ -180,13 +181,35 @@ export const useSolfaStore = create((set,get) => ({
   selectedOctave:     0,
   _undoStack:         [],
 
+  // Slur placement state
+  slurStart:          null,   // { partId, measureIdx, beatIdx, eventIdx } | null
+
   setTitle:   t  => set(s=>({score:{...s.score,title:t}})),
   setKey:     k  => set(s=>({score:{...s.score,key:k}})),
   setTempo:   t  => set(s=>({score:{...s.score,tempo:t}})),
   setCloudId: id => set(s=>({score:{...s.score,_cloudId:id}})),
-  setInputMode:       m => set({inputMode:m}),
+  setInputMode:       m => set({inputMode:m, slurStart: m !== 'slur' ? null : get().slurStart}),
   setSelectedDuration:d => set({selectedDuration:d}),
   setSelectedOctave:  o => set({selectedOctave:o}),
+
+  // ── Slur actions ─────────────────────────────────────────────────────────
+  setSlurStart: (ref) => set({ slurStart: ref }),
+  clearSlurStart: () => set({ slurStart: null }),
+
+  addSlur: (partId, startMeasure, startBeat, startEvent, endMeasure, endBeat, endEvent) => {
+    get()._snapshot()
+    const slur = {
+      id: uid(), partId,
+      startMeasure, startBeat, startEvent,
+      endMeasure, endBeat, endEvent,
+    }
+    set(s => ({ score: { ...s.score, slurs: [...(s.score.slurs||[]), slur] } }))
+  },
+
+  removeSlur: (slurId) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, slurs: (s.score.slurs||[]).filter(sl => sl.id !== slurId) } }))
+  },
 
   loadScore: rawScore => {
     const score=migrateScore(rawScore)

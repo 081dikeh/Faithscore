@@ -49,14 +49,15 @@ const C = {
   lyric:'#374151', lyricRul:'#b0b8c8', voiceSep:'#e5e7eb',
   sep:'#4b5563', slash:'#9ca3af', sym:'#374151',
   mBgAlt:'#f8f9fa',
+  slur:'#374151', slurHover:'#dc2626', slurStart:'#2563eb',
 }
 
 // Prefix string for event starting at quarter-unit `offset` within its beat
 function getPrefix(offset) {
   if (offset===0) return ''
-  if (offset===1) return ','
-  if (offset===2) return '.'
-  if (offset===3) return '.,,'
+  if (offset===1) return ''
+  if (offset===2) return ''
+  if (offset===3) return ''
   return ''
 }
 
@@ -124,6 +125,7 @@ export default function SolfaRenderer({onSelectEvent}) {
   const wrapRef        = useRef(null)
   const [svgW,setSvgW] = useState(900)
   const [lyricEdit,setLyricEdit] = useState(null)
+  const [hoveredSlurId,setHoveredSlurId] = useState(null)
 
   const score              = useSolfaStore(s=>s.score)
   const selectedPartId     = useSolfaStore(s=>s.selectedPartId)
@@ -132,6 +134,15 @@ export default function SolfaRenderer({onSelectEvent}) {
   const selectedEventIdx   = useSolfaStore(s=>s.selectedEventIdx)
   const selectEvent        = useSolfaStore(s=>s.selectEvent)
   const setLyric           = useSolfaStore(s=>s.setLyric)
+  const inputMode          = useSolfaStore(s=>s.inputMode)
+  const slurStart          = useSolfaStore(s=>s.slurStart)
+  const setSlurStart       = useSolfaStore(s=>s.setSlurStart)
+  const clearSlurStart     = useSolfaStore(s=>s.clearSlurStart)
+  const addSlur            = useSolfaStore(s=>s.addSlur)
+  const removeSlur         = useSolfaStore(s=>s.removeSlur)
+
+  // Map of "partId:measureIdx:beatIdx:eventIdx" → {cx, bottomY} for slur drawing
+  const eventPosMap = useRef({})
 
   useEffect(()=>{
     if (!wrapRef.current) return
@@ -173,6 +184,7 @@ export default function SolfaRenderer({onSelectEvent}) {
   const totalH =HDR_H+lines.length*systemH+40
   const elems=[]
   let sysY=HDR_H+20
+  eventPosMap.current = {}
 
   elems.push(
     <g key="hdr">
@@ -278,6 +290,13 @@ export default function SolfaRenderer({onSelectEvent}) {
             const noteX  = x+preW
             const noteCX = noteX+bodyW/2
 
+            // Record note center position for slur drawing
+            const posKey = `${part.id}:${col}:${bi}:${ei}`
+            const lyricBotY = rowY + 4 + LYRIC_H
+            if (isNote) {
+              eventPosMap.current[posKey] = { cx: noteCX, bottomY: lyricBotY + 4 }
+            }
+
             // Selection bg (note zone only — above baseline)
             if (isSel) {
               elems.push(
@@ -288,13 +307,45 @@ export default function SolfaRenderer({onSelectEvent}) {
               )
             }
 
+            // Slur start highlight
+            const isSlurStart = inputMode==='slur' && slurStart &&
+              slurStart.partId===part.id && slurStart.measureIdx===col &&
+              slurStart.beatIdx===bi && slurStart.eventIdx===ei
+            if (isSlurStart) {
+              elems.push(
+                <rect key={`slurhl-${ev.id}`}
+                  x={x} y={rowY - NOTE_SZ - 2}
+                  width={Math.max(totalW, 8*sc3)} height={NOTE_HIT_H}
+                  fill="rgba(37,99,235,0.18)" rx={2} style={{pointerEvents:'none'}}/>
+              )
+            }
+
             // Note click target — covers ONLY above the note baseline, never into lyric zone
             elems.push(
               <rect key={`hit-${ev.id}`}
                 x={x} y={rowY - NOTE_SZ - 2}
                 width={Math.max(totalW, 8*sc3)} height={NOTE_HIT_H}
-                fill="transparent" style={{cursor:'pointer'}}
+                fill="transparent" style={{cursor: inputMode==='slur' && isNote ? 'crosshair' : 'pointer'}}
                 onClick={()=>{
+                  if (inputMode === 'slur' && isNote) {
+                    if (!slurStart) {
+                      // First click — set slur start
+                      setSlurStart({ partId: part.id, measureIdx: col, beatIdx: bi, eventIdx: ei })
+                    } else if (
+                      slurStart.partId === part.id &&
+                      (col > slurStart.measureIdx ||
+                        (col === slurStart.measureIdx && bi > slurStart.beatIdx) ||
+                        (col === slurStart.measureIdx && bi === slurStart.beatIdx && ei > slurStart.eventIdx))
+                    ) {
+                      // Second click — create slur (must be after start)
+                      addSlur(slurStart.partId, slurStart.measureIdx, slurStart.beatIdx, slurStart.eventIdx, col, bi, ei)
+                      clearSlurStart()
+                    } else {
+                      // Clicked before start or same note — reset start
+                      setSlurStart({ partId: part.id, measureIdx: col, beatIdx: bi, eventIdx: ei })
+                    }
+                    return
+                  }
                   selectEvent(part.id,col,bi,ei)
                   onSelectEvent?.(part.id,col,bi,ei)
                   setLyricEdit(null)
@@ -438,6 +489,47 @@ export default function SolfaRenderer({onSelectEvent}) {
     })
 
     sysY+=systemH
+  })
+
+  // ── Render slurs ──────────────────────────────────────────────────────────
+  // Slurs are cubic bezier curves drawn below the lyric zone
+  const slurs = score.slurs || []
+  slurs.forEach(sl => {
+    const startKey = `${sl.partId}:${sl.startMeasure}:${sl.startBeat}:${sl.startEvent}`
+    const endKey   = `${sl.partId}:${sl.endMeasure}:${sl.endBeat}:${sl.endEvent}`
+    const startPos = eventPosMap.current[startKey]
+    const endPos   = eventPosMap.current[endKey]
+    if (!startPos || !endPos) return
+
+    const x1 = startPos.cx
+    const x2 = endPos.cx
+    const y  = Math.max(startPos.bottomY, endPos.bottomY) + 2
+    const w  = x2 - x1
+    const bow = Math.min(Math.max(w * 0.28, 8), 22)
+
+    // Cubic bezier: starts and ends at note centers, bows downward
+    const d = `M ${x1} ${y} C ${x1 + w*0.2} ${y + bow}, ${x2 - w*0.2} ${y + bow}, ${x2} ${y}`
+    const isHovered = hoveredSlurId === sl.id
+
+    elems.push(
+      <g key={`slur-${sl.id}`}>
+        {/* Wider invisible hit area for hover/click */}
+        <path d={d} fill="none" stroke="transparent" strokeWidth={10}
+          style={{cursor:'pointer'}}
+          onMouseEnter={()=>setHoveredSlurId(sl.id)}
+          onMouseLeave={()=>setHoveredSlurId(null)}
+          onClick={e=>{e.stopPropagation(); removeSlur(sl.id)}}
+        />
+        {/* Visible slur curve */}
+        <path d={d} fill="none"
+          stroke={isHovered ? C.slurHover : C.slur}
+          strokeWidth={isHovered ? 1.8 : 1.4}
+          strokeLinecap="round"
+          opacity={isHovered ? 1 : 0.75}
+          style={{pointerEvents:'none'}}
+        />
+      </g>
+    )
   })
 
   if (lyricEdit) {

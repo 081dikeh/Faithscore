@@ -125,6 +125,8 @@ export default function SolfaApp({ user, onGoHome }) {
   const undo = useSolfaStore((s) => s.undo);
   const selectEvent = useSolfaStore((s) => s.selectEvent);
   const navigateEvent = useSolfaStore((s) => s.navigateEvent);
+  const slurStart = useSolfaStore((s) => s.slurStart);
+  const clearSlurStart = useSolfaStore((s) => s.clearSlurStart);
 
   const setOctave = useCallback((o) => {
     useSolfaStore.getState().setSelectedOctave(o);
@@ -332,6 +334,7 @@ export default function SolfaApp({ user, onGoHome }) {
 
       if (e.key === "Escape") {
         setInputMode("select");
+        clearSlurStart();
         return;
       }
       if (e.key === "n" || e.key === "N") {
@@ -799,7 +802,26 @@ export default function SolfaApp({ user, onGoHome }) {
           >
             ● Note
           </button>
+          <button
+            style={abtn(inputMode === "slur", "#7c3aed")}
+            onClick={() => {
+              if (inputMode === "slur") {
+                setInputMode("select");
+                clearSlurStart();
+              } else {
+                setInputMode("slur");
+              }
+            }}
+            title="Draw a slur: click first note, then last note. Click slur to delete."
+          >
+            ⌒ Slur
+          </button>
         </div>
+        {inputMode === "slur" && (
+          <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 600, fontStyle: "italic" }}>
+            {slurStart ? "Click the ending note →" : "Click the starting note →"}
+          </span>
+        )}
         <Sep />
 
         {/* Syllables */}
