@@ -35,6 +35,7 @@ import {
   migrateMeasure,
 } from "../../store/solfaStore";
 import { useSolfaPlayback, SOUND_PRESETS } from "../../hooks/useSolfaPlayback";
+import { exportSolfaPDF, exportSolfaAudio } from "../../utils/exportSolfa";
 import { supabase } from "../../lib/supabase";
 
 const SYLLABLES = ["d", "r", "m", "f", "s", "l", "t"];
@@ -199,9 +200,17 @@ export default function SolfaApp({ user, onGoHome }) {
   const [showChromatic, setShowChromatic] = useState(false);
   const [showMixer, setShowMixer] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState("choir_african");
-  // partVolumes: { [partId]: number 0-100 (%) }  100=full, 0=silent
   const [partVolumes, setPartVolumes] = useState({});
   const [zoom, setZoom] = useState(1.0);
+
+  // Export state
+  const rendererRef   = useRef(null);
+  const [showExport,  setShowExport]  = useState(false);
+  const [exportTab,   setExportTab]   = useState("pdf"); // "pdf" | "audio"
+  const [exportBpm,   setExportBpm]   = useState(score.tempo || 80);
+  const [exportBusy,  setExportBusy]  = useState(false);
+  const [exportProg,  setExportProg]  = useState(0);
+  const [exportStatus,setExportStatus]= useState("");
 
   // ── Get current beat cursor offset ────────────────────────────────────────
   // The cursor within a beat = sum of durations of all events up to and
@@ -731,6 +740,28 @@ export default function SolfaApp({ user, onGoHome }) {
             {saveMsg}
           </span>
         )}
+
+        {/* Export button */}
+        <button
+          onClick={() => { setExportBpm(score.tempo || 80); setExportStatus(""); setExportProg(0); setShowExport(true); }}
+          title="Download PDF or Audio"
+          style={{
+            padding: "4px 12px",
+            fontSize: 12,
+            fontWeight: 600,
+            background: "white",
+            color: "#374151",
+            border: "1px solid #d1d5db",
+            borderRadius: 6,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+          }}
+        >
+          ⬇ Export
+        </button>
+
         <button
           onClick={saveToCloud}
           disabled={saving || !user}
@@ -1530,6 +1561,7 @@ export default function SolfaApp({ user, onGoHome }) {
             </div>
 
             <SolfaRenderer
+              ref={rendererRef}
               onSelectEvent={(partId, mIdx, bi, ei) => {
                 useSolfaStore.getState().selectEvent(partId, mIdx, bi, ei);
               }}
@@ -1537,6 +1569,152 @@ export default function SolfaApp({ user, onGoHome }) {
           </div>
         </div>
       </main>
+      {/* ── Export Modal ── */}
+      {showExport && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 200,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+          onClick={() => { if (!exportBusy) setShowExport(false) }}
+        >
+          <div
+            style={{
+              background: "white", borderRadius: 12, width: 420,
+              boxShadow: "0 8px 40px rgba(0,0,0,0.28)",
+              overflow: "hidden",
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ background: "#1e2433", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ color: "white", fontWeight: 700, fontSize: 15 }}>⬇ Export Score</span>
+              {!exportBusy && (
+                <button onClick={() => setShowExport(false)}
+                  style={{ background: "none", border: "none", color: "#9ca3af", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>×</button>
+              )}
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb" }}>
+              {[{id:"pdf",label:"📄 Print / PDF"},{id:"audio",label:"🎵 Audio (WAV)"}].map(tab => (
+                <button key={tab.id} onClick={() => !exportBusy && setExportTab(tab.id)}
+                  style={{
+                    flex:1, padding:"10px 0", fontSize:13, fontWeight: exportTab===tab.id ? 700 : 400,
+                    border:"none", borderBottom: exportTab===tab.id ? "2px solid #2563eb" : "2px solid transparent",
+                    background: exportTab===tab.id ? "#eff6ff" : "white",
+                    color: exportTab===tab.id ? "#2563eb" : "#6b7280",
+                    cursor: exportBusy ? "not-allowed" : "pointer",
+                  }}
+                >{tab.label}</button>
+              ))}
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: "20px 24px 24px" }}>
+              {exportTab === "pdf" ? (
+                <div>
+                  <p style={{ fontSize: 13, color: "#374151", marginBottom: 16, lineHeight: 1.5 }}>
+                    Opens a print-ready page with your solfa score laid out on A4.
+                    Use <strong>File → Print</strong> or <strong>Save as PDF</strong> in the print dialog.
+                  </p>
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", marginBottom: 18, fontSize: 12, color: "#64748b" }}>
+                    <div>📐 A4 portrait format</div>
+                    <div>🎼 Includes title, key, time signature &amp; tempo</div>
+                    <div>🖋 All voice parts included</div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const svgEl = rendererRef.current?.getSvgElement()
+                      exportSolfaPDF(score, svgEl)
+                    }}
+                    style={{
+                      width: "100%", padding: "11px 0", fontSize: 14, fontWeight: 700,
+                      background: "#2563eb", color: "white", border: "none",
+                      borderRadius: 8, cursor: "pointer",
+                    }}
+                  >
+                    Open Print Preview →
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <p style={{ fontSize: 13, color: "#374151", marginBottom: 14, lineHeight: 1.5 }}>
+                    Renders your score to a <strong>WAV audio file</strong> using the choir sampler,
+                    at any BPM you choose.
+                  </p>
+
+                  {/* BPM picker */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+                    <label style={{ fontSize: 12, color: "#6b7280", minWidth: 60 }}>♩ = BPM</label>
+                    <input type="range" min={20} max={240} value={exportBpm}
+                      onChange={e => setExportBpm(Number(e.target.value))}
+                      disabled={exportBusy}
+                      style={{ flex: 1, accentColor: "#2563eb" }}
+                    />
+                    <input type="number" min={20} max={240} value={exportBpm}
+                      onChange={e => setExportBpm(Math.max(20, Math.min(240, Number(e.target.value))))}
+                      disabled={exportBusy}
+                      style={{ width: 56, padding: "3px 6px", fontSize: 13, border: "1px solid #d1d5db", borderRadius: 5, textAlign: "center" }}
+                    />
+                  </div>
+
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", marginBottom: 18, fontSize: 12, color: "#64748b" }}>
+                    <div>🎤 FluidR3 Choir Aahs sampler — all SATB parts</div>
+                    <div>🔊 44.1 kHz stereo WAV with reverb</div>
+                    <div>⚡ Rendered offline (faster than real-time)</div>
+                  </div>
+
+                  {/* Progress */}
+                  {exportBusy && (
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>{exportStatus}</div>
+                      <div style={{ height: 6, background: "#e5e7eb", borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${Math.round(exportProg * 100)}%`, background: "#2563eb", borderRadius: 3, transition: "width 0.2s" }} />
+                      </div>
+                      <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4, textAlign: "right" }}>{Math.round(exportProg * 100)}%</div>
+                    </div>
+                  )}
+
+                  {exportStatus && !exportBusy && (
+                    <div style={{ fontSize: 13, color: exportStatus.includes("✓") ? "#16a34a" : "#dc2626", marginBottom: 12, fontWeight: 600 }}>
+                      {exportStatus}
+                    </div>
+                  )}
+
+                  <button
+                    disabled={exportBusy}
+                    onClick={async () => {
+                      setExportBusy(true)
+                      setExportProg(0)
+                      setExportStatus("")
+                      try {
+                        await exportSolfaAudio(score, {
+                          tempo: exportBpm,
+                          onProgress: p => setExportProg(p),
+                          onStatus:   s => setExportStatus(s),
+                        })
+                      } catch(err) {
+                        setExportStatus("Export failed: " + (err?.message || err))
+                      }
+                      setExportBusy(false)
+                    }}
+                    style={{
+                      width: "100%", padding: "11px 0", fontSize: 14, fontWeight: 700,
+                      background: exportBusy ? "#93c5fd" : "#2563eb", color: "white",
+                      border: "none", borderRadius: 8,
+                      cursor: exportBusy ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {exportBusy ? "Rendering…" : "⬇ Download WAV"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
