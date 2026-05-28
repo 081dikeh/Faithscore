@@ -551,5 +551,5 @@ export default function SolfaRenderer({onSelectEvent}) {
         {elems}
       </svg>
     </div>
-  )
+  ) 
 }
