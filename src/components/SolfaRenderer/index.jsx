@@ -17,7 +17,7 @@
 //
 // BEAT SEPARATOR: ":" before beat 2+; "/" at slashSet positions
 
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react'
 import { useSolfaStore, slashPositions, migrateMeasure } from '../../store/solfaStore'
 
 const FONT    = '"Times New Roman", Georgia, serif'
@@ -121,11 +121,17 @@ function InlineLyricEditor({x,y,w,value,onCommit,onCancel}) {
   )
 }
 
-export default function SolfaRenderer({onSelectEvent}) {
+const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
   const wrapRef        = useRef(null)
+  const svgNodeRef     = useRef(null)
   const [svgW,setSvgW] = useState(900)
   const [lyricEdit,setLyricEdit] = useState(null)
   const [hoveredSlurId,setHoveredSlurId] = useState(null)
+
+  // Expose SVG element to parent for PDF export
+  useImperativeHandle(ref, () => ({
+    getSvgElement: () => svgNodeRef.current,
+  }), [])
 
   const score              = useSolfaStore(s=>s.score)
   const selectedPartId     = useSolfaStore(s=>s.selectedPartId)
@@ -547,9 +553,11 @@ export default function SolfaRenderer({onSelectEvent}) {
 
   return (
     <div ref={wrapRef} style={{width:'100%',overflowX:'auto'}}>
-      <svg width={svgW} height={totalH} style={{display:'block',fontFamily:FONT,userSelect:'none'}}>
+      <svg ref={svgNodeRef} width={svgW} height={totalH} style={{display:'block',fontFamily:FONT,userSelect:'none'}}>
         {elems}
       </svg>
     </div>
-  ) 
-}
+  )
+})
+
+export default SolfaRenderer
