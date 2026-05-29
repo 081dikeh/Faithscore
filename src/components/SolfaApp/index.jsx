@@ -115,8 +115,9 @@ export default function SolfaApp({ user, onGoHome }) {
 
   const setInputMode = useSolfaStore((s) => s.setInputMode);
   const setSelectedDuration = useSolfaStore((s) => s.setSelectedDuration);
-  const setTitle = useSolfaStore((s) => s.setTitle);
-  const setKey = useSolfaStore((s) => s.setKey);
+  const setTitle    = useSolfaStore((s) => s.setTitle);
+  const setComposer = useSolfaStore((s) => s.setComposer);
+  const setKey      = useSolfaStore((s) => s.setKey);
   const placeEvent = useSolfaStore((s) => s.placeEvent);
   const placeSustain = useSolfaStore((s) => s.placeSustain);
   const changeEventDuration = useSolfaStore((s) => s.changeEventDuration);
@@ -652,6 +653,22 @@ export default function SolfaApp({ user, onGoHome }) {
             background: "transparent",
           }}
           placeholder="Score title"
+        />
+
+        <input
+          value={score.composer || ""}
+          onChange={(e) => setComposer(e.target.value)}
+          style={{
+            border: "none",
+            borderBottom: "1px solid #e5e7eb",
+            outline: "none",
+            fontSize: 12,
+            fontStyle: "italic",
+            color: "#6b7280",
+            width: 140,
+            background: "transparent",
+          }}
+          placeholder="Composer name"
         />
 
         <div style={{ flex: 1 }} />

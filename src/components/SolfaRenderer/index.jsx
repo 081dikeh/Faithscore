@@ -553,7 +553,13 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
 
   return (
     <div ref={wrapRef} style={{width:'100%',overflowX:'auto'}}>
-      <svg ref={svgNodeRef} width={svgW} height={totalH} style={{display:'block',fontFamily:FONT,userSelect:'none'}}>
+      <svg
+        ref={svgNodeRef}
+        width={svgW}
+        height={totalH}
+        viewBox={`0 0 ${svgW} ${totalH}`}
+        style={{display:'block',fontFamily:FONT,userSelect:'none'}}
+      >
         {elems}
       </svg>
     </div>
