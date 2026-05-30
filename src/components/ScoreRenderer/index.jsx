@@ -223,16 +223,16 @@ export default function ScoreRenderer() {
     // Compute minimum pixel width for each measure based on content density.
     // This is the core of the dynamic layout — denser measures get more space.
     const NOTE_PX = {
-      w: SP * 5,
-      h: SP * 4,
-      q: SP * 3,
-      8: SP * 2.5,
-      16: SP * 2,
-      32: SP * 1.8,
-      64: SP * 1.6,
+      w:  SP * 7,    // whole
+      h:  SP * 5.5,  // half
+      q:  SP * 4.5,  // quarter
+      8:  SP * 3.5,  // eighth
+      16: SP * 3.2,  // sixteenth
+      32: SP * 2.8,  // 32nd
+      64: SP * 2.4,  // 64th
     };
-    const MIN_MEASURE_WIDTH = SP * 8; // absolute minimum (very sparse measures)
-    const MAX_MEASURE_WIDTH = SP * 40; // absolute maximum (very dense measures)
+    const MIN_MEASURE_WIDTH = SP * 14; // absolute minimum
+    const MAX_MEASURE_WIDTH = SP * 80; // absolute maximum
 
     function getMeasureContentWidth(colIdx) {
       let maxNotePx = 0;
@@ -441,8 +441,20 @@ export default function ScoreRenderer() {
             }
           }
 
-          // Part name labels removed — clean score appearance like MuseScore default
-          // (names show in the parts panel/sidebar instead)
+          // Part name labels — show on first system only, left of the stave
+          // (MuseScore style: full name on first system, abbreviated on subsequent)
+          if (isFirst) {
+            const partName = part.label || part.name || ''
+            if (partName) {
+              ctx.save()
+              ctx.setFont('Times New Roman', 9)
+              ctx.setFillStyle('#1e293b')
+              // Right-align the label flush to the stave left edge
+              const labelX = x - 4
+              ctx.fillText(partName, labelX - (partName.length * 5.2), partY + STAFF_HEIGHT / 2 + 3)
+              ctx.restore()
+            }
+          }
 
           if (isFirst && numParts > 1) {
             if (pIdx === 0) firstStave = stave;
@@ -532,12 +544,44 @@ export default function ScoreRenderer() {
               const ticksPerBeat = TICKS_PER_WHOLE / beatType;
 
               let currentRun = [];
+              let currentRunSeq = [];    // parallel array: seq notes for each vfNote in run
               let runTick = 0;           // tick position of start of current run
               let tickCursor = 0;        // running tick position through the measure
+
+              // Compute group stem direction from average diatonic position
+              // of all notes in the run relative to the staff middle line.
+              // This is the standard engraving rule: if the group sits mostly
+              // BELOW the middle line → stems UP; mostly ABOVE → stems DOWN.
+              // All notes share the same direction to keep the beam unified.
+              function applyGroupStemDir(run, runSeqNotes) {
+                if (!run.length) return;
+                const mid = MIDDLE_LINE[clef] || MIDDLE_LINE.treble;
+                let sumPos = 0, count = 0;
+                runSeqNotes.forEach(sn => {
+                  if (sn && !sn.isRest && sn.pitch) {
+                    sumPos += diatonicPos(sn.pitch);
+                    count++;
+                    // Also count chord notes
+                    const extras = Object.values(chordMap[sn.id] || {});
+                    extras.forEach(cn => {
+                      if (cn.pitch) { sumPos += diatonicPos(cn.pitch); count++; }
+                    });
+                  }
+                });
+                if (!count) return;
+                const avgPos = sumPos / count;
+                // avg >= middle → stems DOWN (-1); avg < middle → stems UP (1)
+                const groupDir = avgPos >= mid ? -1 : 1;
+                run.forEach(vfNote => {
+                  try { vfNote.setStemDirection(groupDir); } catch(_) {}
+                });
+              }
 
               const flushRun = () => {
                 if (currentRun.length >= 2) {
                   try {
+                    // Apply unified stem direction based on group average pitch
+                    applyGroupStemDir(currentRun, currentRunSeq);
                     const beam = new Beam(currentRun);
                     // Hide individual flags on all notes in this beam group
                     currentRun.forEach((note) => {
@@ -552,6 +596,7 @@ export default function ScoreRenderer() {
                   } catch (_) {}
                 }
                 currentRun = [];
+                currentRunSeq = [];
               };
 
               vfNotes.forEach((vfNote, ni) => {
@@ -590,6 +635,7 @@ export default function ScoreRenderer() {
                     runTick = tickCursor;
                   }
                   currentRun.push(vfNote);
+                  currentRunSeq.push(renderSeq[ni]);
                 }
 
                 tickCursor += noteTicks;

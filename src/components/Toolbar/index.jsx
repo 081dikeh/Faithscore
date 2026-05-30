@@ -1,70 +1,97 @@
 // src/components/Toolbar/index.jsx
+// FaithScore — MuseScore-style Toolbar
+// Two compact rows:
+//   Row 1: Mode | Durations + Dot + Triplet | Chromatic notes | Octave | Chord
+//   Row 2: Key | Time | Tempo (these stay visible always for quick access)
 import { useScoreStore } from '../../store/scoreStore'
 
-const DURATIONS = [
-  { sym:'𝅝',  val:'w',  label:'Whole (1)'   },
-  { sym:'𝅗𝅥',  val:'h',  label:'Half (2)'    },
-  { sym:'♩',  val:'q',  label:'Quarter (3)' },
-  { sym:'♪',  val:'8',  label:'8th (4)'     },
-  { sym:'𝅘𝅥𝅰', val:'16', label:'16th (5)'    },
-  { sym:'𝅘𝅥𝅱', val:'32', label:'32nd (6)'    },
-  { sym:'𝅘𝅥𝅱', val:'64', label:'64th (7)'    },
-]
-
 export const CHROMATIC_NOTES = [
-  { step:'C', accidental:null, label:'C'   },
-  { step:'C', accidental:'#',  label:'C♯'  },
-  { step:'D', accidental:null, label:'D'   },
-  { step:'E', accidental:'b',  label:'E♭'  },
-  { step:'E', accidental:null, label:'E'   },
-  { step:'F', accidental:null, label:'F'   },
-  { step:'F', accidental:'#',  label:'F♯'  },
-  { step:'G', accidental:null, label:'G'   },
-  { step:'G', accidental:'#',  label:'G♯'  },
-  { step:'A', accidental:null, label:'A'   },
-  { step:'B', accidental:'b',  label:'B♭'  },
-  { step:'B', accidental:null, label:'B'   },
+  { step:'C', accidental:null,  label:'C'  },
+  { step:'C', accidental:'#',   label:'C♯' },
+  { step:'D', accidental:null,  label:'D'  },
+  { step:'E', accidental:'b',   label:'E♭' },
+  { step:'E', accidental:null,  label:'E'  },
+  { step:'F', accidental:null,  label:'F'  },
+  { step:'F', accidental:'#',   label:'F♯' },
+  { step:'G', accidental:null,  label:'G'  },
+  { step:'G', accidental:'#',   label:'G♯' },
+  { step:'A', accidental:null,  label:'A'  },
+  { step:'B', accidental:'b',   label:'B♭' },
+  { step:'B', accidental:null,  label:'B'  },
 ]
 
 export const KEY_SIGNATURES = [
-  { label:'C maj / A min', value:0  }, { label:'G maj / E min',   value:1  },
-  { label:'D maj / B min', value:2  }, { label:'A maj / F♯ min',  value:3  },
-  { label:'E maj / C♯ min',value:4  }, { label:'B maj / G♯ min',  value:5  },
-  { label:'F♯ maj / D♯ min',value:6 }, { label:'C♯ maj / A♯ min', value:7  },
-  { label:'F maj / D min', value:-1 }, { label:'B♭ maj / G min',  value:-2 },
-  { label:'E♭ maj / C min',value:-3 }, { label:'A♭ maj / F min',  value:-4 },
-  { label:'D♭ maj / B♭ min',value:-5}, { label:'G♭ maj / E♭ min', value:-6 },
-  { label:'C♭ maj / A♭ min',value:-7},
+  { label:'C maj / A min',     value: 0  }, { label:'G maj / E min',    value: 1  },
+  { label:'D maj / B min',     value: 2  }, { label:'A maj / F♯ min',   value: 3  },
+  { label:'E maj / C♯ min',    value: 4  }, { label:'B maj / G♯ min',   value: 5  },
+  { label:'F♯ maj / D♯ min',   value: 6  }, { label:'C♯ maj / A♯ min',  value: 7  },
+  { label:'F maj / D min',     value:-1  }, { label:'B♭ maj / G min',   value:-2  },
+  { label:'E♭ maj / C min',    value:-3  }, { label:'A♭ maj / F min',   value:-4  },
+  { label:'D♭ maj / B♭ min',   value:-5  }, { label:'G♭ maj / E♭ min',  value:-6  },
+  { label:'C♭ maj / A♭ min',   value:-7  },
 ]
 
 export const TIME_SIGNATURES = [
-  { label:'4/4',  beats:4,  beatType:4 }, { label:'3/4',  beats:3,  beatType:4 },
-  { label:'2/4',  beats:2,  beatType:4 }, { label:'2/2',  beats:2,  beatType:2 },
-  { label:'6/8',  beats:6,  beatType:8 }, { label:'9/8',  beats:9,  beatType:8 },
-  { label:'12/8', beats:12, beatType:8 }, { label:'5/4',  beats:5,  beatType:4 },
-  { label:'7/4',  beats:7,  beatType:4 }, { label:'3/8',  beats:3,  beatType:8 },
+  { label:'4/4', beats:4, beatType:4 }, { label:'3/4', beats:3, beatType:4 },
+  { label:'2/4', beats:2, beatType:4 }, { label:'2/2', beats:2, beatType:2 },
+  { label:'6/8', beats:6, beatType:8 }, { label:'9/8', beats:9, beatType:8 },
+  { label:'12/8',beats:12,beatType:8 }, { label:'5/4', beats:5, beatType:4 },
+  { label:'7/4', beats:7, beatType:4 }, { label:'3/8', beats:3, beatType:8 },
 ]
 
-// Separator component
+// Duration data: symbol + value + keyboard shortcut label
+const DURATIONS = [
+  { val:'w',  sym:'𝅝',   label:'Whole',    key:'1' },
+  { val:'h',  sym:'𝅗𝅥',   label:'Half',     key:'2' },
+  { val:'q',  sym:'♩',   label:'Quarter',  key:'3' },
+  { val:'8',  sym:'♪',   label:'8th',      key:'4' },
+  { val:'16', sym:'𝅘𝅥𝅰',  label:'16th',     key:'5' },
+  { val:'32', sym:'𝅘𝅥𝅱',  label:'32nd',     key:'6' },
+  { val:'64', sym:'𝅘𝅥𝅱',  label:'64th',     key:'7' },
+]
+
+// Vertical separator
 function Sep() {
-  return <div className="h-6 w-px bg-gray-300 mx-0.5 flex-shrink-0" />
+  return (
+    <div style={{
+      width: 1, height: 22, background: '#e5e7eb',
+      margin: '0 4px', flexShrink: 0,
+    }} />
+  )
 }
 
-// Generic toolbar button
-function TBtn({ active, onClick, title, children, wide = false, color = 'default' }) {
-  let activeStyle = 'bg-blue-600 text-white border-blue-600'
-  if (color === 'orange') activeStyle = 'bg-orange-500 text-white border-orange-500'
-  if (color === 'purple') activeStyle = 'bg-purple-600 text-white border-purple-600'
-  if (color === 'green')  activeStyle = 'bg-green-600 text-white border-green-600'
-
+// Toolbar button — uniform 26×26 touch target
+function TBtn({ active, onClick, title, children, color = 'default', wide = false }) {
+  const colors = {
+    default: { bg: '#2563eb', border: '#2563eb', text: 'white' },
+    green:   { bg: '#16a34a', border: '#16a34a', text: 'white' },
+    orange:  { bg: '#ea580c', border: '#ea580c', text: 'white' },
+    purple:  { bg: '#7c3aed', border: '#7c3aed', text: 'white' },
+    red:     { bg: '#dc2626', border: '#dc2626', text: 'white' },
+  }
+  const ac = colors[color] || colors.default
   return (
-    <button title={title} onClick={onClick}
-      className={`h-7 ${wide ? 'px-3' : 'min-w-[28px] px-1.5'} rounded border text-sm font-medium
-        flex items-center justify-center gap-1 transition-colors flex-shrink-0
-        ${active
-          ? activeStyle
-          : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400'
-        }`}>
+    <button
+      title={title}
+      onClick={onClick}
+      style={{
+        height: 26,
+        minWidth: wide ? 'auto' : 26,
+        padding: wide ? '0 8px' : '0 4px',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        gap: 3, flexShrink: 0,
+        borderRadius: 4,
+        border: `1px solid ${active ? ac.border : '#d1d5db'}`,
+        background: active ? ac.bg : 'white',
+        color: active ? ac.text : '#374151',
+        fontSize: 13, fontWeight: active ? 700 : 500,
+        cursor: 'pointer',
+        transition: 'all 0.1s',
+        lineHeight: 1,
+      }}
+      onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#f9fafb' }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'white' }}
+    >
       {children}
     </button>
   )
@@ -78,8 +105,6 @@ export default function Toolbar() {
   const selectedNote           = useScoreStore(s => s.selectedNote)
   const selectedOctave         = useScoreStore(s => s.selectedOctave)
   const chordMode              = useScoreStore(s => s.chordMode)
-  const selectedPartId         = useScoreStore(s => s.selectedPartId)
-  const selectedNoteId         = useScoreStore(s => s.selectedNoteId)
   const getSelectedNote        = useScoreStore(s => s.getSelectedNote)
 
   const setInputMode           = useScoreStore(s => s.setInputMode)
@@ -92,6 +117,7 @@ export default function Toolbar() {
   const setGlobalTimeSignature = useScoreStore(s => s.setGlobalTimeSignature)
   const changeSelectedDuration = useScoreStore(s => s.changeSelectedDuration)
   const setTempo               = useScoreStore(s => s.setTempo)
+  const selectedPartId         = useScoreStore(s => s.selectedPartId)
 
   const selectedPart   = score.parts.find(p => p.id === selectedPartId)
   const clef           = selectedPart?.clef || 'treble'
@@ -99,127 +125,171 @@ export default function Toolbar() {
   const currentKey     = score.parts[0]?.measures[0]?.keySignature ?? 0
   const currentTimeSig = score.parts[0]?.measures[0]?.timeSignature ?? { beats:4, beatType:4 }
 
-  // The live selected note object (if any)
-  const liveNote    = getSelectedNote?.()
-  const hasNote     = !!liveNote && !liveNote.isRest
-  const hasAnyNote  = !!liveNote
-
-  // Active duration = selected note's duration (if editing) else toolbar state
-  const activeDur  = liveNote?.duration  ?? selectedDuration
-  const activeDots = liveNote?.dots      ?? selectedDots
+  const liveNote   = getSelectedNote?.()
+  const hasAnyNote = !!liveNote
+  const activeDur  = liveNote?.duration ?? selectedDuration
+  const activeDots = liveNote?.dots     ?? selectedDots
 
   function handleDuration(val) {
-    if (hasAnyNote) {
-      changeSelectedDuration(val, liveNote.dots || 0)
-    } else {
-      setDuration(val)
-    }
+    if (hasAnyNote) changeSelectedDuration(val, liveNote.dots || 0)
+    else setDuration(val)
   }
 
   function handleDot() {
-    if (hasAnyNote) {
-      changeSelectedDuration(liveNote.duration, liveNote.dots ? 0 : 1)
-    } else {
-      setSelectedDots(selectedDots ? 0 : 1)
-    }
+    if (hasAnyNote) changeSelectedDuration(liveNote.duration, liveNote.dots ? 0 : 1)
+    else setSelectedDots(selectedDots ? 0 : 1)
+  }
+
+  const rowStyle = {
+    display: 'flex', alignItems: 'center', gap: 3,
+    padding: '3px 8px', flexWrap: 'nowrap', overflowX: 'auto',
+    scrollbarWidth: 'none',
+  }
+
+  const labelStyle = {
+    fontSize: 10, color: '#9ca3af', flexShrink: 0,
+    fontWeight: 600, letterSpacing: '0.03em',
+    userSelect: 'none',
   }
 
   return (
-    <div className="bg-white border-b border-gray-200 select-none flex-shrink-0"
-      style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+    <div style={{
+      background: '#ffffff',
+      borderBottom: '1px solid #e5e7eb',
+      flexShrink: 0,
+      boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+    }}>
 
-      {/* ── Single compact row ── */}
-      <div className="flex items-center gap-1 px-2 py-1 overflow-x-auto"
-        style={{ minHeight: 36, scrollbarWidth: 'none' }}>
+      {/* ── Row 1: Mode · Durations · Notes · Octave · Chord ── */}
+      <div style={rowStyle}>
 
-        {/* Mode toggle */}
-        <TBtn active={inputMode==='select'} onClick={() => setInputMode('select')} title="Select (S)">↖</TBtn>
-        <TBtn active={inputMode==='note'}   onClick={() => setInputMode('note')}   title="Note input (N)" color="green">♩</TBtn>
+        {/* Mode */}
+        <TBtn active={inputMode === 'select'} onClick={() => setInputMode('select')}
+          title="Select mode (Esc / S)" color="default">
+          <span style={{ fontSize: 12 }}>↖</span>
+        </TBtn>
+        <TBtn active={inputMode === 'note'} onClick={() => setInputMode('note')}
+          title="Note input mode (N)" color="green">
+          <span style={{ fontSize: 14 }}>𝆑</span>
+          <span style={{ fontSize: 10, fontWeight: 700 }}>N</span>
+        </TBtn>
 
         <Sep />
 
         {/* Durations */}
         {DURATIONS.map(d => (
-          <TBtn key={d.val} active={activeDur===d.val} onClick={() => handleDuration(d.val)}
-            title={d.label} color="orange">
-            <span style={{ fontSize: 15, lineHeight: 1 }}>{d.sym}</span>
+          <TBtn key={d.val} active={activeDur === d.val}
+            onClick={() => handleDuration(d.val)}
+            title={`${d.label} note (${d.key})`}
+            color="orange">
+            <span style={{ fontSize: 16, lineHeight: 1 }}>{d.sym}</span>
           </TBtn>
         ))}
-        {/* Triplet button */}
-        <TBtn active={false} onClick={() => selectedMeasureIndex !== null && insertTriplet(activeDur)} title="Insert triplet (current duration)">
-          <span style={{ fontSize: 11, fontWeight: 700 }}>³</span>
+
+        {/* Dot */}
+        <TBtn active={!!activeDots} onClick={handleDot} title="Dotted (.)">
+          <span style={{ fontSize: 18, lineHeight: 0.8, fontWeight: 900 }}>·</span>
         </TBtn>
-        <TBtn active={!!activeDots} onClick={handleDot} title="Dot (.)">
-          <span style={{ fontSize: 16, lineHeight: 1 }}>·</span>
+
+        {/* Triplet */}
+        <TBtn active={false} onClick={() => {}} title="Triplet (current duration)">
+          <span style={{ fontSize: 11, fontWeight: 800, fontFamily: 'monospace' }}>³</span>
         </TBtn>
 
         <Sep />
 
-        {/* Chromatic note picker — compact piano-style */}
+        {/* Chromatic note picker — mini piano key style */}
+        <span style={labelStyle}>Notes</span>
         {CHROMATIC_NOTES.map((n, i) => {
-          const isSelected = selectedNote?.step === n.step && selectedNote?.accidental === n.accidental
-          const isBlack    = n.accidental !== null
+          const isSel   = selectedNote?.step === n.step && selectedNote?.accidental === n.accidental
+          const isBlack = n.accidental !== null
           return (
-            <button key={i} onClick={() => setSelectedNote(n)} title={n.label}
+            <button key={i}
+              onClick={() => setSelectedNote(n)}
+              title={n.label}
               style={{
-                height: 26, minWidth: isBlack ? 22 : 26,
+                height: 26,
+                minWidth: isBlack ? 24 : 28,
                 padding: '0 3px',
-                fontSize: 11, fontWeight: 700,
-                borderRadius: 3, flexShrink: 0, cursor: 'pointer',
-                transition: 'all 0.1s',
-                border: isSelected ? '2px solid #ea580c' : '1px solid #d1d5db',
-                background: isSelected ? '#ea580c'
-                  : isBlack ? '#1f2937' : 'white',
-                color: isSelected ? 'white' : isBlack ? 'white' : '#374151',
-              }}>
-              {n.label}
-            </button>
+                fontSize: isBlack ? 10 : 11,
+                fontWeight: 700,
+                flexShrink: 0, cursor: 'pointer',
+                borderRadius: 3,
+                border: isSel ? '2px solid #ea580c' : `1px solid ${isBlack ? '#374151' : '#d1d5db'}`,
+                background: isSel ? '#ea580c'
+                  : isBlack ? '#1f2937'
+                  : 'white',
+                color: isSel ? 'white' : isBlack ? '#f9fafb' : '#111827',
+                transition: 'all 0.08s',
+                lineHeight: 1,
+              }}
+            >{n.label}</button>
           )
         })}
 
         <Sep />
 
         {/* Octave */}
-        <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>Oct</span>
+        <span style={labelStyle}>Oct</span>
         {octaveOptions.map(o => (
-          <TBtn key={o} active={selectedOctave===o} onClick={() => setSelectedOctave(o)}>
-            <span style={{ fontSize: 11 }}>{o}</span>
+          <TBtn key={o} active={selectedOctave === o} onClick={() => setSelectedOctave(o)}
+            title={`Octave ${o}`}>
+            <span style={{ fontSize: 11, fontFamily: 'monospace', fontWeight: 700 }}>{o}</span>
           </TBtn>
         ))}
 
         <Sep />
 
-        {/* Chord */}
+        {/* Chord mode */}
         <TBtn active={chordMode} onClick={() => setChordMode(!chordMode)}
-          title={chordMode ? 'Chord ON — Shift+key to add. J to off' : 'Chord mode (J)'}
-          color="purple">
-          <span style={{ fontSize: 11 }}>𝄪</span>
-          <span style={{ fontSize: 10 }}>{chordMode ? 'ON' : ''}</span>
+          title={chordMode ? 'Chord mode ON (J to toggle)' : 'Chord mode (J)'}
+          color="purple" wide>
+          <span style={{ fontSize: 13 }}>𝄪</span>
+          <span style={{ fontSize: 10, fontWeight: 700 }}>{chordMode ? 'CHORD' : 'Chord'}</span>
         </TBtn>
 
-        <Sep />
+      </div>
 
-        {/* Key signature */}
-        <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>Key</span>
-        <select value={currentKey} onChange={e => setGlobalKeySignature(Number(e.target.value))}
-          style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '0 4px',
-            height: 26, fontSize: 11, color: '#374151', background: 'white',
-            outline: 'none', maxWidth: 110 }}>
-          {KEY_SIGNATURES.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+      {/* ── Row 2: Key · Time · Tempo — thin info row ── */}
+      <div style={{
+        ...rowStyle,
+        padding: '2px 8px',
+        borderTop: '1px solid #f3f4f6',
+        background: '#fafafa',
+        gap: 6,
+      }}>
+
+        <span style={labelStyle}>Key</span>
+        <select
+          value={currentKey}
+          onChange={e => setGlobalKeySignature(Number(e.target.value))}
+          style={{
+            height: 22, fontSize: 11, border: '1px solid #e5e7eb',
+            borderRadius: 4, padding: '0 4px', color: '#374151',
+            background: 'white', outline: 'none', maxWidth: 130,
+            cursor: 'pointer',
+          }}
+        >
+          {KEY_SIGNATURES.map(k => (
+            <option key={k.value} value={k.value}>{k.label}</option>
+          ))}
         </select>
 
         <Sep />
 
-        {/* Time signature */}
-        <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>Time</span>
+        <span style={labelStyle}>Time</span>
         <select
           value={`${currentTimeSig.beats}/${currentTimeSig.beatType}`}
           onChange={e => {
             const [b, bt] = e.target.value.split('/').map(Number)
             setGlobalTimeSignature({ beats: b, beatType: bt })
           }}
-          style={{ border: '1px solid #d1d5db', borderRadius: 4, padding: '0 4px',
-            height: 26, fontSize: 11, color: '#374151', background: 'white', outline: 'none' }}>
+          style={{
+            height: 22, fontSize: 11, border: '1px solid #e5e7eb',
+            borderRadius: 4, padding: '0 4px', color: '#374151',
+            background: 'white', outline: 'none', cursor: 'pointer',
+          }}
+        >
           {TIME_SIGNATURES.map(t => (
             <option key={t.label} value={`${t.beats}/${t.beatType}`}>{t.label}</option>
           ))}
@@ -227,13 +297,18 @@ export default function Toolbar() {
 
         <Sep />
 
-        {/* Tempo */}
-        <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>♩=</span>
-        <input type="number" value={score.tempo} min={20} max={300}
+        <span style={labelStyle}>♩ =</span>
+        <input
+          type="number" min={20} max={300} value={score.tempo}
           onChange={e => setTempo(Number(e.target.value))}
-          style={{ width: 48, border: '1px solid #d1d5db', borderRadius: 4,
-            padding: '0 4px', height: 26, fontSize: 11, textAlign: 'center',
-            outline: 'none', background: 'white' }} />
+          style={{
+            width: 50, height: 22, fontSize: 11,
+            border: '1px solid #e5e7eb', borderRadius: 4,
+            padding: '0 4px', textAlign: 'center',
+            outline: 'none', background: 'white', color: '#374151',
+          }}
+        />
+
       </div>
     </div>
   )

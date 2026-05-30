@@ -160,10 +160,11 @@ export default function PianoKeyboard() {
                   height: '100%',
                   background: selected ? '#bfdbfe'
                     : pressed  ? '#dbeafe'
-                    : hovered  ? '#f8fafc'
+                    : hovered  ? '#f0f4ff'
                     : 'white',
-                  border: '1px solid #9ca3af',
-                  borderRadius: '0 0 0 0',
+                  border: '1px solid #c8cdd6',
+                  borderTop: 'none',
+                  borderRadius: '0 0 4px 4px',
                   cursor: 'pointer',
                   position: 'relative',
                   display: 'flex',
@@ -285,9 +286,9 @@ function BlackKeyLayer({ whiteCount, onPress, hoveredKey, setHoveredKey, pressed
                       height: '100%',
                       background: sel     ? '#3b82f6'
                         : pressed ? '#60a5fa'
-                        : hov     ? '#374151'
-                        : 'linear-gradient(to bottom, #2d2d2d 0%, #111 60%, #000 100%)',
-                      borderRadius: '0 0 0 0',
+                        : hov     ? '#4b5563'
+                        : 'linear-gradient(to bottom, #3a3a3a 0%, #1a1a1a 55%, #000 100%)',
+                      borderRadius: '0 0 4px 4px',
                       boxShadow: pressed
                         ? 'inset 0 2px 4px rgba(0,0,0,0.8)'
                         : '2px 3px 8px rgba(0,0,0,0.7)',

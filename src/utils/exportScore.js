@@ -205,12 +205,21 @@ function pitchToMidi(pitch) {
 }
 
 // ── Print / PDF ────────────────────────────────────────────────────────────────
-// printScore — opens a print-ready window using the live SVG strings.
-// The SVG content from VexFlow uses the Bravura music font. Rather than
-// trying to rasterize (which breaks due to cross-origin font restrictions),
-// we inline ALL @font-face CSS rules from the current document directly into
-// the print window's <style> block. Since the print window is opened from the
-// same origin, the browser reuses its font cache and renders glyphs correctly.
+// printScore — opens a print-ready window using the live VexFlow SVG.
+//
+// WHY BLOB URL (not document.write):
+//   document.write() fires the print script before the browser has finished
+//   painting the SVG content — the print dialog opens on a blank page.
+//   A blob URL is loaded as a full document; the browser paints everything
+//   before any script runs, so fonts and paths are guaranteed to be visible.
+//
+// WHY EXPLICIT FILL INJECTION:
+//   VexFlow 5 sets fill/stroke on its rendering context, but these values
+//   are stored as JS state — not written as SVG attributes on each element.
+//   When the SVG is cloned and embedded in a new document, paths that relied
+//   on inherited context fill render as transparent. We walk every <path>,
+//   <rect>, <circle>, and <polygon> in the clone and stamp fill="black"
+//   stroke="black" on any element that has no explicit fill attribute set.
 export function printScore(score) {
   const title    = score?.title    || 'Untitled Score'
   const composer = score?.composer || ''
@@ -224,129 +233,215 @@ export function printScore(score) {
   })
   if (!svgElements.length) { alert('No score SVG found.'); return }
 
-  // ── Collect ALL CSS from the document — @font-face + any music-related rules ──
-  let allCSS = ''
+  // ── Collect @font-face CSS from the host document ─────────────────────────
+  let fontCSS = ''
   try {
     for (const sheet of Array.from(document.styleSheets)) {
       try {
-        const rules = Array.from(sheet.cssRules || [])
-        for (const rule of rules) {
-          // Include font-face rules and any rules referencing music/score classes
-          if (
-            rule.type === CSSRule.FONT_FACE_RULE ||
-            (rule.cssText && rule.cssText.includes('vf-'))
-          ) {
-            allCSS += rule.cssText + '\n'
-          }
+        for (const rule of Array.from(sheet.cssRules || [])) {
+          if (rule.type === CSSRule.FONT_FACE_RULE) fontCSS += rule.cssText + '\n'
         }
-      } catch(_) { /* cross-origin sheet — skip */ }
+      } catch(_) {}
     }
   } catch(_) {}
 
-  // ── Serialize each SVG to a self-contained string ────────────────────────
+  // ── Clone + fix each SVG ───────────────────────────────────────────────────
   const serializer = new XMLSerializer()
-  const svgStrings = svgElements.map(svg => {
+
+  function fixSvgForPrint(svg) {
     const clone = svg.cloneNode(true)
     clone.setAttribute('xmlns',       'http://www.w3.org/2000/svg')
     clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
-    // Remove width/height so CSS can control scaling
+
+    // Preserve viewBox so the SVG knows its coordinate space
+    const vb = svg.getAttribute('viewBox') || `0 0 ${svg.getAttribute('width') || 900} ${svg.getAttribute('height') || 600}`
+    clone.setAttribute('viewBox', vb)
+    clone.setAttribute('preserveAspectRatio', 'xMinYMin meet')
     clone.removeAttribute('width')
     clone.removeAttribute('height')
-    clone.style.width  = '100%'
-    clone.style.height = 'auto'
+    clone.style.cssText = 'width:100%;height:auto;display:block;overflow:visible;'
+
+    // ── Inject explicit fill/stroke on every shape element ──────────────────
+    // VexFlow 5 SVG renderer writes fill/stroke to its JS context object but
+    // does NOT always stamp them as XML attributes on each shape. When the SVG
+    // is moved to a new document the context inheritance is lost → transparent.
+    //
+    // Strategy:
+    //   • <path> with no fill attr  → fill="black" stroke="black"
+    //   • <rect> (staff lines)      → keep as-is (they already have stroke)
+    //   • <text>/<tspan>            → fill="black"
+    //   • elements with fill="none" → leave alone (open shapes, slurs, etc.)
+    //   • elements already colored  → leave alone (selected notes etc.)
+    //
+    // We also stamp a black fill on the root <g> as a safe default.
+    const rootG = clone.querySelector('g')
+    if (rootG && !rootG.getAttribute('fill')) {
+      rootG.setAttribute('fill', 'black')
+      rootG.setAttribute('stroke', 'black')
+    }
+
+    const SHAPE_TAGS = new Set(['path', 'circle', 'ellipse', 'polygon', 'polyline'])
+
+    clone.querySelectorAll('*').forEach(el => {
+      const tag = el.tagName.toLowerCase()
+
+      if (SHAPE_TAGS.has(tag)) {
+        const fill   = el.getAttribute('fill')
+        const stroke = el.getAttribute('stroke')
+
+        // If no explicit fill → default to black (notehead, stem, beam)
+        if (!fill || fill === '') el.setAttribute('fill', 'black')
+        // If fill is 'none' on a path → this is an open-path glyph outline that
+        // VexFlow draws with stroke only (e.g. half notehead) — set stroke black
+        if (fill === 'none' && (!stroke || stroke === '')) el.setAttribute('stroke', 'black')
+        if (!stroke && fill !== 'none') el.setAttribute('stroke', el.getAttribute('fill') || 'black')
+      }
+
+      if (tag === 'text' || tag === 'tspan') {
+        if (!el.getAttribute('fill')) el.setAttribute('fill', 'black')
+      }
+
+      // Rect: staff lines use stroke only — ensure stroke is set
+      if (tag === 'rect') {
+        const fill = el.getAttribute('fill')
+        if (!fill) el.setAttribute('fill', 'none')
+        if (!el.getAttribute('stroke')) el.setAttribute('stroke', 'black')
+      }
+
+      // Remove any style properties that could override visibility
+      const style = el.getAttribute('style')
+      if (style) {
+        // Strip color:transparent, opacity:0, visibility:hidden from inline styles
+        const cleaned = style
+          .replace(/color\s*:\s*transparent[^;]*/gi, 'color:black')
+          .replace(/opacity\s*:\s*0[^.][^;]*/gi, '')
+          .replace(/visibility\s*:\s*hidden[^;]*/gi, '')
+          .replace(/display\s*:\s*none[^;]*/gi, '')
+        el.setAttribute('style', cleaned)
+      }
+    })
+
     return serializer.serializeToString(clone)
-  })
+  }
 
-  const svgBlocks = svgStrings.map(s =>
-    `<div class="score-row">${s}</div>`
-  ).join('\n')
+  const svgBlocks = svgElements
+    .map(svg => `<div class="score-row">${fixSvgForPrint(svg)}</div>`)
+    .join('\n')
 
-  // ── Build print HTML — fonts are embedded via the collected CSS ───────────
+  // ── Build the full print HTML ─────────────────────────────────────────────
   const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <title>${title}</title>
   <style>
-    /* All @font-face rules from the host page — Bravura music font */
-    ${allCSS}
+    /* Music font — needed for text-based glyphs */
+    ${fontCSS}
 
-    * { margin:0; padding:0; box-sizing:border-box }
-    html, body { background:white; }
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box }
+    html, body { background:white; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 
-    .page {
-      width: 210mm;
-      min-height: 297mm;
-      padding: 15mm 14mm 12mm 14mm;
-      background: white;
-      margin: 0 auto;
+    @page { size:A4 portrait; margin:12mm 14mm; }
+
+    /* Screen preview */
+    @media screen {
+      body { background:#9ca3af; padding:12mm 0; }
+      .page {
+        width:210mm; min-height:297mm; margin:0 auto;
+        background:white; padding:12mm 14mm 14mm;
+        box-shadow:0 4px 24px rgba(0,0,0,0.3);
+      }
     }
+    /* Print */
+    @media print {
+      body, .page { background:white; padding:0; margin:0; box-shadow:none; }
+    }
+
+    /* Score header */
     .header {
-      text-align: center;
-      margin-bottom: 8mm;
-      padding-bottom: 4mm;
-      border-bottom: 0.5pt solid #ccc;
-      font-family: 'Times New Roman', serif;
+      text-align:center; margin-bottom:7mm; padding-bottom:4mm;
+      border-bottom:0.8pt solid #555;
+      font-family:'Times New Roman', Times, serif;
     }
-    .header h1 { font-size: 22pt; font-weight: bold; }
-    .header p  { font-size: 11pt; color:#555; text-align:right; margin-top:3mm; }
+    .header h1 { font-size:22pt; font-weight:bold; color:#111; margin-bottom:2mm; }
+    .header .composer { font-size:11pt; color:#444; text-align:right; font-style:italic; }
 
+    /* SVG rows */
     .score-row {
-      width: 100%;
-      margin-bottom: 4mm;
-      overflow: visible;
+      width:100%; margin-bottom:5mm; overflow:visible;
+      /* Force all SVG content visible — belt-and-suspenders */
+      color: black;
     }
     .score-row svg {
-      width: 100% !important;
-      height: auto !important;
-      display: block;
-      overflow: visible;
+      width:100% !important; height:auto !important;
+      display:block; overflow:visible;
+      /* Ensure paths/shapes inherit black from parent if fill not set */
+      fill:black; stroke:black;
     }
-
-    /* VexFlow applies these classes to text glyphs — ensure font is set */
-    text, tspan, .vf-text { font-family: 'Bravura', 'Arial', serif !important; }
-
-    @media screen {
-      body { background: #ccc; padding: 10mm; }
-      .page { box-shadow: 0 2px 12px rgba(0,0,0,0.2); }
+    /* VexFlow uses <g> groups — ensure fill/stroke cascade */
+    .score-row svg g { fill:inherit; stroke:inherit; }
+    /* Staff lines and barlines are rect/path strokes — keep black */
+    .score-row svg path,
+    .score-row svg rect,
+    .score-row svg circle,
+    .score-row svg ellipse { fill:inherit; }
+    /* Explicit overrides for known transparent/white fills from beam flag hiding */
+    .score-row svg [fill="transparent"],
+    .score-row svg [fill="rgba(0,0,0,0)"],
+    .score-row svg [stroke="transparent"],
+    .score-row svg [stroke="rgba(0,0,0,0)"] {
+      fill:none !important; stroke:none !important;
     }
-    @media print {
-      html, body { background: white; padding:0; margin:0; }
-      .page { padding: 14mm; }
-    }
-    @page { size: A4 portrait; margin: 0; }
   </style>
 </head>
 <body>
   <div class="page">
     <div class="header">
       <h1>${title}</h1>
-      ${composer ? `<p>${composer}</p>` : ''}
+      ${composer ? `<div class="composer">${composer}</div>` : ''}
     </div>
     ${svgBlocks}
   </div>
   <script>
-    // Wait for fonts to load before printing
-    document.fonts.ready.then(() => {
-      setTimeout(() => { window.print() }, 600)
-    })
+    // Use requestAnimationFrame to ensure the browser has painted before print.
+    // Two rAF cycles = guaranteed post-paint in all major browsers.
+    function doPrint() {
+      requestAnimationFrame(function() {
+        requestAnimationFrame(function() {
+          // Also wait for fonts as a secondary guarantee
+          if (document.fonts && document.fonts.ready) {
+            document.fonts.ready.then(function() {
+              window.print()
+            })
+          } else {
+            window.print()
+          }
+        })
+      })
+    }
+    if (document.readyState === 'complete') {
+      doPrint()
+    } else {
+      window.addEventListener('load', doPrint)
+    }
   <\/script>
 </body>
 </html>`
 
-  const win = window.open('', '_blank')
+  // ── Open as a Blob URL — guaranteed to load fully before scripts run ───────
+  // document.write() fires scripts mid-stream; blob URLs load atomically.
+  const blob = new Blob([html], { type: 'text/html' })
+  const url  = URL.createObjectURL(blob)
+  const win  = window.open(url, '_blank')
+
   if (!win) {
-    // Popup blocked — download as HTML file instead
-    const blob = new Blob([html], { type: 'text/html' })
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
-    a.href = url; a.download = `${title}.html`; a.click()
-    URL.revokeObjectURL(url)
-    return
+    // Popup blocked — trigger download instead
+    const a = document.createElement('a')
+    a.href = url; a.download = `${title.replace(/[^a-z0-9]/gi,'_')}.html`; a.click()
   }
-  win.document.open()
-  win.document.write(html)
-  win.document.close()
+
+  // Clean up the blob URL after a delay (win needs it to stay alive briefly)
+  setTimeout(() => URL.revokeObjectURL(url), 30_000)
 }
 
 // ── Download helpers ──────────────────────────────────────────────────────────

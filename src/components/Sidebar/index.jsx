@@ -1047,10 +1047,10 @@ export default function Sidebar() {
       borderRight: '1px solid #e5e7eb',
       display: 'flex', flexDirection: 'column',
       position: 'fixed',
-      top: '31vh',
+      top: 0,
       left: 0,
       height: '100vh',
-      overflowY: 'auto',
+      overflowY: 'hidden',
       overflowX: 'hidden',
       zIndex: 40,
     }}>
@@ -1058,6 +1058,7 @@ export default function Sidebar() {
       <div style={{
         display: 'flex', borderBottom: '1px solid #e5e7eb',
         background: 'white', flexShrink: 0,
+        marginTop: 'auto',
       }}>
         {TABS.map(tab => (
           <button key={tab.id}
@@ -1096,13 +1097,12 @@ export default function Sidebar() {
         </div>
       )}
 
-      {/* Tab content */}
-      <div style={{ flex:1, overflow:'hidden', display:'flex', flexDirection:'column' }}>
+      {/* Tab content — scrollable */}
+      <div style={{ flex:1, overflowY:'auto', overflowX:'hidden', display:'flex', flexDirection:'column' }}>
         {activeTab === 'palettes'   && <PalettesTab />}
         {activeTab === 'parts'      && <PartsTab />}
         {activeTab === 'layout'     && <LayoutTab />}
         {activeTab === 'properties' && <PropertiesTab />}
-
       </div>
     </div>
   )
