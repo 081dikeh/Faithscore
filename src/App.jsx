@@ -19,6 +19,7 @@ const KEY_TO_STEP   = { a:'A',b:'B',c:'C',d:'D',e:'E',f:'F',g:'G' }
 export default function App() {
   const score                  = useScoreStore(s => s.score)
   const [appView, setAppView] = useState('home')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   // ── Auth state ─────────────────────────────────────────────────────────────
   const [user, setUser]           = useState(null)
 
@@ -412,7 +413,8 @@ export default function App() {
 
 
   return (
-    <div className={`min-h-screen flex flex-col ${darkMode ? "bg-gray-900 text-gray-100" : "bg-gray-100"}`}>
+    <div className={`flex flex-col ${darkMode ? "bg-gray-900 text-gray-100" : "bg-gray-100"}`}
+      style={{ height:'100vh', overflow:'hidden' }}>
 
       {/* ── Sticky top chrome: menu + status + toolbar + shortcuts ── */}
       <div style={{ position: 'sticky', top: 0, zIndex: 50, flexShrink: 0 }}>
@@ -945,11 +947,9 @@ export default function App() {
       </div>{/* end sticky top chrome */}
 
       {/* ── Main area: Sidebar + Score canvas ── */}
-      <div className="flex flex-1 overflow-hidden">
-      {/* Sidebar is position:fixed inside Sidebar.jsx — this spacer reserves its width */}
-      <div style={{ width: 250, flexShrink: 0 }}>
-        <Sidebar />
-      </div>
+      <div style={{ display:'flex', flex:1, overflow:'hidden', minHeight:0 }}>
+        {/* Sidebar — normal flow, fills height of this flex row */}
+        <Sidebar collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} />
 
       {/* ── Score canvas — A4 page layout ── */}
       <main className="flex-1 overflow-auto bg-gray-300 p-6" id="score-main" style={{ paddingBottom: showPiano ? 180 : 48 }}>
