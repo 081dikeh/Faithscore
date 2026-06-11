@@ -226,19 +226,17 @@ function audioBufferToWav(buffer) {
 
 // ── Public: Export PDF / Print ──────────────────────────────────────────────
 export function exportSolfaPDF(score, svgElement) {
-  const title    = score?.title    || 'Untitled'
-  const composer = score?.composer || ''
-  const key      = score?.key      || 'C'
-  const tempo    = score?.tempo    || 80
-  const ts       = score?.timeSignature
-  const parts    = score?.parts    || []
+  const title = score?.title || 'Untitled'
+  const key   = score?.key   || 'C'
+  const tempo = score?.tempo || 80
+  const ts    = score?.timeSignature
 
   if (!svgElement) {
     alert('Nothing to print yet — add some notes first.')
     return
   }
 
-  // ── Collect @font-face rules from host document ──────────────────────────
+  // Collect CSS: font-face rules from current doc
   let allCSS = ''
   try {
     for (const sheet of Array.from(document.styleSheets)) {
@@ -250,31 +248,19 @@ export function exportSolfaPDF(score, svgElement) {
     }
   } catch(_) {}
 
-  // ── Clone SVG — preserve viewBox for correct scaling ────────────────────
   const serializer = new XMLSerializer()
   const clone = svgElement.cloneNode(true)
-  clone.setAttribute('xmlns',       'http://www.w3.org/2000/svg')
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
   clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
-
-  // Read the natural dimensions to build / verify viewBox
-  const natW = parseFloat(svgElement.getAttribute('width'))  || svgElement.viewBox?.baseVal?.width  || 900
-  const natH = parseFloat(svgElement.getAttribute('height')) || svgElement.viewBox?.baseVal?.height || 600
-
-  // Set viewBox so the SVG knows its internal coordinate space
-  clone.setAttribute('viewBox', `0 0 ${natW} ${natH}`)
-  // Remove fixed pixel dimensions — let CSS/width attribute scale it
   clone.removeAttribute('width')
   clone.removeAttribute('height')
-  // Inline style: fill the container width, height auto-scales via viewBox
-  clone.setAttribute('style', 'width:100%;height:auto;display:block;overflow:visible;')
-
+  clone.style.width  = '100%'
+  clone.style.height = 'auto'
   const svgStr = serializer.serializeToString(clone)
 
-  // ── Voice labels for parts line ──────────────────────────────────────────
-  const partLabels = parts.map(p => p.label || '').filter(Boolean).join(' · ')
-
-  // ── A4 content width in px at 96dpi: 210mm = ~794px, minus 32mm margins = ~673px ──
-  // We use mm throughout for print accuracy.
+  const partsInfo = (score.parts || [])
+    .map(p => `<span style="margin-right:16px"><strong>${p.label}</strong></span>`)
+    .join('')
 
   const html = `<!DOCTYPE html>
 <html>
@@ -283,109 +269,68 @@ export function exportSolfaPDF(score, svgElement) {
   <title>${title}</title>
   <style>
     ${allCSS}
-
-    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box }
-    html, body { background: white; font-family: 'Times New Roman', Times, serif; }
-
-    @page {
-      size: A4 portrait;
-      margin: 12mm 14mm;
+    * { margin:0; padding:0; box-sizing:border-box }
+    html, body { background: white; }
+    @page { size: A4 portrait; margin: 0; }
+    .page {
+      width: 210mm;
+      min-height: 297mm;
+      padding: 14mm 16mm 12mm 16mm;
+      background: white;
+      margin: 0 auto;
     }
-
-    /* Screen preview */
-    @media screen {
-      body { background: #9ca3af; padding: 12mm 0; }
-      .page {
-        width: 210mm;
-        min-height: 297mm;
-        margin: 0 auto;
-        background: white;
-        box-shadow: 0 4px 24px rgba(0,0,0,0.28);
-        padding: 12mm 14mm 14mm;
-      }
-    }
-
-    /* Print: no wrapper needed — @page margin handles spacing */
-    @media print {
-      body, .page { background: white; padding: 0; margin: 0; width: auto; box-shadow: none; }
-    }
-
-    /* ── Score header ── */
-    .score-header {
+    .header {
       text-align: center;
-      margin-bottom: 6mm;
+      margin-bottom: 7mm;
       padding-bottom: 4mm;
-      border-bottom: 0.8pt solid #555;
+      border-bottom: 0.6pt solid #ccc;
+      font-family: 'Times New Roman', Times, serif;
     }
-    .score-title {
-      font-size: 20pt;
-      font-weight: bold;
-      letter-spacing: -0.01em;
-      color: #111;
-      margin-bottom: 2mm;
-    }
-    .score-meta {
+    .header h1 { font-size: 22pt; font-weight: bold; letter-spacing: -0.01em; }
+    .header .meta {
+      font-size: 10pt;
+      color: #555;
+      margin-top: 3mm;
       display: flex;
       justify-content: space-between;
-      align-items: baseline;
-      font-size: 9.5pt;
-      color: #444;
-      margin-top: 2mm;
     }
-    .score-meta .left  { text-align: left; }
-    .score-meta .right { text-align: right; font-style: italic; }
-
-    /* ── SVG scaling ── */
-    /* The SVG has a viewBox matching its natural pixel size.
-       We set width to 100% of the content area and let height be auto.
-       This makes it fill the A4 width perfectly. */
-    .score-body svg,
-    .score-body > div > svg {
-      width: 100% !important;
-      height: auto !important;
-      display: block;
-      overflow: visible;
+    .score-svg { width: 100%; height: auto; display: block; overflow: visible; }
+    @media screen {
+      body { background: #d1d5db; padding: 10mm 0; }
+      .page { box-shadow: 0 2px 16px rgba(0,0,0,0.18); }
     }
-    .score-body { width: 100%; }
+    @media print {
+      html, body { background: white; padding:0; margin:0; }
+    }
   </style>
 </head>
 <body>
   <div class="page">
-    <div class="score-header">
-      <div class="score-title">${title}</div>
-      <div class="score-meta">
-        <span class="left">Doh&nbsp;=&nbsp;${key}&nbsp;&nbsp;·&nbsp;&nbsp;${ts ? `${ts.beats}/${ts.beatType}` : '4/4'}&nbsp;&nbsp;·&nbsp;&nbsp;♩&nbsp;=&nbsp;${tempo}</span>
-        <span class="right">${composer ? composer : (partLabels ? partLabels : '')}</span>
+    <div class="header">
+      <h1>${title}</h1>
+      <div class="meta">
+        <span>Doh = ${key} &nbsp;·&nbsp; ${ts ? `${ts.beats}/${ts.beatType}` : '4/4'} &nbsp;·&nbsp; ♩ = ${tempo}</span>
+        <span>${partsInfo}</span>
       </div>
     </div>
-    <div class="score-body">${svgStr}</div>
+    <div class="score-svg">${svgStr}</div>
   </div>
   <script>
-    // Wait for all fonts before printing
-    if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(function() {
-        setTimeout(function() { window.print() }, 700)
-      })
-    } else {
-      setTimeout(function() { window.print() }, 1200)
-    }
+    document.fonts.ready.then(() => setTimeout(() => window.print(), 500))
   <\/script>
 </body>
 </html>`
 
   const win = window.open('', '_blank')
   if (!win) {
-    // Popup blocked — download as HTML file
+    // Popup blocked — download HTML
     const blob = new Blob([html], { type: 'text/html' })
     const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
-    a.href = url; a.download = `${title.replace(/[^a-z0-9]/gi,'_')}.html`; a.click()
+    const a    = document.createElement('a'); a.href = url; a.download = `${title}.html`; a.click()
     URL.revokeObjectURL(url)
     return
   }
-  win.document.open()
-  win.document.write(html)
-  win.document.close()
+  win.document.open(); win.document.write(html); win.document.close()
 }
 
 // ── Public: Export Audio (WAV) ───────────────────────────────────────────────

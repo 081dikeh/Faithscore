@@ -95,7 +95,7 @@ function makePart(voiceDef, numMeasures=12, numBeats=4) {
 export function buildEmptySolfaScore(voiceComboKey='satb',key='C',beats=4,numMeasures=12) {
   const combo=VOICE_COMBOS[voiceComboKey]||VOICE_COMBOS.satb
   return {
-    id:uid(), type:'solfa', title:'Untitled', composer:'', key,
+    id:uid(), type:'solfa', title:'Untitled', key,
     tempo:80, timeSignature:{beats,beatType:4},
     voiceCombo:voiceComboKey,
     parts:combo.voices.map(v=>makePart(v,numMeasures,beats)),
@@ -135,7 +135,6 @@ export function migrateScore(score) {
   if (!score) return buildEmptySolfaScore()
   return {
     ...score,
-    composer: score.composer || '',
     slurs: score.slurs || [],
     parts:(score.parts||[]).map(p=>({
       ...p,measures:(p.measures||[]).map(m=>migrateMeasure(m)),
@@ -185,9 +184,8 @@ export const useSolfaStore = create((set,get) => ({
   // Slur placement state
   slurStart:          null,   // { partId, measureIdx, beatIdx, eventIdx } | null
 
-  setTitle:    t  => set(s=>({score:{...s.score,title:t}})),
-  setComposer: c  => set(s=>({score:{...s.score,composer:c}})),
-  setKey:      k  => set(s=>({score:{...s.score,key:k}})),
+  setTitle:   t  => set(s=>({score:{...s.score,title:t}})),
+  setKey:     k  => set(s=>({score:{...s.score,key:k}})),
   setTempo:   t  => set(s=>({score:{...s.score,tempo:t}})),
   setCloudId: id => set(s=>({score:{...s.score,_cloudId:id}})),
   setInputMode:       m => set({inputMode:m, slurStart: m !== 'slur' ? null : get().slurStart}),
