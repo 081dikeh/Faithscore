@@ -45,6 +45,23 @@ export function noteDuration(note) {
   return DURATION_BEATS[key] || DURATION_BEATS[note.duration] || 1
 }
 
+// ── Measure capacity in quarter-note beats ───────────────────────────────────
+// DURATION_BEATS uses quarter-note beats as the unit (q=1, h=2, w=4, 8=0.5…).
+// A time signature's capacity must be converted to the same unit:
+//   capacity = numerator × (4 / denominator)
+// Examples:
+//   4/4  → 4 × (4/4) = 4   quarter beats
+//   3/4  → 3 × (4/4) = 3   quarter beats
+//   6/8  → 6 × (4/8) = 3   quarter beats  ← this was the bug: was treated as 6
+//   12/8 → 12× (4/8) = 6   quarter beats
+//   9/8  → 9 × (4/8) = 4.5 quarter beats
+//   2/2  → 2 × (4/2) = 4   quarter beats
+//   5/4  → 5 × (4/4) = 5   quarter beats
+export function measureBeats(timeSig) {
+  if (!timeSig) return 4
+  return timeSig.beats * (4 / timeSig.beatType)
+}
+
 // Returns best rest {duration, dots} to fill exactly `beats`
 export function beatsToRest(beats) {
   if (beats >= 4)    return { duration: 'w',  dots: 0 }
@@ -138,7 +155,7 @@ export function annotateBeats(notes) {
 function makeEmptyMeasure(timeSig, keySig) {
   const ts = timeSig || { beats: 4, beatType: 4 }
   const ks = keySig ?? 0
-  const rests = makeRests(ts.beats, 'init')
+  const rests = makeRests(measureBeats(ts), 'init')
   return {
     id: crypto.randomUUID(),
     timeSignature: ts,
@@ -559,7 +576,7 @@ export const useScoreStore = create((set, get) => ({
             ...m,
             timeSignature: ts,
             // Use unique prefix per measure to prevent duplicate React keys
-            notes: normalizeMeasure(m.notes, ts.beats).map((n, ni) =>
+            notes: normalizeMeasure(m.notes, measureBeats(ts)).map((n, ni) =>
               n.isRest && n.id.startsWith('init_')
                 ? { ...n, id: `ts_${ts.beats}_${ts.beatType}_m${mIdx}_r${ni}_${Date.now()}` }
                 : n
@@ -577,10 +594,10 @@ export const useScoreStore = create((set, get) => ({
       const part = s.score.parts.find(p => p.id === partId)
       const measure = part?.measures[measureIndex]
       if (!measure) return s
-      const newNotes = fn(measure.notes, measure.timeSignature.beats)
+      const newNotes = fn(measure.notes, measureBeats(measure.timeSignature))
       const normalized = skipNormalize
         ? newNotes
-        : normalizeMeasure(newNotes, measure.timeSignature.beats)
+        : normalizeMeasure(newNotes, measureBeats(measure.timeSignature))
       const newScore = {
         ...s.score,
         parts: s.score.parts.map(p => p.id !== partId ? p : {
@@ -701,7 +718,7 @@ export const useScoreStore = create((set, get) => ({
       !n.chordWith && !n.isRest && n.id !== selectedNoteId
     )
     const othersBeats = otherRealNotes.reduce((sum, n) => sum + noteDuration(n), 0)
-    const available = measure.timeSignature.beats - othersBeats
+    const available = measureBeats(measure.timeSignature) - othersBeats
 
     if (newBeats > available + 0.001) {
       // Note overflows the bar.
@@ -725,7 +742,7 @@ export const useScoreStore = create((set, get) => ({
         const nextPart = get().score.parts.find(p => p.id === selectedPartId)
         const nextM    = nextPart?.measures[nextIdx]
         if (nextM) {
-          const contBeats = Math.min(overflowBeats, nextM.timeSignature.beats)
+          const contBeats = Math.min(overflowBeats, measureBeats(nextM.timeSignature))
           const contDur   = beatsToRest(contBeats)
           const contId    = crypto.randomUUID()
           get()._applyToMeasure(selectedPartId, nextIdx, (notes) => {
@@ -779,9 +796,9 @@ export const useScoreStore = create((set, get) => ({
         const trimmed = []
         for (const n of result.filter(x => !x.chordWith)) {
           const d = noteDuration(n)
-          if (total + d > measure.timeSignature.beats + 0.001) {
+          if (total + d > measureBeats(measure.timeSignature) + 0.001) {
             // Trim this rest to fit
-            const rem = measure.timeSignature.beats - total
+            const rem = measureBeats(measure.timeSignature) - total
             if (rem > 0.001) trimmed.push(...makeRests(rem, `trim_${n.id}`))
             break
           }
@@ -834,7 +851,7 @@ export const useScoreStore = create((set, get) => ({
     const measure = part?.measures[measureIndex]
     if (!measure) return
 
-    const maxBeats  = measure.timeSignature.beats
+    const maxBeats  = measureBeats(measure.timeSignature)
     const clampedBeat = Math.max(0, Math.min(beatPosition, maxBeats - 0.001))
 
     // Find which rest slot the drop position falls into
@@ -966,7 +983,7 @@ export const useScoreStore = create((set, get) => ({
     // Find how many beats are already used by real (non-rest, non-chord) notes
     const realNotes = measure.notes.filter(n => !n.chordWith && !n.isRest)
     const usedBeats = realNotes.reduce((sum, n) => sum + noteDuration(n), 0)
-    const available = measure.timeSignature.beats - usedBeats
+    const available = measureBeats(measure.timeSignature) - usedBeats
 
     if (available < 0.001) {
       // Measure full — advance to next
@@ -1080,7 +1097,7 @@ export const useScoreStore = create((set, get) => ({
         ...p,
         measures: p.measures.map((m, i) => i !== colIndex ? m : {
           ...m,
-          notes: normalizeMeasure([], m.timeSignature.beats),
+          notes: normalizeMeasure([], measureBeats(m.timeSignature)),
         }),
       })),
     },
