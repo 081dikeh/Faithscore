@@ -33,9 +33,42 @@ const SYSTEM_GAP = SP * 8; // 96px — gap between rows of systems
 const STAVE_TOP = SP * 3; // 36px — top margin
 const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3; // 84px — click zone includes ledger lines
 
-// Middle of staff for rests — VexFlow places rest glyph at this key position.
-// Bass clef lines (bottom→top): G2 B2 D3 F3 A3 — middle line = D3
-// Treble clef lines (bottom→top): E4 G4 B4 D5 F5 — middle line = B4
+// ── Rest key positions — standard engraving rules ────────────────────────────
+// Treble staff lines (bottom→top): E4, G4, B4, D5, F5
+//   • Whole rest  → hangs from the underside of line 4 (D5)  key="d/5"
+//   • Half rest   → sits on top of line 3 (B4, middle line)  key="b/4"
+//   • Quarter+    → visually centered on the staff            key="b/4"
+//
+// Bass staff lines (bottom→top): G2, B2, D3, F3, A3
+//   • Whole rest  → hangs from the underside of line 4 (F3)  key="f/3"
+//   • Half rest   → sits on top of line 3 (D3, middle line)  key="d/3"
+//   • Quarter+    → visually centered on the staff            key="d/3"
+//
+// VexFlow positions the rest glyph so that the symbol's reference point
+// aligns with the given pitch key. For whole rests VexFlow's glyph hangs
+// downward from its reference point, so "d/5" / "f/3" (line 4) produces
+// the correct hang-from-line-4 appearance.
+const REST_KEYS = {
+  treble: {
+    w:   "d/5",   // whole  — hangs from line 4 (D5)
+    h:   "b/4",   // half   — sits on line 3 (B4)
+    q:   "b/4",   // quarter — centered on staff
+    "8": "b/4",   // eighth
+    "16":"b/4",   // sixteenth
+    "32":"b/4",   // 32nd
+    "64":"b/4",   // 64th
+  },
+  bass: {
+    w:   "f/3",   // whole  — hangs from line 4 (F3)
+    h:   "d/3",   // half   — sits on line 3 (D3)
+    q:   "d/3",
+    "8": "d/3",
+    "16":"d/3",
+    "32":"d/3",
+    "64":"d/3",
+  },
+}
+// Fallback for any other clef — use treble mappings
 const REST_KEY = { treble: "b/4", bass: "d/3" };
 
 function keyNumToVexflow(num) {
@@ -111,12 +144,16 @@ function stemDir(note, chordExtras, clef) {
 }
 
 function buildVfNote(n, clef, isSelected, chordExtras = []) {
-  const restKey = REST_KEY[clef] || "b/4";
   const clefOpt = clef === "bass" ? { clef: "bass" } : {};
 
   if (n.isRest) {
+    // Pick the correct staff position for this rest duration.
+    // Whole rests hang from line 4, half rests sit on line 3,
+    // all shorter rests are centered on the middle line.
+    const clefKeys = REST_KEYS[clef] || REST_KEYS.treble;
+    const durKey   = clefKeys[n.duration] || (clef === 'bass' ? 'd/3' : 'b/4');
     const sn = new StaveNote({
-      keys: [restKey],
+      keys: [durKey],
       duration: n.duration + "r",
       dots: n.dots || 0,
       type: "r",
