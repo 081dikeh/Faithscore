@@ -260,15 +260,15 @@ export default function ScoreRenderer() {
     // Compute minimum pixel width for each measure based on content density.
     // This is the core of the dynamic layout — denser measures get more space.
     const NOTE_PX = {
-      w:  SP * 7,    // whole
-      h:  SP * 5.5,  // half
-      q:  SP * 4.5,  // quarter
-      8:  SP * 3.5,  // eighth
-      16: SP * 3.2,  // sixteenth
-      32: SP * 2.8,  // 32nd
-      64: SP * 2.4,  // 64th
+      w:  SP * 8.5,  // whole — needs wide spacing
+      h:  SP * 6.5,  // half
+      q:  SP * 5.5,  // quarter
+      8:  SP * 4.5,  // eighth
+      16: SP * 4.0,  // sixteenth — dense, needs generous space
+      32: SP * 3.6,  // 32nd
+      64: SP * 3.2,  // 64th
     };
-    const MIN_MEASURE_WIDTH = SP * 14; // absolute minimum
+    const MIN_MEASURE_WIDTH = SP * 18; // absolute minimum — room for even a whole rest
     const MAX_MEASURE_WIDTH = SP * 80; // absolute maximum
 
     function getMeasureContentWidth(colIdx) {
@@ -330,7 +330,7 @@ export default function ScoreRenderer() {
         const needed = overhead + content + SP * 2;
 
         // Hard break: adding this measure would exceed usable width
-        if (colCount > 0 && lineWidth + needed > USABLE_W + SP * 4) break;
+        if (colCount > 0 && lineWidth + needed > USABLE_W) break;
         // Soft break: reached preferred bars-per-line
         if (colCount >= preferredMax && preferredMax > 0) break;
 
@@ -412,7 +412,7 @@ export default function ScoreRenderer() {
         const isFirst = colIdx === 0;
         const overhead = getGlyphOverhead(col, isFirst);
         const content = getMeasureContentWidth(col);
-        return overhead + content + SP * 2;
+        return overhead + content + SP * 6;
       });
 
       // Justify: scale widths proportionally to fill full usable width
@@ -542,7 +542,8 @@ export default function ScoreRenderer() {
             // Formatter width = stave width minus glyph overhead.
             // getGlyphOverhead() accounts for clef + key sig accidentals + time sig.
             const glyphOverhead = getGlyphOverhead(col, isFirst);
-            const formatterWidth = Math.max(40, width - glyphOverhead);
+            const NOTE_PADDING = SP * 5;
+            const formatterWidth = Math.max(40, width - glyphOverhead - NOTE_PADDING);
             new Formatter().joinVoices([voice]).format([voice], formatterWidth);
 
             // Re-apply stem directions AFTER formatting — Formatter.format() resets
