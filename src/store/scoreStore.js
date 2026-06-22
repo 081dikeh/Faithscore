@@ -62,6 +62,84 @@ export function measureBeats(timeSig) {
   return timeSig.beats * (4 / timeSig.beatType)
 }
 
+// ── Beam grouping (eighth-note subdivision pattern) ──────────────────────────
+// Music notation groups beamed eighth-notes (and shorter) into "beat groups"
+// that reflect how the meter is actually felt/conducted — NOT just running
+// beams across the whole measure. This function returns an array of group
+// sizes (in eighth-note units, i.e. how many 8th-note-equivalents belong to
+// each beam group) for a given time signature.
+//
+//   SIMPLE meters (beatType 2 or 4): grouped by the beat itself.
+//     4/4 → [2,2,2,2]  (each quarter-note beat = 2 eighths)
+//     3/4 → [2,2,2]
+//     2/4 → [2,2]
+//
+//   COMPOUND meters (beatType 8, beats divisible by 3): grouped in 3s.
+//     6/8  → [3,3]            (2 dotted-quarter beats)
+//     9/8  → [3,3,3]          (3 dotted-quarter beats)
+//     12/8 → [3,3,3,3]        (4 dotted-quarter beats)
+//
+//   IRREGULAR/ASYMMETRIC meters (5/8, 7/8, 11/8, etc.): the grouping is
+//   AMBIGUOUS by nature and must be configurable. We provide sensible
+//   defaults but the measure can carry an explicit `beamGrouping` override
+//   (array of eighth-note group sizes) that takes precedence.
+//     5/8  → default [3,2]   (could also be [2,3] — configurable)
+//     7/8  → default [2,2,3] (could also be [2,3,2] or [3,2,2])
+//     11/8 → default [3,3,3,2] (could also be other 3/2 combinations)
+//
+// Returns: array of group sizes in EIGHTH-NOTE units (e.g. [3,3] for 6/8).
+export function getBeamGrouping(timeSig, override) {
+  if (override && Array.isArray(override) && override.length) return override
+
+  const beats    = timeSig?.beats    || 4
+  const beatType = timeSig?.beatType || 4
+
+  // Simple meters: beatType 4 or 2 — each beat is its own group (in 8th units)
+  if (beatType === 4) return Array(beats).fill(2)          // quarter beat = 2 eighths
+  if (beatType === 2) return Array(beats).fill(4)          // half beat   = 4 eighths
+  if (beatType === 16) {
+    // 16th-denominator meters: group by 4 sixteenths (= 1 quarter) where possible
+    const groups = []
+    let remaining = beats
+    while (remaining >= 4) { groups.push(4); remaining -= 4 }
+    if (remaining > 0) groups.push(remaining)
+    return groups
+  }
+
+  if (beatType === 8) {
+    // Compound meter: beats divisible by 3 → groups of 3 eighths
+    if (beats % 3 === 0) return Array(beats / 3).fill(3)
+
+    // Irregular/asymmetric meters — beats NOT divisible by 3.
+    // Provide commonly-used default groupings (configurable via override).
+    const IRREGULAR_DEFAULTS = {
+      5:  [3, 2],
+      7:  [2, 2, 3],
+      11: [3, 3, 3, 2],
+      13: [3, 3, 3, 2, 2],
+    }
+    if (IRREGULAR_DEFAULTS[beats]) return IRREGULAR_DEFAULTS[beats]
+
+    // Fallback: groups of 2, with a trailing 3 if odd
+    const groups = []
+    let remaining = beats
+    while (remaining > 3) { groups.push(2); remaining -= 2 }
+    if (remaining > 0) groups.push(remaining)
+    return groups
+  }
+
+  // Fallback for any other denominator: one group per beat (1 unit each)
+  return Array(beats).fill(1)
+}
+
+// Alternate named groupings for ambiguous meters — used by the time
+// signature picker UI to let the user choose how a measure should beam.
+export const ALT_BEAM_GROUPINGS = {
+  '5/8':  [ [3,2], [2,3] ],
+  '7/8':  [ [2,2,3], [2,3,2], [3,2,2] ],
+  '11/8': [ [3,3,3,2], [2,3,3,3], [3,2,3,3], [3,3,2,3] ],
+}
+
 // Returns best rest {duration, dots} to fill exactly `beats`
 export function beatsToRest(beats) {
   if (beats >= 4)    return { duration: 'w',  dots: 0 }
@@ -581,11 +659,34 @@ export const useScoreStore = create((set, get) => ({
                 ? { ...n, id: `ts_${ts.beats}_${ts.beatType}_m${mIdx}_r${ni}_${Date.now()}` }
                 : n
             ),
+            // Clear any stale beamGrouping override that doesn't match new beat count —
+            // it would silently misalign beams if left over from a previous time sig.
+            beamGrouping: undefined,
           })),
         })),
       },
     }))
   },
+
+  // Override the beam grouping for the CURRENT measure only — used for
+  // irregular/asymmetric meters (5/8, 7/8, 11/8…) where the subdivision
+  // pattern is ambiguous and must be chosen explicitly (e.g. 7/8 as
+  // 2+2+3 vs 2+3+2 vs 3+2+2). Pass `null` to clear back to the default.
+  setBeamGrouping: (grouping) => set(s => {
+    const { selectedPartId, selectedMeasureIndex } = s
+    return {
+      score: {
+        ...s.score,
+        parts: s.score.parts.map(p => p.id !== selectedPartId ? p : {
+          ...p,
+          measures: p.measures.map((m, i) => i !== selectedMeasureIndex ? m : {
+            ...m,
+            beamGrouping: grouping || undefined,
+          }),
+        }),
+      },
+    }
+  }),
 
   // ── Core note mutation: always normalizes after every change ───────────────
 
@@ -1021,10 +1122,29 @@ export const useScoreStore = create((set, get) => ({
 
       const restBeats = noteDuration(firstRest)
       const durKey = noteData.duration + (noteData.dots ? 'd' : '')
-      let nb = DURATION_BEATS[durKey] || DURATION_BEATS[noteData.duration] || 1
-      if (nb > restBeats + 0.001) nb = restBeats  // clamp
+      const requestedBeats = DURATION_BEATS[durKey] || DURATION_BEATS[noteData.duration] || 1
 
-      const fit = nb === restBeats ? noteData : { ...noteData, ...beatsToRest(restBeats) }
+      // ── BUG FIX ──────────────────────────────────────────────────────────
+      // Previously: when the rest slot was LARGER than the requested note
+      // (e.g. a 3-beat dotted-half rest sitting where the user wants to type
+      // a single 0.5-beat eighth note), the code replaced the note's
+      // duration/dots with beatsToRest(restBeats) — i.e. it consumed the
+      // ENTIRE rest as one oversized note instead of placing the note the
+      // user actually asked for and leaving the remainder as rest. This
+      // silently burned through measure capacity in far fewer keystrokes
+      // than the time signature should allow (e.g. 12/8 stopping at ~4-5
+      // notes instead of 12), because beatsToRest() always greedily picks
+      // the LARGEST note value that fits the leftover space, and every
+      // subsequent note-entry kept consuming that whole oversized chunk
+      // instead of slicing off only what was actually requested.
+      //
+      // Fix: place the note at the user's requested duration whenever it
+      // fits. Only fall back to beatsToRest() if the requested duration is
+      // literally too big for the remaining rest space (clamp-down case) —
+      // and even then we clamp to the LARGEST value that still fits, never
+      // silently inflate a small request into a big one.
+      const fits = requestedBeats <= restBeats + 0.001
+      const fit  = fits ? noteData : { ...noteData, ...beatsToRest(restBeats) }
       const newNote = { id: newId, ...fit, isRest: false, pitch: noteData.pitch }
       const leftover = restBeats - noteDuration(newNote)
       const idx = notes.findIndex(n => n.id === firstRest.id)
