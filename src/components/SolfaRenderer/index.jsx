@@ -516,164 +516,140 @@ export default function ScoreRenderer() {
 
             // ── Beaming ─────────────────────────────────────────────────────
             //
-            // Core rules implemented here:
+            // Standard engraving beam grouping rules:
+            //   4/4  → [4,4]       beam in half-note pulses
+            //   3/4  → [2,2,2]     beam per quarter beat
+            //   2/4  → [4]         all eighths in one beam
+            //   6/8  → [3,3]       two dotted-quarter pulses
+            //   9/8  → [3,3,3]     three dotted-quarter pulses
+            //   12/8 → [3,3,3,3]   four dotted-quarter pulses
             //
-            //  1. Walk vfNotes in original sequence order — never pre-filter.
-            //     Pre-filtering was the old bug: Beam.generateBeams(beamable)
-            //     stripped context and connected 8th notes across quarter notes.
-            //
-            //  2. Any non-beamable note (quarter/half/whole/rest) immediately
-            //     closes the current beam run. Non-beamable = anything that is
-            //     not 8th, 16th, 32nd, or 64th; or is a rest.
-            //
-            //  3. Beat-group boundaries close runs too — this is what produces
-            //     correct compound meter beaming:
-            //       4/4  → beam within each quarter beat  [2,2,2,2] groups
-            //       6/8  → two dotted-quarter pulses      [3,3]
-            //       9/8  → three dotted-quarter pulses    [3,3,3]
-            //      12/8  → four dotted-quarter pulses     [3,3,3,3]
-            //       5/8  → [3,2] default (irregular)
-            //       7/8  → [2,2,3] default (irregular)
-            //
-            //  4. Group sizes are in eighth-note units. Converted to tick
-            //     boundaries using VexFlow's actual RESOLUTION = 16384
-            //     (1 eighth note = 2048 ticks).
-            //
-            //  5. Stem direction: computed from the AVERAGE pitch of all notes
-            //     in the run (not the first note, not the highest) then applied
-            //     to all notes uniformly before Beam() construction.
-            //     Beam(notes, false) → auto_stem=false respects our direction.
+            // Algorithm:
+            //   1. Walk vfNotes in original order (never pre-filter).
+            //   2. Non-beamable note or rest → close current run immediately.
+            //   3. Beat-group boundary crossing → close current run, start new.
+            //   4. Run of 2+ beamable notes → build Beam with group-avg stem dir.
 
-            // ── getBeamGrouping: returns eighth-note group sizes per meter ──
             function getBeamGrouping(ts) {
-              const beats    = ts?.beats    || 4;
+              const beats = ts?.beats || 4;
               const beatType = ts?.beatType || 4;
-              // Simple meters: each quarter/half beat is its own beam group
-              if (beatType === 4) return Array(beats).fill(2);  // e.g. 4/4→[2,2,2,2]
-              if (beatType === 2) return Array(beats).fill(4);  // e.g. 2/2→[4,4]
+              if (beatType === 4) {
+                if (beats === 2) return [4];
+                if (beats === 3) return [2, 2, 2];
+                if (beats === 4) return [4, 4];
+                if (beats === 5) return [4, 2];
+                if (beats === 6) return [4, 4, 4];
+                return Array(beats).fill(2);
+              }
+              if (beatType === 2) {
+                return Array(beats).fill(4);
+              }
               if (beatType === 8) {
-                // Compound: beats divisible by 3 → groups of 3 eighth notes
                 if (beats % 3 === 0) return Array(beats / 3).fill(3);
-                // Irregular/asymmetric: configurable defaults
-                const IRREGULAR = { 5:[3,2], 7:[2,2,3], 11:[3,3,3,2], 13:[3,3,3,2,2] };
-                if (IRREGULAR[beats]) return IRREGULAR[beats];
-                // Fallback: pairs, with trailing odd group if needed
+                const IRR = { 5:[3,2], 7:[2,2,3], 11:[3,3,3,2] };
+                if (IRR[beats]) return IRR[beats];
                 const g = []; let r = beats;
                 while (r > 3) { g.push(2); r -= 2; }
                 if (r > 0) g.push(r);
                 return g;
               }
-              return Array(beats).fill(1); // fallback
+              return Array(beats).fill(1);
             }
 
-            let beamGroups = [];
-            try {
-              const VF_RESOLUTION  = 16384; // VexFlow's actual RESOLUTION constant
-              const TICKS_PER_8TH  = VF_RESOLUTION / 8; // 2048 ticks per eighth note
-              const BEAMABLE       = new Set(["8", "16", "32", "64"]);
+            const beamGroups = [];
+            {
+              // VexFlow RESOLUTION = 16384; 1 eighth note = 2048 ticks
+              const VF_8TH_TICKS = 16384 / 8; // 2048
+              const BEAMABLE = new Set(["8", "16", "32", "64"]);
 
-              // Build cumulative tick boundaries from the group pattern
               const grouping = getBeamGrouping(measure.timeSignature);
-              let acc = 0;
-              const groupBoundaries = grouping.map(g => { acc += g * TICKS_PER_8TH; return acc; });
+              let boundAcc = 0;
+              const bounds = grouping.map(g => {
+                boundAcc += g * VF_8TH_TICKS;
+                return boundAcc;
+              });
 
-              // Given a tick position, return which group index it falls into
               function groupOf(tick) {
-                for (let i = 0; i < groupBoundaries.length; i++) {
-                  if (tick < groupBoundaries[i] - 0.5) return i;
+                for (let gi = 0; gi < bounds.length; gi++) {
+                  if (tick < bounds[gi] - 0.5) return gi;
                 }
-                return groupBoundaries.length - 1;
+                return bounds.length - 1;
               }
 
-              // Compute average diatonic position of all pitches in a run,
-              // then set a single consistent stem direction on all vfNotes.
-              // This implements the standard engraving rule:
-              //   average pitch ABOVE middle line → stems DOWN (-1)
-              //   average pitch BELOW middle line → stems UP   (1)
-              function applyGroupStemDir(runVfNotes, runSeqNotes) {
+              // Set a single stem direction across the entire run based on
+              // the average pitch of all notes in the run.
+              function applyGroupDir(runVfNotes, runSeqNotes) {
                 if (!runVfNotes.length) return;
                 const mid = MIDDLE_LINE[clef] || MIDDLE_LINE.treble;
-                let sum = 0, count = 0;
+                let sum = 0, cnt = 0;
                 runSeqNotes.forEach(sn => {
                   if (!sn || sn.isRest || !sn.pitch) return;
-                  sum += diatonicPos(sn.pitch); count++;
-                  // Include chord notes in the average
-                  (chordMap[sn.id] || []).forEach(cn => {
-                    if (cn.pitch) { sum += diatonicPos(cn.pitch); count++; }
+                  sum += diatonicPos(sn.pitch);
+                  cnt++;
+                  const extras = chordMap[sn.id] || [];
+                  extras.forEach(cn => {
+                    if (cn.pitch) { sum += diatonicPos(cn.pitch); cnt++; }
                   });
                 });
-                if (!count) return;
-                const dir = (sum / count) >= mid ? -1 : 1; // above/on mid → DOWN
-                runVfNotes.forEach(vfn => { try { vfn.setStemDirection(dir); } catch(_){} });
+                const dir = cnt > 0 && (sum / cnt) >= mid ? -1 : 1;
+                runVfNotes.forEach(vfn => {
+                  try { vfn.setStemDirection(dir); } catch (_) {}
+                });
               }
 
-              let run    = [];   // current beam run: vfNote objects
-              let runSeq = [];   // parallel: corresponding renderSeq notes (for pitch data)
-              let runGroup = -1; // which beat-group the current run belongs to
-              let tickPos  = 0;  // running tick position through the measure
-
-              function flushRun() {
-                if (run.length >= 2) {
-                  try {
-                    applyGroupStemDir(run, runSeq);
-                    // auto_stem=false: trust our pre-set directions
-                    const beam = new Beam(run, false);
-                    // Hide individual flags — beam line replaces them visually
-                    run.forEach(vfn => {
-                      try {
-                        vfn.setFlagStyle({ fillStyle:"transparent", strokeStyle:"transparent" });
-                      } catch(_) {}
-                    });
-                    beamGroups.push(beam);
-                  } catch(err) {
-                    if (typeof console !== "undefined") {
-                      console.warn("[FaithScore] Beam construction failed:", err);
-                    }
-                  }
-                }
-                run = []; runSeq = []; runGroup = -1;
+              function flushRun(runVfNotes, runSeqNotes) {
+                if (runVfNotes.length < 2) return;
+                applyGroupDir(runVfNotes, runSeqNotes);
+                try {
+                  const beam = new Beam(runVfNotes, false);
+                  runVfNotes.forEach(vfn => {
+                    try {
+                      vfn.setFlagStyle({
+                        fillStyle: "transparent",
+                        strokeStyle: "transparent"
+                      });
+                    } catch (_) {}
+                  });
+                  beamGroups.push(beam);
+                } catch (_) {}
               }
+
+              let run = [], runSeq = [], runGrp = -1, tickPos = 0;
 
               vfNotes.forEach((vfNote, ni) => {
-                let dur, isBeamable, noteTicks;
+                let dur = "", isBeamable = false, noteTicks = 16384 / 4;
+                try { dur = vfNote.getDuration(); } catch (_) {}
                 try {
-                  dur        = vfNote.getDuration();
-                  const isRest = vfNote.isRest?.() ?? false;
+                  const isRest = vfNote.isRest ? vfNote.isRest() : false;
                   isBeamable = BEAMABLE.has(dur) && !isRest;
-                  // Compute this note's tick duration
-                  // RESOLUTION / denominator, then add dot contributions
-                  const denom = parseInt(dur, 10) || 4;
-                  noteTicks   = VF_RESOLUTION / denom;
-                  const dots  = vfNote.dots ?? 0;
-                  let dotVal  = noteTicks / 2;
-                  for (let d = 0; d < dots; d++) { noteTicks += dotVal; dotVal /= 2; }
-                } catch(_) {
-                  isBeamable = false;
-                  noteTicks  = VF_RESOLUTION / 4; // quarter-note fallback
-                }
+                  const denom = parseInt(dur, 10);
+                  if (denom >= 8) {
+                    noteTicks = 16384 / denom;
+                    const dots = (vfNote.dots != null) ? vfNote.dots : 0;
+                    let dotVal = noteTicks / 2;
+                    for (let d = 0; d < dots; d++) {
+                      noteTicks += dotVal;
+                      dotVal /= 2;
+                    }
+                  }
+                } catch (_) {}
 
                 if (!isBeamable) {
-                  // Non-beamable note or rest: close whatever run is open
-                  flushRun();
+                  flushRun(run, runSeq);
+                  run = []; runSeq = []; runGrp = -1;
                 } else {
                   const g = groupOf(tickPos);
-                  if (run.length > 0 && g !== runGroup) {
-                    // This note crosses into a new beat group — close the current run
-                    flushRun();
+                  if (run.length > 0 && g !== runGrp) {
+                    flushRun(run, runSeq);
+                    run = []; runSeq = [];
                   }
-                  if (run.length === 0) runGroup = g;
+                  if (run.length === 0) runGrp = g;
                   run.push(vfNote);
                   runSeq.push(renderSeq[ni]);
                 }
                 tickPos += noteTicks;
               });
-
-              flushRun(); // close any run left open at end of measure
-
-            } catch(err) {
-              if (typeof console !== "undefined") {
-                console.warn("[FaithScore] Beaming failed:", err);
-              }
+              flushRun(run, runSeq);
             }
 
             voice.draw(ctx, stave);
