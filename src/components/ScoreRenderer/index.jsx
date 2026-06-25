@@ -33,42 +33,9 @@ const SYSTEM_GAP = SP * 8; // 96px — gap between rows of systems
 const STAVE_TOP = SP * 3; // 36px — top margin
 const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3; // 84px — click zone includes ledger lines
 
-// ── Rest key positions — standard engraving rules ────────────────────────────
-// Treble staff lines (bottom→top): E4, G4, B4, D5, F5
-//   • Whole rest  → hangs from the underside of line 4 (D5)  key="d/5"
-//   • Half rest   → sits on top of line 3 (B4, middle line)  key="b/4"
-//   • Quarter+    → visually centered on the staff            key="b/4"
-//
-// Bass staff lines (bottom→top): G2, B2, D3, F3, A3
-//   • Whole rest  → hangs from the underside of line 4 (F3)  key="f/3"
-//   • Half rest   → sits on top of line 3 (D3, middle line)  key="d/3"
-//   • Quarter+    → visually centered on the staff            key="d/3"
-//
-// VexFlow positions the rest glyph so that the symbol's reference point
-// aligns with the given pitch key. For whole rests VexFlow's glyph hangs
-// downward from its reference point, so "d/5" / "f/3" (line 4) produces
-// the correct hang-from-line-4 appearance.
-const REST_KEYS = {
-  treble: {
-    w:   "d/5",   // whole  — hangs from line 4 (D5)
-    h:   "b/4",   // half   — sits on line 3 (B4)
-    q:   "b/4",   // quarter — centered on staff
-    "8": "b/4",   // eighth
-    "16":"b/4",   // sixteenth
-    "32":"b/4",   // 32nd
-    "64":"b/4",   // 64th
-  },
-  bass: {
-    w:   "f/3",   // whole  — hangs from line 4 (F3)
-    h:   "d/3",   // half   — sits on line 3 (D3)
-    q:   "d/3",
-    "8": "d/3",
-    "16":"d/3",
-    "32":"d/3",
-    "64":"d/3",
-  },
-}
-// Fallback for any other clef — use treble mappings
+// Middle of staff for rests — VexFlow places rest glyph at this key position.
+// Bass clef lines (bottom→top): G2 B2 D3 F3 A3 — middle line = D3
+// Treble clef lines (bottom→top): E4 G4 B4 D5 F5 — middle line = B4
 const REST_KEY = { treble: "b/4", bass: "d/3" };
 
 function keyNumToVexflow(num) {
@@ -144,16 +111,12 @@ function stemDir(note, chordExtras, clef) {
 }
 
 function buildVfNote(n, clef, isSelected, chordExtras = []) {
+  const restKey = REST_KEY[clef] || "b/4";
   const clefOpt = clef === "bass" ? { clef: "bass" } : {};
 
   if (n.isRest) {
-    // Pick the correct staff position for this rest duration.
-    // Whole rests hang from line 4, half rests sit on line 3,
-    // all shorter rests are centered on the middle line.
-    const clefKeys = REST_KEYS[clef] || REST_KEYS.treble;
-    const durKey   = clefKeys[n.duration] || (clef === 'bass' ? 'd/3' : 'b/4');
     const sn = new StaveNote({
-      keys: [durKey],
+      keys: [restKey],
       duration: n.duration + "r",
       dots: n.dots || 0,
       type: "r",
@@ -260,16 +223,16 @@ export default function ScoreRenderer() {
     // Compute minimum pixel width for each measure based on content density.
     // This is the core of the dynamic layout — denser measures get more space.
     const NOTE_PX = {
-      w:  SP * 8.5,  // whole — needs wide spacing
-      h:  SP * 6.5,  // half
-      q:  SP * 5.5,  // quarter
-      8:  SP * 4.5,  // eighth
-      16: SP * 4.0,  // sixteenth — dense, needs generous space
-      32: SP * 3.6,  // 32nd
-      64: SP * 3.2,  // 64th
+      w: SP * 5,
+      h: SP * 4,
+      q: SP * 3,
+      8: SP * 2.5,
+      16: SP * 2,
+      32: SP * 1.8,
+      64: SP * 1.6,
     };
-    const MIN_MEASURE_WIDTH = SP * 18; // absolute minimum — room for even a whole rest
-    const MAX_MEASURE_WIDTH = SP * 80; // absolute maximum
+    const MIN_MEASURE_WIDTH = SP * 8; // absolute minimum (very sparse measures)
+    const MAX_MEASURE_WIDTH = SP * 40; // absolute maximum (very dense measures)
 
     function getMeasureContentWidth(colIdx) {
       let maxNotePx = 0;
@@ -330,7 +293,7 @@ export default function ScoreRenderer() {
         const needed = overhead + content + SP * 2;
 
         // Hard break: adding this measure would exceed usable width
-        if (colCount > 0 && lineWidth + needed > USABLE_W) break;
+        if (colCount > 0 && lineWidth + needed > USABLE_W + SP * 4) break;
         // Soft break: reached preferred bars-per-line
         if (colCount >= preferredMax && preferredMax > 0) break;
 
@@ -412,7 +375,7 @@ export default function ScoreRenderer() {
         const isFirst = colIdx === 0;
         const overhead = getGlyphOverhead(col, isFirst);
         const content = getMeasureContentWidth(col);
-        return overhead + content + SP * 6;
+        return overhead + content + SP * 2;
       });
 
       // Justify: scale widths proportionally to fill full usable width
@@ -478,20 +441,8 @@ export default function ScoreRenderer() {
             }
           }
 
-          // Part name labels — show on first system only, left of the stave
-          // (MuseScore style: full name on first system, abbreviated on subsequent)
-          if (isFirst) {
-            const partName = part.label || part.name || ''
-            if (partName) {
-              ctx.save()
-              ctx.setFont('Times New Roman', 9)
-              ctx.setFillStyle('#1e293b')
-              // Right-align the label flush to the stave left edge
-              const labelX = x - 4
-              ctx.fillText(partName, labelX - (partName.length * 5.2), partY + STAFF_HEIGHT / 2 + 3)
-              ctx.restore()
-            }
-          }
+          // Part name labels removed — clean score appearance like MuseScore default
+          // (names show in the parts panel/sidebar instead)
 
           if (isFirst && numParts > 1) {
             if (pIdx === 0) firstStave = stave;
@@ -534,16 +485,18 @@ export default function ScoreRenderer() {
               ),
             );
 
+            // FIX: VexFlow 5 requires camelCase (numBeats/beatValue).
+            // snake_case keys are silently ignored, causing every Voice
+            // to default to 4/4 internally — corrupting all other meters.
             const voice = new Voice({
-              num_beats: measure.timeSignature.beats,
-              beat_value: measure.timeSignature.beatType,
+              numBeats:  measure.timeSignature.beats,
+              beatValue: measure.timeSignature.beatType,
             }).setStrict(false);
             voice.addTickables(vfNotes);
             // Formatter width = stave width minus glyph overhead.
             // getGlyphOverhead() accounts for clef + key sig accidentals + time sig.
             const glyphOverhead = getGlyphOverhead(col, isFirst);
-            const NOTE_PADDING = SP * 5;
-            const formatterWidth = Math.max(40, width - glyphOverhead - NOTE_PADDING);
+            const formatterWidth = Math.max(40, width - glyphOverhead);
             new Formatter().joinVoices([voice]).format([voice], formatterWidth);
 
             // Re-apply stem directions AFTER formatting — Formatter.format() resets
@@ -562,126 +515,147 @@ export default function ScoreRenderer() {
             });
 
             // ── Beaming ─────────────────────────────────────────────────────
-            // IMPORTANT: We must NOT use Beam.generateBeams(beamable) — it only
-            // receives beamable notes stripped of their position context, so it
-            // happily beams two 8th notes across an intervening quarter note.
             //
-            // Instead we walk vfNotes in order. Any non-beamable note (quarter,
-            // half, whole, rest, dotted, etc.) immediately closes the current run.
-            // Only runs of 2+ consecutive beamable notes become a Beam.
-            // Beat boundaries (per time signature) also close runs.
-            let beamGroups = [];
-            try {
-              const BEAMABLE_DURS = new Set(["8", "16", "32", "64"]);
-              const beatsInMeasure = measure.timeSignature.beats;
-              const beatType = measure.timeSignature.beatType; // usually 4
+            // Standard engraving beam grouping rules:
+            //   4/4  → [4,4]       beam in half-note pulses
+            //   3/4  → [2,2,2]     beam per quarter beat
+            //   2/4  → [4]         all eighths in one beam
+            //   6/8  → [3,3]       two dotted-quarter pulses
+            //   9/8  → [3,3,3]     three dotted-quarter pulses
+            //   12/8 → [3,3,3,3]   four dotted-quarter pulses
+            //
+            // Algorithm:
+            //   1. Walk vfNotes in original order (never pre-filter).
+            //   2. Non-beamable note or rest → close current run immediately.
+            //   3. Beat-group boundary crossing → close current run, start new.
+            //   4. Run of 2+ beamable notes → build Beam with group-avg stem dir.
 
-              // Build a tick-position accumulator so we know which beat each
-              // note starts on. VexFlow tick resolution: whole = 4096 ticks.
-              const TICKS_PER_WHOLE = 4096;
-              const ticksPerBeat = TICKS_PER_WHOLE / beatType;
+            function getBeamGrouping(ts) {
+              const beats = ts?.beats || 4;
+              const beatType = ts?.beatType || 4;
+              if (beatType === 4) {
+                if (beats === 2) return [4];
+                if (beats === 3) return [2, 2, 2];
+                if (beats === 4) return [4, 4];
+                if (beats === 5) return [4, 2];
+                if (beats === 6) return [4, 4, 4];
+                return Array(beats).fill(2);
+              }
+              if (beatType === 2) {
+                return Array(beats).fill(4);
+              }
+              if (beatType === 8) {
+                if (beats % 3 === 0) return Array(beats / 3).fill(3);
+                const IRR = { 5:[3,2], 7:[2,2,3], 11:[3,3,3,2] };
+                if (IRR[beats]) return IRR[beats];
+                const g = []; let r = beats;
+                while (r > 3) { g.push(2); r -= 2; }
+                if (r > 0) g.push(r);
+                return g;
+              }
+              return Array(beats).fill(1);
+            }
 
-              let currentRun = [];
-              let currentRunSeq = [];    // parallel array: seq notes for each vfNote in run
-              let runTick = 0;           // tick position of start of current run
-              let tickCursor = 0;        // running tick position through the measure
+            const beamGroups = [];
+            {
+              // VexFlow RESOLUTION = 16384; 1 eighth note = 2048 ticks
+              const VF_8TH_TICKS = 16384 / 8; // 2048
+              const BEAMABLE = new Set(["8", "16", "32", "64"]);
 
-              // Compute group stem direction from average diatonic position
-              // of all notes in the run relative to the staff middle line.
-              // This is the standard engraving rule: if the group sits mostly
-              // BELOW the middle line → stems UP; mostly ABOVE → stems DOWN.
-              // All notes share the same direction to keep the beam unified.
-              function applyGroupStemDir(run, runSeqNotes) {
-                if (!run.length) return;
+              const grouping = getBeamGrouping(measure.timeSignature);
+              // DEBUG — open browser console to see this
+              console.log('[BEAM] ts=', JSON.stringify(measure.timeSignature),
+                'grouping=', JSON.stringify(grouping),
+                'notes=', renderSeq.map(n=>n.duration+(n.isRest?'r':'')).join(','));
+              let boundAcc = 0;
+              const bounds = grouping.map(g => {
+                boundAcc += g * VF_8TH_TICKS;
+                return boundAcc;
+              });
+
+              function groupOf(tick) {
+                for (let gi = 0; gi < bounds.length; gi++) {
+                  if (tick < bounds[gi] - 0.5) return gi;
+                }
+                return bounds.length - 1;
+              }
+
+              // Set a single stem direction across the entire run based on
+              // the average pitch of all notes in the run.
+              function applyGroupDir(runVfNotes, runSeqNotes) {
+                if (!runVfNotes.length) return;
                 const mid = MIDDLE_LINE[clef] || MIDDLE_LINE.treble;
-                let sumPos = 0, count = 0;
+                let sum = 0, cnt = 0;
                 runSeqNotes.forEach(sn => {
-                  if (sn && !sn.isRest && sn.pitch) {
-                    sumPos += diatonicPos(sn.pitch);
-                    count++;
-                    // Also count chord notes
-                    const extras = Object.values(chordMap[sn.id] || {});
-                    extras.forEach(cn => {
-                      if (cn.pitch) { sumPos += diatonicPos(cn.pitch); count++; }
-                    });
-                  }
+                  if (!sn || sn.isRest || !sn.pitch) return;
+                  sum += diatonicPos(sn.pitch);
+                  cnt++;
+                  const extras = chordMap[sn.id] || [];
+                  extras.forEach(cn => {
+                    if (cn.pitch) { sum += diatonicPos(cn.pitch); cnt++; }
+                  });
                 });
-                if (!count) return;
-                const avgPos = sumPos / count;
-                // avg >= middle → stems DOWN (-1); avg < middle → stems UP (1)
-                const groupDir = avgPos >= mid ? -1 : 1;
-                run.forEach(vfNote => {
-                  try { vfNote.setStemDirection(groupDir); } catch(_) {}
+                const dir = cnt > 0 && (sum / cnt) >= mid ? -1 : 1;
+                runVfNotes.forEach(vfn => {
+                  try { vfn.setStemDirection(dir); } catch (_) {}
                 });
               }
 
-              const flushRun = () => {
-                if (currentRun.length >= 2) {
-                  try {
-                    // Apply unified stem direction based on group average pitch
-                    applyGroupStemDir(currentRun, currentRunSeq);
-                    const beam = new Beam(currentRun);
-                    // Hide individual flags on all notes in this beam group
-                    currentRun.forEach((note) => {
-                      try {
-                        note.setFlagStyle({
-                          fillStyle: "transparent",
-                          strokeStyle: "transparent",
-                        });
-                      } catch (_) {}
-                    });
-                    beamGroups.push(beam);
-                  } catch (_) {}
-                }
-                currentRun = [];
-                currentRunSeq = [];
-              };
+              function flushRun(runVfNotes, runSeqNotes) {
+                if (runVfNotes.length < 2) return;
+                console.log('[BEAM] flushing run of', runVfNotes.length, 'notes, durs=', runVfNotes.map(n=>{try{return n.getDuration()}catch(_){return'?'}}).join(','));
+                applyGroupDir(runVfNotes, runSeqNotes);
+                try {
+                  const beam = new Beam(runVfNotes, false);
+                  runVfNotes.forEach(vfn => {
+                    try {
+                      vfn.setFlagStyle({
+                        fillStyle: "transparent",
+                        strokeStyle: "transparent"
+                      });
+                    } catch (_) {}
+                  });
+                  beamGroups.push(beam);
+                } catch (_) {}
+              }
+
+              let run = [], runSeq = [], runGrp = -1, tickPos = 0;
 
               vfNotes.forEach((vfNote, ni) => {
-                let dur, isBeamable, noteTicks;
+                let dur = "", isBeamable = false, noteTicks = 16384 / 4;
+                try { dur = vfNote.getDuration(); } catch (_) {}
                 try {
-                  dur = vfNote.getDuration();
-                  const isRest = vfNote.isRest?.() ?? false;
-                  isBeamable = BEAMABLE_DURS.has(dur) && !isRest;
-                  // Ticks for this note: whole=4096, half=2048, quarter=1024, 8th=512, 16th=256 …
-                  const denom = parseInt(dur, 10) || 4;
-                  noteTicks = TICKS_PER_WHOLE / denom;
-                  // Account for dots (each dot adds half the previous value)
-                  const dots = vfNote.dots ?? 0;
-                  let dotAdd = noteTicks / 2;
-                  for (let d = 0; d < dots; d++) { noteTicks += dotAdd; dotAdd /= 2; }
-                } catch (_) {
-                  isBeamable = false;
-                  noteTicks = 1024; // safe fallback (quarter)
-                }
+                  const isRest = vfNote.isRest ? vfNote.isRest() : false;
+                  isBeamable = BEAMABLE.has(dur) && !isRest;
+                  const denom = parseInt(dur, 10);
+                  if (denom >= 8) {
+                    noteTicks = 16384 / denom;
+                    const dots = (vfNote.dots != null) ? vfNote.dots : 0;
+                    let dotVal = noteTicks / 2;
+                    for (let d = 0; d < dots; d++) {
+                      noteTicks += dotVal;
+                      dotVal /= 2;
+                    }
+                  }
+                } catch (_) {}
 
                 if (!isBeamable) {
-                  // Non-beamable note → close any open run
-                  flushRun();
+                  flushRun(run, runSeq);
+                  run = []; runSeq = []; runGrp = -1;
                 } else {
-                  // Check beat boundary: if this note starts on a new beat
-                  // compared to where the current run started, close the run first.
-                  const currentBeat = Math.floor(tickCursor / ticksPerBeat);
-                  const runBeat     = Math.floor(runTick   / ticksPerBeat);
-                  // Only break on beat boundary when the run isn't empty and
-                  // we've crossed into a new beat.
-                  if (currentRun.length > 0 && currentBeat !== runBeat) {
-                    flushRun();
-                    runTick = tickCursor;
+                  const g = groupOf(tickPos);
+                  if (run.length > 0 && g !== runGrp) {
+                    flushRun(run, runSeq);
+                    run = []; runSeq = [];
                   }
-                  if (currentRun.length === 0) {
-                    runTick = tickCursor;
-                  }
-                  currentRun.push(vfNote);
-                  currentRunSeq.push(renderSeq[ni]);
+                  if (run.length === 0) runGrp = g;
+                  run.push(vfNote);
+                  runSeq.push(renderSeq[ni]);
                 }
-
-                tickCursor += noteTicks;
+                tickPos += noteTicks;
               });
-
-              // Flush any remaining run at end of measure
-              flushRun();
-            } catch (_) {}
+              flushRun(run, runSeq);
+            }
 
             voice.draw(ctx, stave);
             beamGroups.forEach((b) => {
