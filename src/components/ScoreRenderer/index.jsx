@@ -223,16 +223,16 @@ export default function ScoreRenderer() {
     // Compute minimum pixel width for each measure based on content density.
     // This is the core of the dynamic layout — denser measures get more space.
     const NOTE_PX = {
-      w: SP * 5,
-      h: SP * 4,
-      q: SP * 3,
-      8: SP * 2.5,
-      16: SP * 2,
-      32: SP * 1.8,
-      64: SP * 1.6,
+      w:  SP * 9,
+      h:  SP * 6.5,
+      q:  SP * 5,
+      8:  SP * 4,
+      16: SP * 3.2,
+      32: SP * 2.8,
+      64: SP * 2.4,
     };
-    const MIN_MEASURE_WIDTH = SP * 8; // absolute minimum (very sparse measures)
-    const MAX_MEASURE_WIDTH = SP * 40; // absolute maximum (very dense measures)
+    const MIN_MEASURE_WIDTH = SP * 16;
+    const MAX_MEASURE_WIDTH = SP * 100;
 
     function getMeasureContentWidth(colIdx) {
       let maxNotePx = 0;
@@ -496,7 +496,8 @@ export default function ScoreRenderer() {
             // Formatter width = stave width minus glyph overhead.
             // getGlyphOverhead() accounts for clef + key sig accidentals + time sig.
             const glyphOverhead = getGlyphOverhead(col, isFirst);
-            const formatterWidth = Math.max(40, width - glyphOverhead);
+            const BARLINE_PAD  = SP * 3; // breathing room from barlines on each side
+            const formatterWidth = Math.max(40, width - glyphOverhead - BARLINE_PAD * 2);
             new Formatter().joinVoices([voice]).format([voice], formatterWidth);
 
             // Re-apply stem directions AFTER formatting — Formatter.format() resets
