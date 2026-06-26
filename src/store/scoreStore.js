@@ -566,16 +566,30 @@ export const useScoreStore = create((set, get) => ({
         ...s.score,
         parts: s.score.parts.map(p => ({
           ...p,
-          measures: p.measures.map((m, mIdx) => ({
-            ...m,
-            timeSignature: ts,
-            // Use unique prefix per measure to prevent duplicate React keys
-            notes: normalizeMeasure(m.notes, measureCapacity(ts)).map((n, ni) =>
-              n.isRest && n.id.startsWith('init_')
-                ? { ...n, id: `ts_${ts.beats}_${ts.beatType}_m${mIdx}_r${ni}_${Date.now()}` }
-                : n
-            ),
-          })),
+          measures: p.measures.map((m, mIdx) => {
+            const cap = measureCapacity(ts)
+            // Keep real notes, truncate if they overflow new capacity.
+            // Rebuild rest slots from scratch with fresh IDs so React
+            // doesn't reuse stale keys from the old time signature.
+            const realNotes = m.notes.filter(n => !n.isRest)
+            const keptNotes = []
+            let cursor = 0
+            for (const n of realNotes) {
+              const dur = noteDuration(n)
+              if (cursor + dur > cap + 0.001) break
+              keptNotes.push(n)
+              cursor += dur
+            }
+            const remaining = cap - cursor
+            const freshRests = remaining > 0.001
+              ? makeRests(remaining, 'ts_' + ts.beats + '_' + ts.beatType + '_m' + mIdx)
+              : []
+            return {
+              ...m,
+              timeSignature: ts,
+              notes: [...keptNotes, ...freshRests],
+            }
+          }),
         })),
       },
     }))

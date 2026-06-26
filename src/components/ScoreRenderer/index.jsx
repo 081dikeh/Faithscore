@@ -1245,7 +1245,12 @@ export default function ScoreRenderer() {
 
       const part = score.parts.find((p) => p.id === z.partId);
       const clef = part?.clef || "treble";
-      const beats = part?.measures[z.measureIndex]?.timeSignature?.beats ?? 4;
+      const ts = part?.measures[z.measureIndex]?.timeSignature ?? { beats: 4, beatType: 4 };
+      // measureCapacity converts raw beats to quarter-beat units:
+      // 4/4→4, 6/8→3, 9/8→4.5, 12/8→6
+      // Raw ts.beats (12 for 12/8) would map clicks to 0-12 but the store
+      // expects quarter-beat positions 0-6, causing a 2x offset and hard cap.
+      const capacity = ts.beats * (4 / ts.beatType);
 
       // X → beat using actual note area coordinates stored in the zone
       const noteStart =
@@ -1253,7 +1258,7 @@ export default function ScoreRenderer() {
       const noteWidth =
         z.noteAreaWidth ?? z.width - (z.measureIndex === 0 ? 60 : 15);
       const frac = Math.max(0, Math.min(1, (mouseX - noteStart) / noteWidth));
-      const rawBeat = frac * beats;
+      const rawBeat = frac * capacity;
       const beat = Math.round(rawBeat / 0.25) * 0.25;
 
       // Y → pitch using actual stave coordinates stored during rendering
@@ -1318,7 +1323,7 @@ export default function ScoreRenderer() {
 
       // Pixel X for the ghost note — clamped to actual note area
       const ghostX =
-        noteStart + Math.max(0, Math.min(1, beat / beats)) * noteWidth;
+        noteStart + Math.max(0, Math.min(1, beat / capacity)) * noteWidth;
       const ghostY = topLineY + pos * posSpacing;
 
       const isChord = chordMode && selectedNoteId_store;
