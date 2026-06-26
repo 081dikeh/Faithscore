@@ -19,6 +19,7 @@ import {
   useScoreStore,
   DURATION_BEATS,
   noteDuration,
+  measureCapacity,
 } from "../../store/scoreStore";
 
 const MEASURES_PER_LINE = 5;
@@ -36,7 +37,13 @@ const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3; // 84px — click zone includes ledg
 // Middle of staff for rests — VexFlow places rest glyph at this key position.
 // Bass clef lines (bottom→top): G2 B2 D3 F3 A3 — middle line = D3
 // Treble clef lines (bottom→top): E4 G4 B4 D5 F5 — middle line = B4
-const REST_KEY = { treble: "b/4", bass: "d/3" };
+// Per-duration rest positions — standard engraving rules:
+// Treble: whole hangs from D5 (line 4), half sits on B4 (line 3), others on B4 (middle)
+// Bass:   whole hangs from F3 (line 4), half sits on D3 (line 3), others on D3 (middle)
+const REST_KEYS = {
+  treble: { w:"d/5", h:"b/4", q:"b/4", "8":"b/4", "16":"b/4", "32":"b/4", "64":"b/4" },
+  bass:   { w:"f/3", h:"d/3", q:"d/3", "8":"d/3", "16":"d/3", "32":"d/3", "64":"d/3" },
+};
 
 function keyNumToVexflow(num) {
   const map = {
@@ -111,7 +118,8 @@ function stemDir(note, chordExtras, clef) {
 }
 
 function buildVfNote(n, clef, isSelected, chordExtras = []) {
-  const restKey = REST_KEY[clef] || "b/4";
+  const restKeyMap = REST_KEYS[clef] || REST_KEYS.treble;
+  const restKey = restKeyMap[n.duration] || restKeyMap["8"]; // per-duration position
   const clefOpt = clef === "bass" ? { clef: "bass" } : {};
 
   if (n.isRest) {
@@ -1246,11 +1254,7 @@ export default function ScoreRenderer() {
       const part = score.parts.find((p) => p.id === z.partId);
       const clef = part?.clef || "treble";
       const ts = part?.measures[z.measureIndex]?.timeSignature ?? { beats: 4, beatType: 4 };
-      // measureCapacity converts raw beats to quarter-beat units:
-      // 4/4→4, 6/8→3, 9/8→4.5, 12/8→6
-      // Raw ts.beats (12 for 12/8) would map clicks to 0-12 but the store
-      // expects quarter-beat positions 0-6, causing a 2x offset and hard cap.
-      const capacity = ts.beats * (4 / ts.beatType);
+      const capacity = measureCapacity(ts);
 
       // X → beat using actual note area coordinates stored in the zone
       const noteStart =

@@ -1029,10 +1029,12 @@ export const useScoreStore = create((set, get) => ({
 
       const restBeats = noteDuration(firstRest)
       const durKey = noteData.duration + (noteData.dots ? 'd' : '')
-      let nb = DURATION_BEATS[durKey] || DURATION_BEATS[noteData.duration] || 1
-      if (nb > restBeats + 0.001) nb = restBeats  // clamp
-
-      const fit = nb === restBeats ? noteData : { ...noteData, ...beatsToRest(restBeats) }
+      const requestedBeats = DURATION_BEATS[durKey] || DURATION_BEATS[noteData.duration] || 1
+      // Only clamp if the requested note is LARGER than the rest slot.
+      // Never replace a small note (e.g. eighth) with the full rest size.
+      const fit = requestedBeats <= restBeats + 0.001
+        ? noteData                        // fits — use exactly what was requested
+        : { ...noteData, ...beatsToRest(restBeats) } // too big — clamp to slot
       const newNote = { id: newId, ...fit, isRest: false, pitch: noteData.pitch }
       const leftover = restBeats - noteDuration(newNote)
       const idx = notes.findIndex(n => n.id === firstRest.id)
