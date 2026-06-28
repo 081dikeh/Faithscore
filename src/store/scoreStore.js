@@ -193,10 +193,35 @@ export const useScoreStore = create((set, get) => ({
   score: (() => {
     const saved = loadFromStorage()
     if (!saved) return EMPTY_SCORE
-    // Ensure legacy saves get the new markings arrays
+    // Migrate: re-normalize every measure using correct measureCapacity.
+    // Old saves may have wrong rest counts from before the capacity fix.
+    const migratedParts = (saved.parts || []).map(part => ({
+      ...part,
+      measures: (part.measures || []).map(measure => {
+        const ts  = measure.timeSignature || { beats: 4, beatType: 4 }
+        const cap = ts.beats * (4 / ts.beatType)
+        const notes = measure.notes || []
+        // Keep real notes, rebuild rest slots from scratch
+        const realNotes = notes.filter(n => !n.isRest)
+        const keptNotes = []
+        let cursor = 0
+        for (const n of realNotes) {
+          const db = DURATION_BEATS
+          const key = n.duration + (n.dots ? 'd' : '')
+          const dur = db[key] || db[n.duration] || 1
+          if (cursor + dur > cap + 0.001) break
+          keptNotes.push(n)
+          cursor += dur
+        }
+        const rem = cap - cursor
+        const freshRests = rem > 0.001 ? makeRests(rem, 'mig_m') : []
+        return { ...measure, notes: [...keptNotes, ...freshRests] }
+      })
+    }))
     return {
       dynamics: [], hairpins: [], rehearsalMarks: [], staffTexts: [],
       ...saved,
+      parts: migratedParts,
     }
   })(),
 
