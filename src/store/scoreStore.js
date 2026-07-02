@@ -193,31 +193,36 @@ export const useScoreStore = create((set, get) => ({
   score: (() => {
     const saved = loadFromStorage()
     if (!saved) return EMPTY_SCORE
-    // Migrate: re-normalize every measure using correct measureCapacity.
-    // Old saves may have wrong rest counts from before the capacity fix.
+
+    // ── Migration: rebuild measure rests using correct measureCapacity ──
+    // Old saves used raw ts.beats as capacity (e.g. 12 for 12/8) instead of
+    // ts.beats*(4/ts.beatType) (= 6 for 12/8). This caused measures to have
+    // 8 rest slots instead of 12 for 12/8, 8 instead of 9 for 9/8, etc.
+    // We fix this on load by rebuilding rest slots from correct capacity.
     const migratedParts = (saved.parts || []).map(part => ({
       ...part,
       measures: (part.measures || []).map(measure => {
-        const ts  = measure.timeSignature || { beats: 4, beatType: 4 }
-        const cap = ts.beats * (4 / ts.beatType)
+        const ts  = measure.timeSignature || { beats:4, beatType:4 }
+        const cap = ts.beats * (4 / ts.beatType)  // correct capacity
         const notes = measure.notes || []
-        // Keep real notes, rebuild rest slots from scratch
+        // Keep real (non-rest) notes that fit within correct capacity
         const realNotes = notes.filter(n => !n.isRest)
         const keptNotes = []
         let cursor = 0
         for (const n of realNotes) {
-          const db = DURATION_BEATS
           const key = n.duration + (n.dots ? 'd' : '')
-          const dur = db[key] || db[n.duration] || 1
+          const dur = DURATION_BEATS[key] || DURATION_BEATS[n.duration] || 1
           if (cursor + dur > cap + 0.001) break
           keptNotes.push(n)
           cursor += dur
         }
+        // Rebuild rest slots from scratch with correct remaining capacity
         const rem = cap - cursor
-        const freshRests = rem > 0.001 ? makeRests(rem, 'mig_m') : []
+        const freshRests = rem > 0.001 ? makeRests(rem, 'mig') : []
         return { ...measure, notes: [...keptNotes, ...freshRests] }
       })
     }))
+
     return {
       dynamics: [], hairpins: [], rehearsalMarks: [], staffTexts: [],
       ...saved,
