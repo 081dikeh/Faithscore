@@ -185,6 +185,8 @@ export const EMPTY_SCORE = {
   hairpins:         [],   // { id, partId, startMeasure, startBeat, endMeasure, endBeat, type:'cresc'|'decresc' }
   rehearsalMarks:   [],   // { id, measureIndex, text } e.g. text:'A'
   staffTexts:       [],   // { id, partId, measureIndex, beat, text }
+  barlines:         [],   // { id, measureIndex, type: 'double'|'final'|'repeat-start'|'repeat-end'|'repeat-both' }
+  octaveLines:      [],   // { id, partId, startMeasure, endMeasure, type: '8va'|'8vb' }
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -224,7 +226,7 @@ export const useScoreStore = create((set, get) => ({
     }))
 
     return {
-      dynamics: [], hairpins: [], rehearsalMarks: [], staffTexts: [],
+      dynamics: [], hairpins: [], rehearsalMarks: [], staffTexts: [], barlines: [], octaveLines: [],
       ...saved,
       parts: migratedParts,
     }
@@ -1471,5 +1473,68 @@ export const useScoreStore = create((set, get) => ({
       staffTexts: [...(s.score.staffTexts||[]), { id, partId, measureIndex, beat, text }]
     }}))
     saveToStorage(get().score)
+  },
+  removeStaffText: (id) => {
+    set(s => ({ score: { ...s.score, staffTexts: (s.score.staffTexts||[]).filter(t => t.id !== id) }}))
+    saveToStorage(get().score)
+  },
+
+  // ── Barlines ────────────────────────────────────────────────────────────
+  // type: 'normal' (clears) | 'double' | 'final' | 'repeat-start' | 'repeat-end' | 'repeat-both'
+  setBarline: (measureIndex, type) => {
+    get()._snapshot()
+    set(s => {
+      const filtered = (s.score.barlines||[]).filter(b => b.measureIndex !== measureIndex)
+      if (type === 'normal') return { score: { ...s.score, barlines: filtered } }
+      return { score: { ...s.score, barlines: [...filtered, { id: crypto.randomUUID(), measureIndex, type }] } }
+    })
+    saveToStorage(get().score)
+  },
+
+  // ── Octave lines (8va / 8vb) ──────────────────────────────────────────────
+  addOctaveLine: (partId, startMeasure, endMeasure, type) => {
+    get()._snapshot()
+    const id = crypto.randomUUID()
+    set(s => ({ score: { ...s.score,
+      octaveLines: [...(s.score.octaveLines||[]), { id, partId, startMeasure, endMeasure, type }]
+    }}))
+    saveToStorage(get().score)
+  },
+  removeOctaveLine: (id) => {
+    set(s => ({ score: { ...s.score, octaveLines: (s.score.octaveLines||[]).filter(o => o.id !== id) }}))
+    saveToStorage(get().score)
+  },
+
+  // ── Articulations (per-note marks: staccato, tenuto, accent, marcato, fermata, trill, vibrato…) ──
+  // Toggles the mark on a single note (clicking the same mark again removes it).
+  setArticulation: (partId, measureIndex, noteId, type) => {
+    get()._snapshot()
+    get()._applyToMeasure(partId, measureIndex, notes =>
+      notes.map(n => n.id === noteId ? { ...n, articulation: n.articulation === type ? null : type } : n)
+    )
+    saveToStorage(get().score)
+  },
+  // Applies (not toggles) a mark to every real note across a range of measures for one part.
+  // Used when the user has a bar (or bar range) selected but no single note selected.
+  applyArticulationToRange: (partId, startMeasure, endMeasure, type) => {
+    get()._snapshot()
+    for (let m = startMeasure; m <= endMeasure; m++) {
+      get()._applyToMeasure(partId, m, notes =>
+        notes.map(n => (!n.isRest && !n.chordWith) ? { ...n, articulation: type } : n)
+      , true)
+    }
+    saveToStorage(get().score)
+  },
+
+  // Beat offset (0-based, in quarter-beats) of a note within its measure.
+  getNoteBeatPosition: (partId, measureIndex, noteId) => {
+    const part = get().score.parts.find(p => p.id === partId)
+    const notes = part?.measures[measureIndex]?.notes.filter(n => !n.chordWith) || []
+    let beat = 0
+    for (const n of notes) {
+      if (n.id === noteId) return beat
+      beat += noteDuration(n)
+    }
+    return 0
   },
 }))

@@ -14,6 +14,7 @@ import {
   StaveTie,
   Curve,
   Tuplet,
+  Barline,
 } from "vexflow";
 import {
   useScoreStore,
@@ -23,6 +24,11 @@ import {
 } from "../../store/scoreStore";
 
 const MEASURES_PER_LINE = 5;
+
+// Stable reference used as a fallback in selectors below — using `|| []` inline
+// creates a NEW array every render, which (when that value sits in a useCallback
+// dependency array) causes an infinite render loop. Reusing one constant avoids that.
+const EMPTY_ARR = [];
 
 // SP = pixels per staff space. Increase to make everything bigger, decrease for smaller.
 // 10 = compact, 12 = medium, 14 = large, 16 = very large
@@ -204,9 +210,11 @@ export default function ScoreRenderer() {
   const zoom = useScoreStore((s) => s.zoom);
   const measuresPerLine = useScoreStore((s) => s.measuresPerLine ?? 4);
   const staffSize = useScoreStore((s) => s.staffSize ?? 10);
-  const dynamics = useScoreStore((s) => s.score.dynamics || []);
-  const hairpins = useScoreStore((s) => s.score.hairpins || []);
-  const rehearsalMarks = useScoreStore((s) => s.score.rehearsalMarks || []);
+  const dynamics = useScoreStore((s) => s.score.dynamics || EMPTY_ARR);
+  const hairpins = useScoreStore((s) => s.score.hairpins || EMPTY_ARR);
+  const rehearsalMarks = useScoreStore((s) => s.score.rehearsalMarks || EMPTY_ARR);
+  const barlines = useScoreStore((s) => s.score.barlines || EMPTY_ARR);
+  const octaveLines = useScoreStore((s) => s.score.octaveLines || EMPTY_ARR);
 
   const render = useCallback(() => {
     if (!containerRef.current) return;
@@ -424,6 +432,23 @@ export default function ScoreRenderer() {
               stave.addTimeSignature(
                 `${measure.timeSignature.beats}/${measure.timeSignature.beatType}`,
               );
+          }
+
+          // ── Custom barline (applies to every part's stave in this column,
+          // so the line reads as continuous across the whole system) ──────
+          const barlineEntry = barlines.find((b) => b.measureIndex === col);
+          if (barlineEntry) {
+            const END_TYPES = {
+              double: Barline.type.DOUBLE,
+              final: Barline.type.END,
+              "repeat-end": Barline.type.REPEAT_END,
+              "repeat-both": Barline.type.REPEAT_BOTH,
+            };
+            if (barlineEntry.type === "repeat-start") {
+              stave.setBegBarType(Barline.type.REPEAT_BEGIN);
+            } else if (END_TYPES[barlineEntry.type]) {
+              stave.setEndBarType(END_TYPES[barlineEntry.type]);
+            }
           }
 
           const isMeasureSel =
@@ -682,15 +707,21 @@ export default function ScoreRenderer() {
                 if (!seqNote.articulation || seqNote.isRest) return;
                 const vfNote = vfNotes[ni];
                 const nx = vfNote.getAbsoluteX() + 4;
-                const ny = partY + STAFF_HEIGHT / 2;
 
                 ctx.save();
                 ctx.setFont("Times New Roman", 12);
                 ctx.setFillStyle("#1e293b");
 
                 const art = seqNote.articulation;
-                // Place above staff
-                const ay = partY - 8;
+                // Place above the staff by default, but if the note itself sits
+                // higher than that (on ledger lines above the staff, or has a
+                // tall stem), clear the note's own bounding box too — otherwise
+                // the mark lands inside/among the ledger lines instead of above them.
+                let ay = partY - 8;
+                try {
+                  const bb = vfNote.getBoundingBox();
+                  ay = Math.min(ay, bb.y - 8);
+                } catch (_) {}
 
                 if (art === "staccato") {
                   ctx.beginPath();
@@ -737,6 +768,17 @@ export default function ScoreRenderer() {
                 } else if (art === "snap-pizz") {
                   ctx.font = "12px serif";
                   ctx.fillText("⊙", nx - 5, ay + 4);
+                } else if (art === "vibrato") {
+                  // Short wavy squiggle above the note
+                  ctx.strokeStyle = "#1e293b";
+                  ctx.lineWidth = 1;
+                  ctx.beginPath();
+                  const wy = ay - 2;
+                  ctx.moveTo(nx - 8, wy);
+                  for (let i = -8; i <= 8; i += 4) {
+                    ctx.quadraticCurveTo(nx + i + 2, wy - 3, nx + i + 4, wy);
+                  }
+                  ctx.stroke();
                 }
                 ctx.restore();
               });
@@ -1134,6 +1176,8 @@ export default function ScoreRenderer() {
     selectedNoteId,
     measuresPerLine,
     staffSize,
+    barlines,
+    rehearsalMarks,
   ]);
 
   useEffect(() => {
@@ -1769,8 +1813,50 @@ export default function ScoreRenderer() {
         );
       })}
 
+      {/* ── Octave line overlays (8va / 8vb) ─────────────────────────────── */}
+      {octaveLines.map((ol) => {
+        const z1 = measureZones.find(
+          (mz) => mz.partId === ol.partId && mz.measureIndex === ol.startMeasure,
+        );
+        const z2 =
+          measureZones.find(
+            (mz) => mz.partId === ol.partId && mz.measureIndex === ol.endMeasure,
+          ) || z1;
+        if (!z1) return null;
+        const x1 = z1.noteAreaStart ?? z1.x;
+        const x2 = (z2.noteAreaStart ?? z2.x) + (z2.noteAreaWidth ?? z2.width);
+        const isAbove = ol.type === "8va";
+        const y = isAbove ? z1.y - 16 : z1.y + z1.height + 4;
+        return (
+          <div key={ol.id} style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none", zIndex: 11 }}>
+            <div
+              style={{
+                position: "absolute",
+                left: x1,
+                top: y - 12,
+                fontSize: 12,
+                fontStyle: "italic",
+                fontFamily: "Times New Roman, serif",
+                fontWeight: 700,
+                color: "#1e293b",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {ol.type}
+            </div>
+            <svg
+              style={{ position: "absolute", left: 0, top: 0, overflow: "visible" }}
+              width="1" height="1"
+            >
+              <line x1={x1 + 22} y1={y} x2={x2} y2={y} stroke="#1e293b" strokeWidth="1" strokeDasharray="4,3" />
+              <line x1={x2} y1={y} x2={x2} y2={y + (isAbove ? 6 : -6)} stroke="#1e293b" strokeWidth="1" />
+            </svg>
+          </div>
+        );
+      })}
+
       {/* ── Staff text overlays ────────────────────────────────────────── */}
-      {(score.staffTexts || []).map((st) => {
+      {(score.staffTexts || EMPTY_ARR).map((st) => {
         const z = measureZones.find(
           (mz) =>
             mz.partId === st.partId && mz.measureIndex === st.measureIndex,

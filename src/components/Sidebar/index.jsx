@@ -10,7 +10,7 @@
 //     remaining height via the flex container being `overflow:hidden`.
 
 import { useState } from 'react'
-import { useScoreStore } from '../../store/scoreStore'
+import { useScoreStore, measureCapacity } from '../../store/scoreStore'
 
 const TABS = [
   { id:'palettes',   label:'Palettes'   },
@@ -20,22 +20,26 @@ const TABS = [
 ]
 
 // ── Palette item ─────────────────────────────────────────────────────────────
-function PaletteItem({ label, onClick, symbol }) {
+function PaletteItem({ label, onClick, symbol, disabled, active }) {
   return (
-    <button onClick={onClick}
+    <button onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      title={disabled ? 'Select a bar (or bars) first' : label}
       style={{
         display:'flex', flexDirection:'column', alignItems:'center',
         justifyContent:'center', gap:2,
-        width:56, height:52, border:'1px solid #e5e7eb',
-        borderRadius:6, background:'white', cursor:'pointer',
-        fontSize:11, color:'#374151', transition:'all 0.12s',
+        width:56, height:52, border: active ? '1px solid #2563eb' : '1px solid #e5e7eb',
+        borderRadius:6, background: active ? '#eff6ff' : (disabled ? '#f9fafb' : 'white'),
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontSize:11, color: disabled ? '#c3c9d4' : '#374151', transition:'all 0.12s',
         padding:'4px 2px', textAlign:'center', lineHeight:1.2,
+        opacity: disabled ? 0.55 : 1,
       }}
-      onMouseEnter={e => { e.currentTarget.style.background='#eff6ff'; e.currentTarget.style.borderColor='#93c5fd' }}
-      onMouseLeave={e => { e.currentTarget.style.background='white';   e.currentTarget.style.borderColor='#e5e7eb' }}
+      onMouseEnter={e => { if (disabled) return; e.currentTarget.style.background='#eff6ff'; e.currentTarget.style.borderColor='#93c5fd' }}
+      onMouseLeave={e => { if (disabled) return; e.currentTarget.style.background = active ? '#eff6ff' : 'white'; e.currentTarget.style.borderColor = active ? '#2563eb' : '#e5e7eb' }}
     >
       <span style={{ fontSize:18, lineHeight:1 }}>{symbol}</span>
-      <span style={{ fontSize:9.5, color:'#6b7280', marginTop:1 }}>{label}</span>
+      <span style={{ fontSize:9.5, color: disabled ? '#c3c9d4' : '#6b7280', marginTop:1 }}>{label}</span>
     </button>
   )
 }
@@ -73,8 +77,94 @@ function PaletteSection({ title, children, defaultOpen = false }) {
 }
 
 // ── Palettes tab ─────────────────────────────────────────────────────────────
+// Dynamics / Articulations / Text / Barlines / Lines all act on whatever is
+// currently selected on the scoresheet:
+//   • If a single note is selected  → the mark attaches to that note/beat.
+//   • Else if a bar (or bar range)  → the mark applies across the whole range.
+//   • Else                          → the buttons are disabled (nothing to target).
 function PalettesTab({ search }) {
-  const store = useScoreStore.getState()
+  const score               = useScoreStore(s => s.score)
+  const selectedPartId      = useScoreStore(s => s.selectedPartId)
+  const selectedMeasureIndex= useScoreStore(s => s.selectedMeasureIndex)
+  const selectedMeasureRange= useScoreStore(s => s.selectedMeasureRange)
+  const selectedNoteId      = useScoreStore(s => s.selectedNoteId)
+  const getSelectedNote     = useScoreStore(s => s.getSelectedNote)
+  const getNoteBeatPosition = useScoreStore(s => s.getNoteBeatPosition)
+
+  const addDynamic          = useScoreStore(s => s.addDynamic)
+  const removeDynamic       = useScoreStore(s => s.removeDynamic)
+  const addHairpin          = useScoreStore(s => s.addHairpin)
+  const addStaffText        = useScoreStore(s => s.addStaffText)
+  const setBarline          = useScoreStore(s => s.setBarline)
+  const addOctaveLine       = useScoreStore(s => s.addOctaveLine)
+  const setArticulation     = useScoreStore(s => s.setArticulation)
+  const applyArticulationToRange = useScoreStore(s => s.applyArticulationToRange)
+  const toggleTie           = useScoreStore(s => s.toggleTie)
+  const toggleSlurStart     = useScoreStore(s => s.toggleSlurStart)
+
+  // ── Range of measures currently targeted (inclusive), or null ───────────
+  const range = selectedMeasureRange
+    ? [Math.min(selectedMeasureRange.start, selectedMeasureRange.end), Math.max(selectedMeasureRange.start, selectedMeasureRange.end)]
+    : (selectedMeasureIndex !== null ? [selectedMeasureIndex, selectedMeasureIndex] : null)
+
+  const hasSelection = !!(range && selectedPartId)
+  const liveNote = hasSelection ? getSelectedNote?.() : null
+  const noteIsUsable = liveNote && !liveNote.isRest && selectedNoteId
+
+  // Point-in-time target (measure + beat) for dynamics/text: the selected
+  // note's exact beat if one is selected, otherwise the start of the bar range.
+  const pointTarget = () => {
+    if (!hasSelection) return null
+    if (selectedNoteId) {
+      const beat = getNoteBeatPosition(selectedPartId, selectedMeasureIndex, selectedNoteId)
+      return { measureIndex: selectedMeasureIndex, beat }
+    }
+    return { measureIndex: range[0], beat: 0 }
+  }
+
+  const handleDynamic = (label) => {
+    const t = pointTarget()
+    if (!t) return
+    const existing = (score.dynamics||[]).find(d =>
+      d.partId === selectedPartId && d.measureIndex === t.measureIndex && Math.abs(d.beat - t.beat) < 0.1)
+    if (existing && existing.value === label) removeDynamic(existing.id)
+    else addDynamic(selectedPartId, t.measureIndex, t.beat, label)
+  }
+
+  const handleArticulation = (type) => {
+    if (!hasSelection) return
+    if (noteIsUsable) setArticulation(selectedPartId, selectedMeasureIndex, selectedNoteId, type)
+    else applyArticulationToRange(selectedPartId, range[0], range[1], type)
+  }
+
+  const handleText = (label) => {
+    const t = pointTarget()
+    if (!t) return
+    addStaffText(selectedPartId, t.measureIndex, t.beat, label)
+  }
+
+  const handleBarline = (type) => {
+    if (!hasSelection) return
+    if (type === 'repeat-start') setBarline(range[0], type)
+    else setBarline(range[1], type)
+  }
+
+  const handleLine = (kind) => {
+    if (!hasSelection) return
+    const [start, end] = range
+    if (kind === 'cresc' || kind === 'decresc') {
+      const endMeasure = score.parts.find(p => p.id === selectedPartId)?.measures[end]
+      const endBeat = measureCapacity(endMeasure?.timeSignature)
+      addHairpin(selectedPartId, start, 0, end, endBeat, kind)
+    } else if (kind === '8va' || kind === '8vb') {
+      addOctaveLine(selectedPartId, start, end, kind)
+    } else if (kind === 'rit.' || kind === 'accel.') {
+      addStaffText(selectedPartId, start, 0, kind)
+    }
+  }
+
+  // Is a given articulation currently active on the selected note?
+  const isArtActive = (type) => noteIsUsable && liveNote.articulation === type
 
   const allPalettes = [
     {
@@ -107,57 +197,57 @@ function PalettesTab({ search }) {
     },
     {
       title:'Dynamics', items:[
-        { symbol:'𝆏𝆏𝆏', label:'ppp', onClick:()=>{} },
-        { symbol:'𝆏𝆏',  label:'pp',  onClick:()=>{} },
-        { symbol:'𝆏',   label:'p',   onClick:()=>{} },
-        { symbol:'𝆐𝆏',  label:'mp',  onClick:()=>{} },
-        { symbol:'𝆐𝆑',  label:'mf',  onClick:()=>{} },
-        { symbol:'𝆑',   label:'f',   onClick:()=>{} },
-        { symbol:'𝆑𝆑',  label:'ff',  onClick:()=>{} },
-        { symbol:'𝆑𝆑𝆑', label:'fff', onClick:()=>{} },
-        { symbol:'sfz', label:'sfz', onClick:()=>{} },
+        { symbol:'𝆏𝆏𝆏', label:'ppp', onClick:()=>handleDynamic('ppp'), disabled:!hasSelection },
+        { symbol:'𝆏𝆏',  label:'pp',  onClick:()=>handleDynamic('pp'),  disabled:!hasSelection },
+        { symbol:'𝆏',   label:'p',   onClick:()=>handleDynamic('p'),   disabled:!hasSelection },
+        { symbol:'𝆐𝆏',  label:'mp',  onClick:()=>handleDynamic('mp'),  disabled:!hasSelection },
+        { symbol:'𝆐𝆑',  label:'mf',  onClick:()=>handleDynamic('mf'),  disabled:!hasSelection },
+        { symbol:'𝆑',   label:'f',   onClick:()=>handleDynamic('f'),   disabled:!hasSelection },
+        { symbol:'𝆑𝆑',  label:'ff',  onClick:()=>handleDynamic('ff'),  disabled:!hasSelection },
+        { symbol:'𝆑𝆑𝆑', label:'fff', onClick:()=>handleDynamic('fff'), disabled:!hasSelection },
+        { symbol:'sfz', label:'sfz', onClick:()=>handleDynamic('sfz'), disabled:!hasSelection },
       ]
     },
     {
       title:'Articulations', items:[
-        { symbol:'·',  label:'Staccato',   onClick:()=>{} },
-        { symbol:'−',  label:'Tenuto',     onClick:()=>{} },
-        { symbol:'ˆ',  label:'Marcato',    onClick:()=>{} },
-        { symbol:'>',  label:'Accent',     onClick:()=>{} },
-        { symbol:'⌢', label:'Slur',       onClick:()=>{} },
-        { symbol:'⌣', label:'Tie',        onClick:()=>{} },
-        { symbol:'tr', label:'Trill',      onClick:()=>{} },
-        { symbol:'~',  label:'Vibrato',    onClick:()=>{} },
+        { symbol:'·',  label:'Staccato',   onClick:()=>handleArticulation('staccato'), disabled:!hasSelection, active:isArtActive('staccato') },
+        { symbol:'−',  label:'Tenuto',     onClick:()=>handleArticulation('tenuto'),   disabled:!hasSelection, active:isArtActive('tenuto') },
+        { symbol:'ˆ',  label:'Marcato',    onClick:()=>handleArticulation('marcato'),  disabled:!hasSelection, active:isArtActive('marcato') },
+        { symbol:'>',  label:'Accent',     onClick:()=>handleArticulation('accent'),   disabled:!hasSelection, active:isArtActive('accent') },
+        { symbol:'⌢', label:'Slur',       onClick:()=>toggleSlurStart(),               disabled:!noteIsUsable, active:!!(noteIsUsable && liveNote.slurStart) },
+        { symbol:'⌣', label:'Tie',        onClick:()=>toggleTie(),                     disabled:!noteIsUsable, active:!!(noteIsUsable && liveNote.tieStart) },
+        { symbol:'tr', label:'Trill',      onClick:()=>handleArticulation('trill'),    disabled:!hasSelection, active:isArtActive('trill') },
+        { symbol:'~',  label:'Vibrato',    onClick:()=>handleArticulation('vibrato'),  disabled:!hasSelection, active:isArtActive('vibrato') },
       ]
     },
     {
       title:'Text', items:[
-        { symbol:'𝄐', label:'Fermata',    onClick:()=>{} },
-        { symbol:'D.C', label:'D.C.',     onClick:()=>{} },
-        { symbol:'D.S', label:'D.S.',     onClick:()=>{} },
-        { symbol:'𝄋', label:'Segno',     onClick:()=>{} },
-        { symbol:'𝄌', label:'Coda',      onClick:()=>{} },
-        { symbol:'⁋', label:'Fine',      onClick:()=>{} },
+        { symbol:'𝄐', label:'Fermata',    onClick:()=>handleArticulation('fermata'), disabled:!hasSelection, active:isArtActive('fermata') },
+        { symbol:'D.C', label:'D.C.',     onClick:()=>handleText('D.C.'), disabled:!hasSelection },
+        { symbol:'D.S', label:'D.S.',     onClick:()=>handleText('D.S.'), disabled:!hasSelection },
+        { symbol:'𝄋', label:'Segno',     onClick:()=>handleText('𝄋'),   disabled:!hasSelection },
+        { symbol:'𝄌', label:'Coda',      onClick:()=>handleText('𝄌'),   disabled:!hasSelection },
+        { symbol:'⁋', label:'Fine',      onClick:()=>handleText('Fine'), disabled:!hasSelection },
       ]
     },
     {
       title:'Barlines', items:[
-        { symbol:'|',  label:'Normal',    onClick:()=>{} },
-        { symbol:'||', label:'Double',    onClick:()=>{} },
-        { symbol:'|‖', label:'Final',    onClick:()=>{} },
-        { symbol:'|:',  label:'Repeat S.',onClick:()=>{} },
-        { symbol:':|',  label:'Repeat E.',onClick:()=>{} },
-        { symbol:':|:', label:'Repeat B.',onClick:()=>{} },
+        { symbol:'|',  label:'Normal',    onClick:()=>handleBarline('normal'),       disabled:!hasSelection },
+        { symbol:'||', label:'Double',    onClick:()=>handleBarline('double'),       disabled:!hasSelection },
+        { symbol:'|‖', label:'Final',    onClick:()=>handleBarline('final'),        disabled:!hasSelection },
+        { symbol:'|:',  label:'Repeat S.',onClick:()=>handleBarline('repeat-start'), disabled:!hasSelection },
+        { symbol:':|',  label:'Repeat E.',onClick:()=>handleBarline('repeat-end'),   disabled:!hasSelection },
+        { symbol:':|:', label:'Repeat B.',onClick:()=>handleBarline('repeat-both'),  disabled:!hasSelection },
       ]
     },
     {
       title:'Lines', items:[
-        { symbol:'cresc.', label:'Cresc.',  onClick:()=>{} },
-        { symbol:'dim.',   label:'Dim.',    onClick:()=>{} },
-        { symbol:'8va',    label:'8va',     onClick:()=>{} },
-        { symbol:'8vb',    label:'8vb',     onClick:()=>{} },
-        { symbol:'rit.',   label:'Rit.',    onClick:()=>{} },
-        { symbol:'accel.', label:'Accel.',  onClick:()=>{} },
+        { symbol:'cresc.', label:'Cresc.',  onClick:()=>handleLine('cresc'),   disabled:!hasSelection },
+        { symbol:'dim.',   label:'Dim.',    onClick:()=>handleLine('decresc'), disabled:!hasSelection },
+        { symbol:'8va',    label:'8va',     onClick:()=>handleLine('8va'),     disabled:!hasSelection },
+        { symbol:'8vb',    label:'8vb',     onClick:()=>handleLine('8vb'),     disabled:!hasSelection },
+        { symbol:'rit.',   label:'Rit.',    onClick:()=>handleLine('rit.'),    disabled:!hasSelection },
+        { symbol:'accel.', label:'Accel.',  onClick:()=>handleLine('accel.'),  disabled:!hasSelection },
       ]
     },
   ]
@@ -171,6 +261,18 @@ function PalettesTab({ search }) {
 
   return (
     <div>
+      {/* Status hint — tells the user what their click will target */}
+      <div style={{
+        padding:'8px 12px', fontSize:11, lineHeight:1.4,
+        background: hasSelection ? '#eff6ff' : '#fff7ed',
+        color: hasSelection ? '#1d4ed8' : '#9a5b13',
+        borderBottom:'1px solid #f0f0f0',
+      }}>
+        {!hasSelection && 'Select a bar (or drag across several) to apply symbols.'}
+        {hasSelection && noteIsUsable && `Applying to selected note in bar ${selectedMeasureIndex+1}.`}
+        {hasSelection && !noteIsUsable && range[0] === range[1] && `Applying to bar ${range[0]+1}.`}
+        {hasSelection && !noteIsUsable && range[0] !== range[1] && `Applying to bars ${range[0]+1}–${range[1]+1}.`}
+      </div>
       {filtered.map((p, i) => (
         <PaletteSection key={p.title} title={p.title} defaultOpen={i < 3}>
           {p.items.map(item => (
