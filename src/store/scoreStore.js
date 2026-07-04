@@ -1506,11 +1506,21 @@ export const useScoreStore = create((set, get) => ({
   },
 
   // ── Articulations (per-note marks: staccato, tenuto, accent, marcato, fermata, trill, vibrato…) ──
-  // Toggles the mark on a single note (clicking the same mark again removes it).
+  // A note can carry several marks at once (e.g. accent + marcato), stored as
+  // `articulations: string[]`. Toggles the mark on a single note (clicking the
+  // same mark again removes just that one, leaving any others in place).
   setArticulation: (partId, measureIndex, noteId, type) => {
     get()._snapshot()
     get()._applyToMeasure(partId, measureIndex, notes =>
-      notes.map(n => n.id === noteId ? { ...n, articulation: n.articulation === type ? null : type } : n)
+      notes.map(n => {
+        if (n.id !== noteId) return n
+        const current = n.articulations || (n.articulation ? [n.articulation] : [])
+        const next = current.includes(type)
+          ? current.filter(a => a !== type)
+          : [...current, type]
+        const { articulation, ...rest } = n
+        return { ...rest, articulations: next }
+      })
     )
     saveToStorage(get().score)
   },
@@ -1520,7 +1530,13 @@ export const useScoreStore = create((set, get) => ({
     get()._snapshot()
     for (let m = startMeasure; m <= endMeasure; m++) {
       get()._applyToMeasure(partId, m, notes =>
-        notes.map(n => (!n.isRest && !n.chordWith) ? { ...n, articulation: type } : n)
+        notes.map(n => {
+          if (n.isRest || n.chordWith) return n
+          const current = n.articulations || (n.articulation ? [n.articulation] : [])
+          if (current.includes(type)) return n
+          const { articulation, ...rest } = n
+          return { ...rest, articulations: [...current, type] }
+        })
       , true)
     }
     saveToStorage(get().score)

@@ -163,8 +163,19 @@ function PalettesTab({ search }) {
     }
   }
 
+  // Tempo markings always sit above the very first beat of the target bar,
+  // regardless of whether a specific note is selected within it.
+  const handleTempo = (label) => {
+    if (!hasSelection) return
+    addStaffText(selectedPartId, range[0], 0, label)
+  }
+
   // Is a given articulation currently active on the selected note?
-  const isArtActive = (type) => noteIsUsable && liveNote.articulation === type
+  const isArtActive = (type) => {
+    if (!noteIsUsable) return false
+    const marks = liveNote.articulations || (liveNote.articulation ? [liveNote.articulation] : [])
+    return marks.includes(type)
+  }
 
   const allPalettes = [
     {
@@ -193,6 +204,38 @@ function PalettesTab({ search }) {
         { symbol:'6/8', label:'6/8',  onClick:()=>useScoreStore.getState().setGlobalTimeSignature({beats:6,beatType:8}) },
         { symbol:'𝄵',  label:'Cut',   onClick:()=>useScoreStore.getState().setGlobalTimeSignature({beats:2,beatType:2}) },
         { symbol:'𝄴',  label:'Common',onClick:()=>useScoreStore.getState().setGlobalTimeSignature({beats:4,beatType:4}) },
+      ]
+    },
+    {
+      title:'Tempo', items:[
+        { symbol:'♩=80',  label:'♩=80',        onClick:()=>handleTempo('♩ = 80'),        disabled:!hasSelection },
+        { symbol:'♩.=80', label:'♩.=80',       onClick:()=>handleTempo('♩. = 80'),       disabled:!hasSelection },
+        { symbol:'♪=80',  label:'♪=80',        onClick:()=>handleTempo('♪ = 80'),        disabled:!hasSelection },
+        { symbol:'Grave',       label:'Grave',       onClick:()=>handleTempo('Grave'),       disabled:!hasSelection },
+        { symbol:'Largo',       label:'Largo',       onClick:()=>handleTempo('Largo'),       disabled:!hasSelection },
+        { symbol:'Lento',       label:'Lento',       onClick:()=>handleTempo('Lento'),       disabled:!hasSelection },
+        { symbol:'Larghetto',   label:'Larghetto',   onClick:()=>handleTempo('Larghetto'),   disabled:!hasSelection },
+        { symbol:'Adagio',      label:'Adagio',      onClick:()=>handleTempo('Adagio'),      disabled:!hasSelection },
+        { symbol:'Andante',     label:'Andante',     onClick:()=>handleTempo('Andante'),     disabled:!hasSelection },
+        { symbol:'Andantino',   label:'Andantino',   onClick:()=>handleTempo('Andantino'),   disabled:!hasSelection },
+        { symbol:'Moderato',    label:'Moderato',    onClick:()=>handleTempo('Moderato'),    disabled:!hasSelection },
+        { symbol:'Allegretto',  label:'Allegretto',  onClick:()=>handleTempo('Allegretto'),  disabled:!hasSelection },
+        { symbol:'Allegro',     label:'Allegro',     onClick:()=>handleTempo('Allegro'),     disabled:!hasSelection },
+        { symbol:'Vivace',      label:'Vivace',      onClick:()=>handleTempo('Vivace'),      disabled:!hasSelection },
+        { symbol:'Presto',      label:'Presto',      onClick:()=>handleTempo('Presto'),      disabled:!hasSelection },
+        { symbol:'Prestissimo', label:'Prestissimo', onClick:()=>handleTempo('Prestissimo'), disabled:!hasSelection },
+        { symbol:'♩=♩.', label:'♩=♩.', onClick:()=>handleTempo('♩ = ♩.'), disabled:!hasSelection },
+        { symbol:'♩.=♩', label:'♩.=♩', onClick:()=>handleTempo('♩. = ♩'), disabled:!hasSelection },
+        { symbol:'♩=♩',  label:'♩=♩',  onClick:()=>handleTempo('♩ = ♩'),  disabled:!hasSelection },
+        { symbol:'♪=♪',  label:'♪=♪',  onClick:()=>handleTempo('♪ = ♪'),  disabled:!hasSelection },
+        { symbol:'♪.=♩', label:'♪.=♩', onClick:()=>handleTempo('♪. = ♩'), disabled:!hasSelection },
+        { symbol:'allarg.', label:'allarg.',    onClick:()=>handleTempo('allarg.'),     disabled:!hasSelection },
+        { symbol:'rall.',   label:'rall.',      onClick:()=>handleTempo('rall.'),       disabled:!hasSelection },
+        { symbol:'rit.',    label:'rit.',       onClick:()=>handleTempo('rit.'),        disabled:!hasSelection },
+        { symbol:'a tempo', label:'a tempo',    onClick:()=>handleTempo('a tempo'),     disabled:!hasSelection },
+        { symbol:'temp.pr', label:'Tempo I',    onClick:()=>handleTempo('Tempo primo'), disabled:!hasSelection },
+        { symbol:'Swing',   label:'Swing',      onClick:()=>handleTempo('Swing'),       disabled:!hasSelection },
+        { symbol:'Straight',label:'Straight',   onClick:()=>handleTempo('Straight'),    disabled:!hasSelection },
       ]
     },
     {
