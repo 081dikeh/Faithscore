@@ -110,6 +110,9 @@ export default function App() {
   const shiftPitchStep         = useScoreStore(s => s.shiftPitchStep)
   const clearNoteSelection     = useScoreStore(s => s.clearNoteSelection)
   const clearSelection         = useScoreStore(s => s.clearSelection)
+  const selectedMarking        = useScoreStore(s => s.selectedMarking)
+  const deleteSelectedMarking  = useScoreStore(s => s.deleteSelectedMarking)
+  const clearMarkingSelection  = useScoreStore(s => s.clearMarkingSelection)
   const fillSelectedRest       = useScoreStore(s => s.fillSelectedRest)
   const changeSelectedDuration = useScoreStore(s => s.changeSelectedDuration)
   const setTitle               = useScoreStore(s => s.setTitle)
@@ -205,6 +208,13 @@ export default function App() {
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
 
       const st = () => useScoreStore.getState()
+
+      // ── A placed marking (dynamic, hairpin, staff text, octave line, rehearsal
+      // mark) is selected — handle its delete/escape before anything else ──
+      if (selectedMarking) {
+        if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelectedMarking(); return }
+        if (e.key === 'Escape') { clearMarkingSelection(); return }
+      }
 
       // ── Duration keys (always work; resize note if one is selected) ──
       if (DURATION_KEYS[e.key]) {
@@ -360,7 +370,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [inputMode, selectedDuration, selectedDots, selectedMeasureIndex, selectedPartId, selectedNoteId, selectedOctave, chordMode, addChordNote, undo, redo, copyMeasure, pasteMeasure, transposeSelection, toggleTie, toggleSlurStart, zoom, setZoom, setMeasureRange, insertTriplet])
+  }, [inputMode, selectedDuration, selectedDots, selectedMeasureIndex, selectedPartId, selectedNoteId, selectedOctave, chordMode, addChordNote, undo, redo, copyMeasure, pasteMeasure, transposeSelection, toggleTie, toggleSlurStart, zoom, setZoom, setMeasureRange, insertTriplet, selectedMarking, deleteSelectedMarking, clearMarkingSelection])
 
   const handleContextMenu = e => {
     e.preventDefault()

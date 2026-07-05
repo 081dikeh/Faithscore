@@ -248,6 +248,7 @@ export const useScoreStore = create((set, get) => ({
   selectedPartId: 'part-treble',
   selectedMeasureIndex: null,
   selectedNoteId: null,   // can be a real note OR a rest note id
+  selectedMarking: null,  // { kind: 'dynamic'|'hairpin'|'staffText'|'octaveLine'|'rehearsalMark', id }
 
   inputMode: 'select',
   selectedDuration: 'q',
@@ -553,6 +554,7 @@ export const useScoreStore = create((set, get) => ({
       selectedPartId: partId,
       selectedMeasureIndex: measureIndex,
       selectedNoteId: null,
+      selectedMarking: null,
       selectedOctave: part?.clef === 'bass' ? 3 : 4,
     })
   },
@@ -566,6 +568,7 @@ export const useScoreStore = create((set, get) => ({
       selectedNoteId: noteId,
       selectedPartId: partId,
       selectedMeasureIndex: measureIndex,
+      selectedMarking: null,
       // Sync toolbar to match selected note
       selectedDuration: note.duration,
       selectedDots: note.dots || 0,
@@ -1432,6 +1435,7 @@ export const useScoreStore = create((set, get) => ({
     saveToStorage(get().score)
   },
   removeDynamic: (id) => {
+    get()._snapshot()
     set(s => ({ score: { ...s.score, dynamics: (s.score.dynamics||[]).filter(d => d.id !== id) }}))
     saveToStorage(get().score)
   },
@@ -1446,6 +1450,7 @@ export const useScoreStore = create((set, get) => ({
     saveToStorage(get().score)
   },
   removeHairpin: (id) => {
+    get()._snapshot()
     set(s => ({ score: { ...s.score, hairpins: (s.score.hairpins||[]).filter(h => h.id !== id) }}))
     saveToStorage(get().score)
   },
@@ -1461,6 +1466,7 @@ export const useScoreStore = create((set, get) => ({
     saveToStorage(get().score)
   },
   removeRehearsalMark: (id) => {
+    get()._snapshot()
     set(s => ({ score: { ...s.score, rehearsalMarks: (s.score.rehearsalMarks||[]).filter(r => r.id !== id) }}))
     saveToStorage(get().score)
   },
@@ -1475,8 +1481,26 @@ export const useScoreStore = create((set, get) => ({
     saveToStorage(get().score)
   },
   removeStaffText: (id) => {
+    get()._snapshot()
     set(s => ({ score: { ...s.score, staffTexts: (s.score.staffTexts||[]).filter(t => t.id !== id) }}))
     saveToStorage(get().score)
+  },
+
+  // ── Selecting / deleting a placed marking (dynamic, hairpin, staff text, octave line, rehearsal mark) ──
+  selectMarking: (kind, id) => set({ selectedMarking: { kind, id }, selectedNoteId: null }),
+  clearMarkingSelection: () => set(s => s.selectedMarking ? { selectedMarking: null } : s),
+  deleteSelectedMarking: () => {
+    const m = get().selectedMarking
+    if (!m) return
+    const removers = {
+      dynamic: get().removeDynamic,
+      hairpin: get().removeHairpin,
+      staffText: get().removeStaffText,
+      octaveLine: get().removeOctaveLine,
+      rehearsalMark: get().removeRehearsalMark,
+    }
+    removers[m.kind]?.(m.id)
+    set({ selectedMarking: null })
   },
 
   // ── Barlines ────────────────────────────────────────────────────────────
@@ -1501,6 +1525,7 @@ export const useScoreStore = create((set, get) => ({
     saveToStorage(get().score)
   },
   removeOctaveLine: (id) => {
+    get()._snapshot()
     set(s => ({ score: { ...s.score, octaveLines: (s.score.octaveLines||[]).filter(o => o.id !== id) }}))
     saveToStorage(get().score)
   },
