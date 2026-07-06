@@ -1,5 +1,5 @@
 // src/components/ScoreRenderer/index.jsx
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   Renderer,
   Stave,
@@ -198,6 +198,8 @@ export default function ScoreRenderer() {
   const selectedNoteId = useScoreStore((s) => s.selectedNoteId);
   const selectMeasure = useScoreStore((s) => s.selectMeasure);
   const selectNote = useScoreStore((s) => s.selectNote);
+  const selectedMarking = useScoreStore((s) => s.selectedMarking);
+  const selectMarking = useScoreStore((s) => s.selectMarking);
   const moveNote = useScoreStore((s) => s.moveNote);
   const playbackBeat = useScoreStore((s) => s.playbackBeat);
   const dropNoteAtBeat = useScoreStore((s) => s.dropNoteAtBeat);
@@ -215,6 +217,28 @@ export default function ScoreRenderer() {
   const rehearsalMarks = useScoreStore((s) => s.score.rehearsalMarks || EMPTY_ARR);
   const barlines = useScoreStore((s) => s.score.barlines || EMPTY_ARR);
   const octaveLines = useScoreStore((s) => s.score.octaveLines || EMPTY_ARR);
+  const staffTextsForLanes = useScoreStore((s) => s.score.staffTexts || EMPTY_ARR);
+
+  // Multiple text-based markings (dynamics + staff text) can land on the same
+  // bar. Without this they'd render on top of each other (as seen when a
+  // dynamic and a tempo marking both sit at beat 0). Assign each one a "lane"
+  // so they stack outward from the staff instead of overlapping.
+  const textLaneIndex = useMemo(() => {
+    const byMeasure = new Map(); // "partId::measureIndex" -> [{id, beat}]
+    const push = (partId, measureIndex, id, beat) => {
+      const key = `${partId}::${measureIndex}`;
+      if (!byMeasure.has(key)) byMeasure.set(key, []);
+      byMeasure.get(key).push({ id, beat });
+    };
+    dynamics.forEach((d) => push(d.partId, d.measureIndex, d.id, d.beat));
+    staffTextsForLanes.forEach((t) => push(t.partId, t.measureIndex, t.id, t.beat));
+    const map = new Map();
+    byMeasure.forEach((list) => {
+      list.sort((a, b) => a.beat - b.beat);
+      list.forEach((item, idx) => map.set(item.id, idx));
+    });
+    return map;
+  }, [dynamics, staffTextsForLanes]);
 
   const render = useCallback(() => {
     if (!containerRef.current) return;
@@ -226,7 +250,7 @@ export default function ScoreRenderer() {
     const STAFF_HEIGHT = SP * 4;
     const PART_HEIGHT = SP * 9;
     const SYSTEM_GAP = SP * 8;
-    const STAVE_TOP = SP * 3;
+    const STAVE_TOP = SP * 4;
     const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3;
     const LEFT_MARGIN = 20;
     const RIGHT_MARGIN = 20;
@@ -728,64 +752,64 @@ export default function ScoreRenderer() {
                   }
                 } catch (_) {}
 
-                const STACK_GAP = 13; // vertical spacing between stacked marks
+                const STACK_GAP = 20; // vertical spacing between stacked marks
 
                 marks.forEach((art, markIndex) => {
                   const ay = baseAy - markIndex * STACK_GAP;
 
                   ctx.save();
-                  ctx.setFont("Times New Roman", 12);
+                  ctx.setFont("Times New Roman", 15);
                   ctx.setFillStyle("#1e293b");
 
                   if (art === "staccato") {
                     ctx.beginPath();
-                    ctx.arc(nx, ay, 2.5, 0, Math.PI * 2);
+                    ctx.arc(nx, ay, 4, 0, Math.PI * 2);
                     ctx.fill();
                   } else if (art === "tenuto") {
-                    ctx.fillRect(nx - 6, ay, 12, 2);
+                    ctx.fillRect(nx - 8, ay, 16, 3.5);
                   } else if (art === "accent") {
-                    ctx.font = "bold 14px serif";
-                    ctx.fillText(">", nx - 6, ay + 4);
+                    ctx.font = "bold 22px serif";
+                    ctx.fillText(">", nx - 8, ay + 6);
                   } else if (art === "marcato") {
-                    ctx.font = "bold 12px serif";
-                    ctx.fillText("^", nx - 4, ay);
+                    ctx.font = "bold 20px serif";
+                    ctx.fillText("^", nx - 6, ay + 2);
                   } else if (art === "fermata") {
-                    ctx.font = "16px serif";
-                    ctx.fillText("𝄐", nx - 6, ay);
+                    ctx.font = "bold 24px serif";
+                    ctx.fillText("𝄐", nx - 8, ay + 2);
                   } else if (art === "trill") {
-                    ctx.font = "italic bold 11px serif";
-                    ctx.fillText("tr", nx - 4, ay);
+                    ctx.font = "italic bold 18px serif";
+                    ctx.fillText("tr", nx - 6, ay + 2);
                   } else if (art === "mordent") {
-                    ctx.font = "13px serif";
-                    ctx.fillText("𝆁", nx - 4, ay);
+                    ctx.font = "bold 20px serif";
+                    ctx.fillText("𝆁", nx - 6, ay + 2);
                   } else if (art === "turn") {
-                    ctx.font = "13px serif";
-                    ctx.fillText("𝆃", nx - 4, ay);
+                    ctx.font = "bold 20px serif";
+                    ctx.fillText("𝆃", nx - 6, ay + 2);
                   } else if (art === "staccatissimo") {
                     ctx.beginPath();
-                    ctx.moveTo(nx, ay - 4);
-                    ctx.lineTo(nx - 3, ay + 2);
-                    ctx.lineTo(nx + 3, ay + 2);
+                    ctx.moveTo(nx, ay - 5);
+                    ctx.lineTo(nx - 4, ay + 3);
+                    ctx.lineTo(nx + 4, ay + 3);
                     ctx.closePath();
                     ctx.fill();
                   } else if (art === "portato") {
-                    ctx.fillRect(nx - 6, ay + 2, 12, 2);
+                    ctx.fillRect(nx - 7, ay + 2, 14, 3);
                     ctx.beginPath();
-                    ctx.arc(nx, ay - 3, 2, 0, Math.PI * 2);
+                    ctx.arc(nx, ay - 4, 3, 0, Math.PI * 2);
                     ctx.fill();
                   } else if (art === "harmonic") {
                     ctx.strokeStyle = "#1e293b";
-                    ctx.lineWidth = 1.2;
+                    ctx.lineWidth = 1.8;
                     ctx.beginPath();
-                    ctx.arc(nx, ay, 4, 0, Math.PI * 2);
+                    ctx.arc(nx, ay, 5, 0, Math.PI * 2);
                     ctx.stroke();
                   } else if (art === "snap-pizz") {
-                    ctx.font = "12px serif";
-                    ctx.fillText("⊙", nx - 5, ay + 4);
+                    ctx.font = "bold 20px serif";
+                    ctx.fillText("⊙", nx - 6, ay + 5);
                   } else if (art === "vibrato") {
                     // Short wavy squiggle above the note
                     ctx.strokeStyle = "#1e293b";
-                    ctx.lineWidth = 1;
+                    ctx.lineWidth = 1.8;
                     ctx.beginPath();
                     const wy = ay - 2;
                     ctx.moveTo(nx - 8, wy);
@@ -1505,7 +1529,10 @@ export default function ScoreRenderer() {
     >
       <div ref={containerRef} style={{ display: "block" }} />
 
-      {/* Measure zones — handle both ghost-note drags (note mode) and existing-note moves */}
+      {/* Measure zones — handle both ghost-note drags (note mode) and existing-note moves.
+          This hitbox is intentionally modest in size (just enough for ledger-line
+          clicks) so adjacent staves' click areas don't overlap and steal clicks
+          from each other. */}
       {measureZones.map((z) => {
         const zKey = `${z.partId}-${z.measureIndex}`;
         const isExistDrop = dropTarget === zKey;
@@ -1546,32 +1573,49 @@ export default function ScoreRenderer() {
             style={{
               position: "absolute",
               left: z.x,
-              top: z.y - 35, // extend above staff for ledger line detection
+              top: z.y - 10, // small margin for ledger-line clicks, without bleeding into the staff above
               width: z.width,
-              height: z.height + 70, // extend below staff for ledger line detection
+              height: z.height + 24, // small margin below, without bleeding into the staff below
               cursor: inputMode === "note" ? "none" : "pointer",
               borderRadius: 2,
               boxSizing: "border-box",
-              // In note mode: completely invisible — no border, no background
-              // Outer div handles all note placement via mousemove
+              // This div is purely a click/drop target now — no visible border or
+              // background. The visible selection highlight is drawn by a separate,
+              // tightly-fitted overlay below so it doesn't look oversized.
+              border: "none",
+              backgroundColor: "transparent",
               zIndex: inputMode === "note" ? 0 : 1,
-              border:
-                inputMode === "note"
-                  ? "none"
-                  : isExistDrop
-                    ? "1px dashed #ea580c"
-                    : z.selected
-                      ? "1px solid rgba(29,78,216,0.4)"
-                      : "none",
-              backgroundColor:
-                inputMode === "note"
-                  ? "transparent"
-                  : isExistDrop
-                    ? "rgba(234,88,12,0.05)"
-                    : z.selected
-                      ? "rgba(29,78,216,0.04)"
-                      : "transparent",
               pointerEvents: inputMode === "note" ? "none" : "auto",
+            }}
+          />
+        );
+      })}
+
+      {/* Visible selection / drop-target highlight — tightly hugs the staff itself
+          (unlike the click hitbox above, which is intentionally a bit larger). */}
+      {measureZones.map((z) => {
+        const zKey = `${z.partId}-${z.measureIndex}`;
+        const isExistDrop = dropTarget === zKey;
+        if (inputMode === "note" || (!z.selected && !isExistDrop)) return null;
+        return (
+          <div
+            key={`hl-${zKey}`}
+            style={{
+              position: "absolute",
+              left: z.x,
+              top: z.y - 4,
+              width: z.width,
+              height: z.height + 8,
+              borderRadius: 2,
+              boxSizing: "border-box",
+              pointerEvents: "none",
+              zIndex: 2,
+              border: isExistDrop
+                ? "1.5px dashed #ea580c"
+                : "1.5px solid #2563eb",
+              backgroundColor: isExistDrop
+                ? "rgba(234,88,12,0.06)"
+                : "rgba(37,99,235,0.07)",
             }}
           />
         );
@@ -1757,22 +1801,31 @@ export default function ScoreRenderer() {
         const beats =
           part?.measures[dyn.measureIndex]?.timeSignature?.beats ?? 4;
         const px = noteStart + (dyn.beat / beats) * noteWidth;
+        const isSel = selectedMarking?.kind === "dynamic" && selectedMarking?.id === dyn.id;
+        const lane = textLaneIndex.get(dyn.id) || 0;
         return (
           <div
             key={dyn.id}
+            onClick={(e) => { e.stopPropagation(); selectMarking("dynamic", dyn.id); }}
+            title="Click to select, then press Delete to remove"
             style={{
               position: "absolute",
               left: px - 8,
-              top: z.y - 26,
-              fontSize: 18,
+              top: z.y - 26 - lane * 20,
+              fontSize: 22,
               fontStyle: "italic",
               fontFamily: "Times New Roman, serif",
-              fontWeight: 700,
+              fontWeight: 800,
               color: "#1e293b",
-              pointerEvents: "none",
-              zIndex: 12,
+              pointerEvents: "auto",
+              cursor: "pointer",
+              zIndex: 30,
               whiteSpace: "nowrap",
               userSelect: "none",
+              padding: "1px 4px",
+              borderRadius: 3,
+              background: isSel ? "rgba(37,99,235,0.15)" : "transparent",
+              outline: isSel ? "1.5px solid #2563eb" : "none",
             }}
           >
             {dyn.value}
@@ -1802,9 +1855,10 @@ export default function ScoreRenderer() {
         };
         const x1 = beatToX(z1, hp.startBeat);
         const x2 = beatToX(z2, hp.endBeat);
-        const y = z1.y + z1.height + 8;
-        const mid = 5;
+        const y = z1.y - 32; // clearly above the staff, matching dynamics
+        const mid = 6;
         const isC = hp.type === "cresc";
+        const isSel = selectedMarking?.kind === "hairpin" && selectedMarking?.id === hp.id;
         // Draw SVG wedge inline
         const d = isC
           ? `M ${x1} ${y} L ${x2} ${y - mid} M ${x1} ${y} L ${x2} ${y + mid}`
@@ -1819,14 +1873,29 @@ export default function ScoreRenderer() {
               width: "100%",
               height: "100%",
               pointerEvents: "none",
-              zIndex: 11,
+              zIndex: 30,
               overflow: "visible",
             }}
           >
-            <path d={d} stroke="#1e293b" strokeWidth="1.5" fill="none" />
+            {/* Wide invisible path for easy clicking */}
+            <path
+              d={d}
+              stroke="transparent"
+              strokeWidth="14"
+              fill="none"
+              style={{ pointerEvents: "stroke", cursor: "pointer" }}
+              onClick={(e) => { e.stopPropagation(); selectMarking("hairpin", hp.id); }}
+            />
+            <path
+              d={d}
+              stroke={isSel ? "#2563eb" : "#1e293b"}
+              strokeWidth={isSel ? "3.4" : "3"}
+              fill="none"
+            />
           </svg>
         );
       })}
+
 
       {/* ── Octave line overlays (8va / 8vb) ─────────────────────────────── */}
       {octaveLines.map((ol) => {
@@ -1841,20 +1910,29 @@ export default function ScoreRenderer() {
         const x1 = z1.noteAreaStart ?? z1.x;
         const x2 = (z2.noteAreaStart ?? z2.x) + (z2.noteAreaWidth ?? z2.width);
         const isAbove = ol.type === "8va";
-        const y = isAbove ? z1.y - 16 : z1.y + z1.height + 4;
+        const y = isAbove ? z1.y - 28 : z1.y + z1.height + 4;
+        const isSel = selectedMarking?.kind === "octaveLine" && selectedMarking?.id === ol.id;
+        const color = isSel ? "#2563eb" : "#1e293b";
         return (
-          <div key={ol.id} style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none", zIndex: 11 }}>
+          <div key={ol.id} style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none", zIndex: 30 }}>
             <div
+              onClick={(e) => { e.stopPropagation(); selectMarking("octaveLine", ol.id); }}
+              title="Click to select, then press Delete to remove"
               style={{
                 position: "absolute",
                 left: x1,
-                top: y - 12,
-                fontSize: 12,
+                top: y - 13,
+                fontSize: 22,
                 fontStyle: "italic",
                 fontFamily: "Times New Roman, serif",
-                fontWeight: 700,
-                color: "#1e293b",
+                fontWeight: 800,
+                color,
                 whiteSpace: "nowrap",
+                pointerEvents: "auto",
+                cursor: "pointer",
+                padding: "0 3px",
+                background: isSel ? "rgba(37,99,235,0.15)" : "transparent",
+                borderRadius: 3,
               }}
             >
               {ol.type}
@@ -1863,8 +1941,8 @@ export default function ScoreRenderer() {
               style={{ position: "absolute", left: 0, top: 0, overflow: "visible" }}
               width="1" height="1"
             >
-              <line x1={x1 + 22} y1={y} x2={x2} y2={y} stroke="#1e293b" strokeWidth="1" strokeDasharray="4,3" />
-              <line x1={x2} y1={y} x2={x2} y2={y + (isAbove ? 6 : -6)} stroke="#1e293b" strokeWidth="1" />
+              <line x1={x1 + 26} y1={y} x2={x2} y2={y} stroke={color} strokeWidth="1.6" strokeDasharray="4,3" />
+              <line x1={x2} y1={y} x2={x2} y2={y + (isAbove ? 6 : -6)} stroke={color} strokeWidth="1.6" />
             </svg>
           </div>
         );
@@ -1883,20 +1961,30 @@ export default function ScoreRenderer() {
         const beats =
           part?.measures[st.measureIndex]?.timeSignature?.beats ?? 4;
         const px = ns + (st.beat / beats) * nw;
+        const isSel = selectedMarking?.kind === "staffText" && selectedMarking?.id === st.id;
+        const lane = textLaneIndex.get(st.id) || 0;
         return (
           <div
             key={st.id}
+            onClick={(e) => { e.stopPropagation(); selectMarking("staffText", st.id); }}
+            title="Click to select, then press Delete to remove"
             style={{
               position: "absolute",
               left: px,
-              top: z.y - 22,
-              fontSize: 11,
+              top: z.y - 24 - lane * 20,
+              fontSize: 22,
               fontFamily: "Times New Roman, serif",
-              color: "#374151",
-              pointerEvents: "none",
-              zIndex: 12,
+              fontWeight: 800,
+              color: isSel ? "#2563eb" : "#374151",
+              pointerEvents: "auto",
+              cursor: "pointer",
+              zIndex: 30,
               whiteSpace: "nowrap",
               fontStyle: "italic",
+              padding: "1px 4px",
+              borderRadius: 3,
+              background: isSel ? "rgba(37,99,235,0.15)" : "transparent",
+              outline: isSel ? "1.5px solid #2563eb" : "none",
             }}
           >
             {st.text}
