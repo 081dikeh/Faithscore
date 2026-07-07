@@ -35,7 +35,7 @@ const EMPTY_ARR = [];
 const SP = 14;
 
 const STAFF_HEIGHT = SP * 4; // 48px — full staff (4 spaces between 5 lines)
-const PART_HEIGHT = SP * 9; // 108px — staff + gap to next staff in system
+const PART_HEIGHT = SP * 11; // 154px — staff + gap to next staff in system
 const SYSTEM_GAP = SP * 8; // 96px — gap between rows of systems
 const STAVE_TOP = SP * 3; // 36px — top margin
 const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3; // 84px — click zone includes ledger lines
@@ -219,10 +219,10 @@ export default function ScoreRenderer() {
   const octaveLines = useScoreStore((s) => s.score.octaveLines || EMPTY_ARR);
   const staffTextsForLanes = useScoreStore((s) => s.score.staffTexts || EMPTY_ARR);
 
-  // Multiple text-based markings (dynamics + staff text) can land on the same
-  // bar. Without this they'd render on top of each other (as seen when a
-  // dynamic and a tempo marking both sit at beat 0). Assign each one a "lane"
-  // so they stack outward from the staff instead of overlapping.
+  // Multiple text/line-based markings (dynamics, staff text, hairpins, octave
+  // lines) can land on the same bar. Without this they'd render on top of each
+  // other (e.g. a tempo marking and a crescendo both defaulting to beat 0).
+  // Assign each one a "lane" so they stack outward from the staff instead.
   const textLaneIndex = useMemo(() => {
     const byMeasure = new Map(); // "partId::measureIndex" -> [{id, beat}]
     const push = (partId, measureIndex, id, beat) => {
@@ -232,13 +232,15 @@ export default function ScoreRenderer() {
     };
     dynamics.forEach((d) => push(d.partId, d.measureIndex, d.id, d.beat));
     staffTextsForLanes.forEach((t) => push(t.partId, t.measureIndex, t.id, t.beat));
+    hairpins.forEach((h) => push(h.partId, h.startMeasure, h.id, h.startBeat));
+    octaveLines.forEach((o) => push(o.partId, o.startMeasure, o.id, 0));
     const map = new Map();
     byMeasure.forEach((list) => {
       list.sort((a, b) => a.beat - b.beat);
       list.forEach((item, idx) => map.set(item.id, idx));
     });
     return map;
-  }, [dynamics, staffTextsForLanes]);
+  }, [dynamics, staffTextsForLanes, hairpins, octaveLines]);
 
   const render = useCallback(() => {
     if (!containerRef.current) return;
@@ -248,7 +250,7 @@ export default function ScoreRenderer() {
     // ── Dynamic layout constants ─────────────────────────────────────────────
     const SP = staffSize;
     const STAFF_HEIGHT = SP * 4;
-    const PART_HEIGHT = SP * 9;
+    const PART_HEIGHT = SP * 11;
     const SYSTEM_GAP = SP * 8;
     const STAVE_TOP = SP * 4;
     const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3;
@@ -1262,7 +1264,7 @@ export default function ScoreRenderer() {
     const measureBeatMap = {};
     const numMeasures = Math.max(...parts.map((p) => p.measures.length), 0);
     for (let i = 0; i < numMeasures; i++) {
-      const beats = parts[0]?.measures[i]?.timeSignature?.beats ?? 4;
+      const beats = measureCapacity(parts[0]?.measures[i]?.timeSignature);
       measureBeatMap[i] = { beatStart: runningBeat, totalBeats: beats };
       runningBeat += beats;
     }
@@ -1540,7 +1542,7 @@ export default function ScoreRenderer() {
 
         const part = score.parts.find((p) => p.id === z.partId);
         const clef = part?.clef || "treble";
-        const beats = part?.measures[z.measureIndex]?.timeSignature?.beats ?? 4;
+        const beats = measureCapacity(part?.measures[z.measureIndex]?.timeSignature);
 
         return (
           <div
@@ -1575,7 +1577,7 @@ export default function ScoreRenderer() {
               left: z.x,
               top: z.y - 10, // small margin for ledger-line clicks, without bleeding into the staff above
               width: z.width,
-              height: z.height + 24, // small margin below, without bleeding into the staff below
+              height: z.height + 32, // room below for ledger lines / octave-line markings, without bleeding into the next staff
               cursor: inputMode === "note" ? "none" : "pointer",
               borderRadius: 2,
               boxSizing: "border-box",
@@ -1591,8 +1593,9 @@ export default function ScoreRenderer() {
         );
       })}
 
-      {/* Visible selection / drop-target highlight — tightly hugs the staff itself
-          (unlike the click hitbox above, which is intentionally a bit larger). */}
+      {/* Visible selection / drop-target highlight — hugs the staff plus enough
+          room below for ledger lines / octave-line markings (unlike a bare 5-line
+          staff, so 8vb etc. don't look cut off). */}
       {measureZones.map((z) => {
         const zKey = `${z.partId}-${z.measureIndex}`;
         const isExistDrop = dropTarget === zKey;
@@ -1603,19 +1606,19 @@ export default function ScoreRenderer() {
             style={{
               position: "absolute",
               left: z.x,
-              top: z.y - 4,
+              top: z.y - 8,
               width: z.width,
-              height: z.height + 8,
+              height: z.height + 28,
               borderRadius: 2,
               boxSizing: "border-box",
               pointerEvents: "none",
               zIndex: 2,
               border: isExistDrop
-                ? "1.5px dashed #ea580c"
-                : "1.5px solid #2563eb",
+                ? "2px dashed #c2410c"
+                : "2px solid #1d4ed8",
               backgroundColor: isExistDrop
-                ? "rgba(234,88,12,0.06)"
-                : "rgba(37,99,235,0.07)",
+                ? "rgba(194,65,12,0.10)"
+                : "rgba(29,78,216,0.14)",
             }}
           />
         );
@@ -1798,8 +1801,7 @@ export default function ScoreRenderer() {
         const noteWidth =
           z.noteAreaWidth ?? z.width - (dyn.measureIndex === 0 ? 60 : 15);
         const part = score.parts.find((p) => p.id === dyn.partId);
-        const beats =
-          part?.measures[dyn.measureIndex]?.timeSignature?.beats ?? 4;
+        const beats = measureCapacity(part?.measures[dyn.measureIndex]?.timeSignature);
         const px = noteStart + (dyn.beat / beats) * noteWidth;
         const isSel = selectedMarking?.kind === "dynamic" && selectedMarking?.id === dyn.id;
         const lane = textLaneIndex.get(dyn.id) || 0;
@@ -1811,7 +1813,7 @@ export default function ScoreRenderer() {
             style={{
               position: "absolute",
               left: px - 8,
-              top: z.y - 26 - lane * 20,
+              top: z.y - 12 - lane * 16,
               fontSize: 22,
               fontStyle: "italic",
               fontFamily: "Times New Roman, serif",
@@ -1849,13 +1851,12 @@ export default function ScoreRenderer() {
           const ns = z.measureIndex === 0 ? z.x + 55 : z.x + 10;
           const nw = z.width - (z.measureIndex === 0 ? 60 : 15);
           const part = score.parts.find((p) => p.id === hp.partId);
-          const beats =
-            part?.measures[z.measureIndex]?.timeSignature?.beats ?? 4;
+          const beats = measureCapacity(part?.measures[z.measureIndex]?.timeSignature);
           return ns + (beat / beats) * nw;
         };
         const x1 = beatToX(z1, hp.startBeat);
         const x2 = beatToX(z2, hp.endBeat);
-        const y = z1.y - 32; // clearly above the staff, matching dynamics
+        const y = z1.y - 12 - (textLaneIndex.get(hp.id) || 0) * 16; // close above the staff, MuseScore-style
         const mid = 6;
         const isC = hp.type === "cresc";
         const isSel = selectedMarking?.kind === "hairpin" && selectedMarking?.id === hp.id;
@@ -1910,7 +1911,14 @@ export default function ScoreRenderer() {
         const x1 = z1.noteAreaStart ?? z1.x;
         const x2 = (z2.noteAreaStart ?? z2.x) + (z2.noteAreaWidth ?? z2.width);
         const isAbove = ol.type === "8va";
-        const y = isAbove ? z1.y - 28 : z1.y + z1.height + 4;
+        // z1.height is the oversized click-zone (includes ~42px of ledger-line
+        // buffer), NOT the real staff height — using it directly for "below"
+        // placement put 8vb ~46px past the actual bottom line. The real staff
+        // is exactly 4/7 of that click-zone height (STAFF_HEIGHT / STAVE_HEIGHT).
+        const realStaffBottom = z1.y + z1.height * (4 / 7);
+        const y = isAbove
+          ? z1.y - 12 - (textLaneIndex.get(ol.id) || 0) * 16
+          : realStaffBottom + 10 + (textLaneIndex.get(ol.id) || 0) * 16;
         const isSel = selectedMarking?.kind === "octaveLine" && selectedMarking?.id === ol.id;
         const color = isSel ? "#2563eb" : "#1e293b";
         return (
@@ -1958,8 +1966,7 @@ export default function ScoreRenderer() {
         const ns = z.measureIndex === 0 ? z.x + 55 : z.x + 10;
         const nw = z.width - (z.measureIndex === 0 ? 60 : 15);
         const part = score.parts.find((p) => p.id === st.partId);
-        const beats =
-          part?.measures[st.measureIndex]?.timeSignature?.beats ?? 4;
+        const beats = measureCapacity(part?.measures[st.measureIndex]?.timeSignature);
         const px = ns + (st.beat / beats) * nw;
         const isSel = selectedMarking?.kind === "staffText" && selectedMarking?.id === st.id;
         const lane = textLaneIndex.get(st.id) || 0;
@@ -1971,7 +1978,7 @@ export default function ScoreRenderer() {
             style={{
               position: "absolute",
               left: px,
-              top: z.y - 24 - lane * 20,
+              top: z.y - 12 - lane * 16,
               fontSize: 22,
               fontFamily: "Times New Roman, serif",
               fontWeight: 800,

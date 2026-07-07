@@ -3,7 +3,7 @@
 // Export utilities: MusicXML, MIDI (via binary), Print/PDF
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { DURATION_BEATS, noteDuration } from '../store/scoreStore'
+import { DURATION_BEATS, noteDuration, measureCapacity } from '../store/scoreStore'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function xml(tag, attrs, ...children) {
@@ -19,6 +19,26 @@ function xmlLeaf(tag, val, attrs) {
 const DUR_TO_XML = { w:'whole', h:'half', q:'quarter', '8':'eighth', '16':'16th', '32':'32nd' }
 const DUR_TO_DIVS = { w:16, h:8, q:4, '8':2, '16':1, '32':0 }  // divisions=4 per quarter
 const DIVISIONS = 4  // quarter note = 4 divisions
+
+// Maps our internal articulation-mark names to MusicXML notation elements.
+// Some live under <articulations>, some are their own <notations> sibling
+// (fermata), and some live under <ornaments>.
+const ARTICULATION_XML = {
+  staccato: { group: 'articulations', tag: 'staccato' },
+  staccatissimo: { group: 'articulations', tag: 'staccatissimo' },
+  tenuto: { group: 'articulations', tag: 'tenuto' },
+  accent: { group: 'articulations', tag: 'accent' },
+  marcato: { group: 'articulations', tag: 'strong-accent' },
+  portato: { group: 'articulations', tag: 'detached-legato' },
+  fermata: { group: 'fermata', tag: 'fermata' },
+  trill: { group: 'ornaments', tag: 'trill-mark' },
+  mordent: { group: 'ornaments', tag: 'mordent' },
+  turn: { group: 'ornaments', tag: 'turn' },
+  harmonic: { group: 'technical', tag: 'harmonic' },
+  'snap-pizz': { group: 'technical', tag: 'snap-pizzicato' },
+}
+
+const DYNAMIC_TAGS = new Set(['ppp','pp','p','mp','mf','f','ff','fff','sfz','fp'])
 
 // ── MusicXML Export ────────────────────────────────────────────────────────────
 export function exportMusicXML(score) {
@@ -40,6 +60,7 @@ export function exportMusicXML(score) {
       if (!m) continue
       const ts  = m.timeSignature || { beats: 4, beatType: 4 }
       const ks  = m.keySignature ?? 0
+      const capacity = measureCapacity(ts)
 
       const attrs = mi === 0 ? xml('attributes', {},
         xmlLeaf('divisions', DIVISIONS),
@@ -51,39 +72,124 @@ export function exportMusicXML(score) {
         )
       ) : ''
 
-      const noteElements = m.notes.filter(n => !n.chordWith).map(n => {
+      // ── Gather every marking that belongs to this part+measure, tagged with
+      // the beat it should appear before ────────────────────────────────────
+      const pending = []
+      ;(score.dynamics||[]).forEach(d => {
+        if (d.partId === part.id && d.measureIndex === mi)
+          pending.push({ beat: d.beat, xml: xml('direction', { placement: 'below' },
+            xml('direction-type', {}, xml('dynamics', {},
+              DYNAMIC_TAGS.has(d.value) ? xml(d.value, {}) : xmlLeaf('other-dynamics', d.value)
+            ))
+          )})
+      })
+      ;(score.staffTexts||[]).forEach(t => {
+        if (t.partId === part.id && t.measureIndex === mi)
+          pending.push({ beat: t.beat, xml: xml('direction', { placement: 'above' },
+            xml('direction-type', {}, xmlLeaf('words', t.text))
+          )})
+      })
+      ;(score.rehearsalMarks||[]).forEach(r => {
+        if (r.measureIndex === mi && pi === 0) // rehearsal marks are score-wide; attach once, on the top part
+          pending.push({ beat: 0, xml: xml('direction', { placement: 'above' },
+            xml('direction-type', {}, xmlLeaf('rehearsal', r.text))
+          )})
+      })
+      ;(score.hairpins||[]).forEach(h => {
+        if (h.partId !== part.id) return
+        if (h.startMeasure === mi)
+          pending.push({ beat: h.startBeat, xml: xml('direction', { placement: 'below' },
+            xml('direction-type', {}, xml('wedge', { type: h.type === 'cresc' ? 'crescendo' : 'diminuendo', number: '1' }))
+          )})
+        if (h.endMeasure === mi)
+          pending.push({ beat: h.endBeat, xml: xml('direction', { placement: 'below' },
+            xml('direction-type', {}, xml('wedge', { type: 'stop', number: '1' }))
+          )})
+      })
+      pending.sort((a, b) => a.beat - b.beat)
+
+      let cursorBeat = 0
+      const noteElements = []
+      const flushPendingUpTo = (beat) => {
+        while (pending.length && pending[0].beat <= beat + 1e-6) {
+          noteElements.push(pending.shift().xml)
+        }
+      }
+
+      m.notes.filter(n => !n.chordWith).forEach(n => {
+        flushPendingUpTo(cursorBeat)
+
         const dur  = noteDuration(n)
         const divs = Math.round(dur * DIVISIONS)
         const type = DUR_TO_XML[n.duration] || 'quarter'
 
+        // Per-note notations: articulations / fermata / ornaments / technical
+        const marks = n.articulations || (n.articulation ? [n.articulation] : [])
+        const grouped = {}
+        marks.forEach(mark => {
+          const info = ARTICULATION_XML[mark]
+          if (!info) return
+          grouped[info.group] = grouped[info.group] || []
+          grouped[info.group].push(xml(info.tag, {}))
+        })
+        const notationChildren = []
+        if (n.tieStart) notationChildren.push(xml('tied', { type: 'start' }))
+        if (grouped.articulations) notationChildren.push(xml('articulations', {}, ...grouped.articulations))
+        if (grouped.fermata) notationChildren.push(...grouped.fermata)
+        if (grouped.ornaments) notationChildren.push(xml('ornaments', {}, ...grouped.ornaments))
+        if (grouped.technical) notationChildren.push(xml('technical', {}, ...grouped.technical))
+        const notations = notationChildren.length ? xml('notations', {}, ...notationChildren) : ''
+
         if (n.isRest) {
-          return xml('note', {},
+          noteElements.push(xml('note', {},
             xml('rest', {}),
             xmlLeaf('duration', divs),
             xmlLeaf('type', type),
-          )
+          ))
+        } else {
+          const p   = n.pitch
+          const acc = p.accidental === '#' ? 'sharp' : p.accidental === 'b' ? 'flat'
+                    : p.accidental === '##' ? 'double-sharp' : p.accidental === 'bb' ? 'flat-flat' : ''
+
+          noteElements.push(xml('note', {},
+            xml('pitch', {},
+              xmlLeaf('step', p.step),
+              acc ? xmlLeaf('alter', acc === 'sharp' ? 1 : acc === 'flat' ? -1 : acc === 'double-sharp' ? 2 : -2) : '',
+              xmlLeaf('octave', p.octave),
+            ),
+            xmlLeaf('duration', divs),
+            xmlLeaf('type', type),
+            acc ? xml('accidental', {}, acc) : '',
+            n.dots ? xml('dot', {}) : '',
+            n.tieStart ? xml('tie', { type: 'start' }) : '',
+            n.lyric ? xml('lyric', { number: '1' }, xmlLeaf('text', n.lyric)) : '',
+            notations,
+          ))
         }
-
-        const p   = n.pitch
-        const acc = p.accidental === '#' ? 'sharp' : p.accidental === 'b' ? 'flat'
-                  : p.accidental === '##' ? 'double-sharp' : p.accidental === 'bb' ? 'flat-flat' : ''
-
-        return xml('note', {},
-          xml('pitch', {},
-            xmlLeaf('step', p.step),
-            acc ? xmlLeaf('alter', acc === 'sharp' ? 1 : acc === 'flat' ? -1 : acc === 'double-sharp' ? 2 : -2) : '',
-            xmlLeaf('octave', p.octave),
-          ),
-          xmlLeaf('duration', divs),
-          xmlLeaf('type', type),
-          acc ? xml('accidental', {}, acc) : '',
-          n.dots ? xml('dot', {}) : '',
-          n.tieStart ? xml('tie', { type: 'start' }) : '',
-          n.lyric ? xml('lyric', { number: '1' }, xmlLeaf('text', n.lyric)) : '',
-        )
+        cursorBeat += dur
       })
+      // Anything still pending belongs at the very end of the measure
+      flushPendingUpTo(capacity)
 
-      measures.push(xml('measure', { number: mi + 1 }, attrs, ...noteElements))
+      // ── Barline (double / final / repeat marks) ───────────────────────────
+      const barlineEntry = (score.barlines||[]).find(b => b.measureIndex === mi)
+      let barlineElements = []
+      if (barlineEntry) {
+        if (barlineEntry.type === 'repeat-start') {
+          barlineElements.push(xml('barline', { location: 'left' },
+            xmlLeaf('bar-style', 'heavy-light'),
+            xml('repeat', { direction: 'forward' })
+          ))
+        } else {
+          const styleMap = { double: 'light-light', final: 'light-heavy', 'repeat-end': 'light-heavy', 'repeat-both': 'light-heavy' }
+          barlineElements.push(xml('barline', { location: 'right' },
+            xmlLeaf('bar-style', styleMap[barlineEntry.type] || 'regular'),
+            (barlineEntry.type === 'repeat-end' || barlineEntry.type === 'repeat-both') ? xml('repeat', { direction: 'backward' }) : ''
+          ))
+        }
+      }
+
+      measures.push(xml('measure', { number: mi + 1 }, attrs, ...noteElements, ...barlineElements))
     }
 
     return xml('part', { id: `P${pi+1}` }, ...measures)
@@ -135,7 +241,7 @@ export function exportMIDI(score) {
 
   let globalTick = 0
   for (let mi = 0; mi < numM; mi++) {
-    const beats = parts[0]?.measures[mi]?.timeSignature?.beats ?? 4
+    const beats = measureCapacity(parts[0]?.measures[mi]?.timeSignature)
 
     for (const part of parts) {
       const m = part.measures[mi]
