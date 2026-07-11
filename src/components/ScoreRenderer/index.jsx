@@ -1805,6 +1805,17 @@ export default function ScoreRenderer() {
         const px = noteStart + (dyn.beat / beats) * noteWidth;
         const isSel = selectedMarking?.kind === "dynamic" && selectedMarking?.id === dyn.id;
         const lane = textLaneIndex.get(dyn.id) || 0;
+        // Scale relative to the actual rendered staff size (z.height), not a
+        // fixed reference — otherwise fixed px offsets/fonts look oversized
+        // and cramped at smaller zoom/staff-size settings.
+        const scale = z.height / 98;
+        const fontSize = 22 * scale;
+        const gap = 5 * scale; // small breathing room between text and staff
+        // "top" is the text box's TOP edge, and text renders DOWNWARD from
+        // there — so clearing the staff requires offsetting by the text's own
+        // height too, not just a small gap, or the glyph itself dips into the
+        // staff even though its anchor point is numerically above it.
+        const laneStep = (fontSize + gap);
         return (
           <div
             key={dyn.id}
@@ -1813,8 +1824,8 @@ export default function ScoreRenderer() {
             style={{
               position: "absolute",
               left: px - 8,
-              top: z.y - 12 - lane * 16,
-              fontSize: 22,
+              top: z.y - gap - fontSize - lane * laneStep,
+              fontSize,
               fontStyle: "italic",
               fontFamily: "Times New Roman, serif",
               fontWeight: 800,
@@ -1856,8 +1867,10 @@ export default function ScoreRenderer() {
         };
         const x1 = beatToX(z1, hp.startBeat);
         const x2 = beatToX(z2, hp.endBeat);
-        const y = z1.y - 12 - (textLaneIndex.get(hp.id) || 0) * 16; // close above the staff, MuseScore-style
-        const mid = 6;
+        const scale = z1.height / 98;
+        const hpLaneStep = 22 * scale + 4 * scale; // match text items' lane step so stacking never collides
+        const y = z1.y - 12 * scale - (textLaneIndex.get(hp.id) || 0) * hpLaneStep; // close above the staff, MuseScore-style
+        const mid = 6 * scale;
         const isC = hp.type === "cresc";
         const isSel = selectedMarking?.kind === "hairpin" && selectedMarking?.id === hp.id;
         // Draw SVG wedge inline
@@ -1890,7 +1903,7 @@ export default function ScoreRenderer() {
             <path
               d={d}
               stroke={isSel ? "#2563eb" : "#1e293b"}
-              strokeWidth={isSel ? "3.4" : "3"}
+              strokeWidth={(isSel ? 3.4 : 3) * scale}
               fill="none"
             />
           </svg>
@@ -1911,14 +1924,23 @@ export default function ScoreRenderer() {
         const x1 = z1.noteAreaStart ?? z1.x;
         const x2 = (z2.noteAreaStart ?? z2.x) + (z2.noteAreaWidth ?? z2.width);
         const isAbove = ol.type === "8va";
+        const scale = z1.height / 98;
+        const fontSize = 22 * scale;
+        const lineGap = 6 * scale; // clearance between the dashed line and the staff
+        const laneStep = fontSize + 4 * scale;
+        const lane = textLaneIndex.get(ol.id) || 0;
         // z1.height is the oversized click-zone (includes ~42px of ledger-line
         // buffer), NOT the real staff height — using it directly for "below"
-        // placement put 8vb ~46px past the actual bottom line. The real staff
-        // is exactly 4/7 of that click-zone height (STAFF_HEIGHT / STAVE_HEIGHT).
+        // placement would put 8vb way past the actual bottom line. The real
+        // staff is exactly 4/7 of that click-zone height (STAFF_HEIGHT / STAVE_HEIGHT).
         const realStaffBottom = z1.y + z1.height * (4 / 7);
-        const y = isAbove
-          ? z1.y - 12 - (textLaneIndex.get(ol.id) || 0) * 16
-          : realStaffBottom + 10 + (textLaneIndex.get(ol.id) || 0) * 16;
+        // The dashed line itself, cleanly clear of the staff on the correct side.
+        const lineY = isAbove
+          ? z1.y - lineGap - lane * laneStep
+          : realStaffBottom + lineGap + lane * laneStep;
+        // Text sits entirely on the far side of its own line from the staff —
+        // its own height can never carry it back into the staff this way.
+        const textTop = isAbove ? lineY - fontSize : lineY;
         const isSel = selectedMarking?.kind === "octaveLine" && selectedMarking?.id === ol.id;
         const color = isSel ? "#2563eb" : "#1e293b";
         return (
@@ -1929,8 +1951,8 @@ export default function ScoreRenderer() {
               style={{
                 position: "absolute",
                 left: x1,
-                top: y - 13,
-                fontSize: 22,
+                top: textTop,
+                fontSize,
                 fontStyle: "italic",
                 fontFamily: "Times New Roman, serif",
                 fontWeight: 800,
@@ -1949,8 +1971,8 @@ export default function ScoreRenderer() {
               style={{ position: "absolute", left: 0, top: 0, overflow: "visible" }}
               width="1" height="1"
             >
-              <line x1={x1 + 26} y1={y} x2={x2} y2={y} stroke={color} strokeWidth="1.6" strokeDasharray="4,3" />
-              <line x1={x2} y1={y} x2={x2} y2={y + (isAbove ? 6 : -6)} stroke={color} strokeWidth="1.6" />
+              <line x1={x1 + 26 * scale} y1={lineY} x2={x2} y2={lineY} stroke={color} strokeWidth={1.6 * scale} strokeDasharray="4,3" />
+              <line x1={x2} y1={lineY} x2={x2} y2={lineY + (isAbove ? 6 : -6) * scale} stroke={color} strokeWidth={1.6 * scale} />
             </svg>
           </div>
         );
@@ -1970,6 +1992,10 @@ export default function ScoreRenderer() {
         const px = ns + (st.beat / beats) * nw;
         const isSel = selectedMarking?.kind === "staffText" && selectedMarking?.id === st.id;
         const lane = textLaneIndex.get(st.id) || 0;
+        const scale = z.height / 98;
+        const fontSize = 22 * scale;
+        const gap = 5 * scale;
+        const laneStep = fontSize + gap;
         return (
           <div
             key={st.id}
@@ -1978,8 +2004,8 @@ export default function ScoreRenderer() {
             style={{
               position: "absolute",
               left: px,
-              top: z.y - 12 - lane * 16,
-              fontSize: 22,
+              top: z.y - gap - fontSize - lane * laneStep,
+              fontSize,
               fontFamily: "Times New Roman, serif",
               fontWeight: 800,
               color: isSel ? "#2563eb" : "#374151",
