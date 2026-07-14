@@ -1445,7 +1445,10 @@ export const useScoreStore = create((set, get) => ({
     get()._snapshot()
     const id = crypto.randomUUID()
     set(s => ({ score: { ...s.score,
-      hairpins: [...(s.score.hairpins||[]), { id, partId, startMeasure, startBeat, endMeasure, endBeat, type }]
+      hairpins: [
+        ...(s.score.hairpins||[]).filter(h => !(h.partId === partId && h.startMeasure === startMeasure && Math.abs(h.startBeat - startBeat) < 0.01)),
+        { id, partId, startMeasure, startBeat, endMeasure, endBeat, type },
+      ]
     }}))
     saveToStorage(get().score)
   },
@@ -1520,7 +1523,13 @@ export const useScoreStore = create((set, get) => ({
     get()._snapshot()
     const id = crypto.randomUUID()
     set(s => ({ score: { ...s.score,
-      octaveLines: [...(s.score.octaveLines||[]), { id, partId, startMeasure, endMeasure, type }]
+      // Replace any existing octave line starting on this same bar/part instead
+      // of stacking a new one on top — repeated clicks (e.g. while testing)
+      // would otherwise pile up multiple overlapping 8va/8vb markings.
+      octaveLines: [
+        ...(s.score.octaveLines||[]).filter(o => !(o.partId === partId && o.startMeasure === startMeasure)),
+        { id, partId, startMeasure, endMeasure, type },
+      ]
     }}))
     saveToStorage(get().score)
   },

@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useCallback } from 'react'
 import * as Tone from 'tone'
-import { useScoreStore, noteDuration } from '../store/scoreStore'
+import { useScoreStore, noteDuration, measureCapacity } from '../store/scoreStore'
 
 // ── SAMPLER CONFIG ────────────────────────────────────────────────────────────
 const SAMPLE_BASE_URL = 'https://tonejs.github.io/audio/salamander/'
@@ -32,6 +32,20 @@ const EQ_PARAMS     = { high: 3, mid: 0, low: 6, highFrequency: 3200, lowFrequen
 const REVERB_PARAMS = { decay: 1.5, wet: 0.22 }
 const MASTER_VOLUME = -4
 
+// ── Dynamics → velocity, articulations → gate length / velocity boost ─────────
+const DYNAMIC_VELOCITY = {
+  ppp: 0.15, pp: 0.25, p: 0.35, mp: 0.5, mf: 0.65,
+  f: 0.8, ff: 0.92, fff: 1.0, sfz: 0.95, fp: 0.85,
+}
+const DEFAULT_VELOCITY = 0.7 // used before any dynamic marking has appeared
+// How much of the note's written duration actually sounds (the rest is silence,
+// simulating detached/legato articulation) — 1.0 = full value, no gap.
+const ARTICULATION_GATE = {
+  staccato: 0.5, staccatissimo: 0.35, tenuto: 0.98, portato: 0.75, marcato: 0.85,
+}
+const ARTICULATION_VELOCITY_MULT = { accent: 1.22, marcato: 1.3 }
+const FERMATA_HOLD_MULT = 1.8 // fermata notes ring longer without shifting subsequent timing
+
 // ── Pitch helpers ─────────────────────────────────────────────────────────────
 function pitchToTone(pitch) {
   if (!pitch) return null
@@ -54,9 +68,57 @@ function buildSchedule(score, tempo) {
 
   const numMeasures = Math.max(...score.parts.map(p => p.measures.length), 0)
 
+  // Precompute each measure's global beat-start (time-signature-only pass) so
+  // dynamics/hairpins — which can span measures — can be interpolated correctly
+  // even for compound meters (6/8, 9/8, 12/8...).
+  const measureBeatStart = []
+  let cumBeat = 0
+  for (let i = 0; i < numMeasures; i++) {
+    measureBeatStart.push(cumBeat)
+    cumBeat += measureCapacity(score.parts[0]?.measures[i]?.timeSignature)
+  }
+  const globalBeatOf = (measureIndex, beat) => (measureBeatStart[measureIndex] ?? 0) + beat
+
+  // Per-part dynamics markings and hairpins, converted to global beat positions.
+  const dynamicsByPart = {}
+  ;(score.dynamics || []).forEach(d => {
+    const level = DYNAMIC_VELOCITY[d.value]
+    if (level === undefined) return
+    ;(dynamicsByPart[d.partId] ??= []).push({ gb: globalBeatOf(d.measureIndex, d.beat), level })
+  })
+  Object.values(dynamicsByPart).forEach(arr => arr.sort((a, b) => a.gb - b.gb))
+
+  const hairpinsByPart = {}
+  ;(score.hairpins || []).forEach(h => {
+    const startGb = globalBeatOf(h.startMeasure, h.startBeat)
+    const endGb   = globalBeatOf(h.endMeasure, h.endBeat)
+    if (endGb <= startGb) return
+    ;(hairpinsByPart[h.partId] ??= []).push({ startGb, endGb, type: h.type })
+  })
+
+  // Velocity at a given global beat for a part: most recent dynamic marking,
+  // with any active crescendo/decrescendo hairpin interpolated on top.
+  function velocityAt(partId, gb) {
+    const list = dynamicsByPart[partId] || []
+    let level = DEFAULT_VELOCITY
+    for (const d of list) {
+      if (d.gb <= gb + 1e-6) level = d.level
+      else break
+    }
+    const hp = (hairpinsByPart[partId] || [])
+      .find(h => gb >= h.startGb - 1e-6 && gb <= h.endGb + 1e-6)
+    if (hp) {
+      const shift = hp.type === 'cresc' ? 0.28 : -0.28
+      const endLevel = Math.max(0.12, Math.min(1, level + shift))
+      const progress = (gb - hp.startGb) / (hp.endGb - hp.startGb)
+      level = level + (endLevel - level) * progress
+    }
+    return Math.max(0.08, Math.min(1, level))
+  }
+
   for (let mIdx = 0; mIdx < numMeasures; mIdx++) {
     const refM     = score.parts[0]?.measures[mIdx]
-    const maxBeats = refM?.timeSignature?.beats ?? 4
+    const maxBeats = measureCapacity(refM?.timeSignature)
 
     beatMap.push({ measureIndex: mIdx, startSec: globalSec, beats: maxBeats })
 
@@ -76,10 +138,26 @@ function buildSchedule(score, tempo) {
           const toneNotes  = [pitchToTone(note.pitch)].filter(Boolean)
           companions.forEach(c => { const t = pitchToTone(c.pitch); if (t) toneNotes.push(t) })
           if (toneNotes.length > 0) {
+            const gb = globalBeatOf(mIdx, beatCursor)
+            const marks = note.articulations || (note.articulation ? [note.articulation] : [])
+
+            // Gate length: how much of the written duration actually sounds.
+            let gate = 1.0
+            for (const m of marks) if (ARTICULATION_GATE[m] !== undefined) gate = Math.min(gate, ARTICULATION_GATE[m])
+            let holdMult = 1
+            if (marks.includes('fermata')) holdMult = FERMATA_HOLD_MULT
+
+            // Velocity: dynamics + active hairpin, boosted by accent/marcato.
+            let velocity = velocityAt(part.id, gb)
+            for (const m of marks) if (ARTICULATION_VELOCITY_MULT[m]) velocity *= ARTICULATION_VELOCITY_MULT[m]
+            velocity = Math.max(0.05, Math.min(1, velocity))
+
+            const fullDurSec = durBeats * secPerBeat * holdMult
             events.push({
               time:         globalSec + beatCursor * secPerBeat,
-              dur:          Math.max(0.08, durBeats * secPerBeat * 0.88),
+              dur:          Math.max(0.06, fullDurSec * gate * (holdMult > 1 ? 1 : 0.88)),
               notes:        toneNotes,
+              velocity,
               beatPosition: globalSec / secPerBeat + beatCursor,  // absolute beat
               measureIndex: mIdx,
             })
@@ -234,8 +312,7 @@ export function usePlayback() {
       .forEach(ev => {
         const relTime = ev.time - startSec + LEAD
         Tone.getTransport().schedule((audioTime) => {
-          const isBass = ev.notes.some(n => parseInt(n.replace(/[^0-9]/g, ''), 10) <= 3)
-          instrument.triggerAttackRelease(ev.notes, ev.dur, audioTime, isBass ? 0.95 : 0.78)
+          instrument.triggerAttackRelease(ev.notes, ev.dur, audioTime, ev.velocity)
         }, relTime)
       })
 
