@@ -39,8 +39,23 @@ const PART_HEIGHT = SP * 11; // 154px — staff + gap to next staff in system
 const SYSTEM_GAP = SP * 8; // 96px — gap between rows of systems
 const STAVE_TOP = SP * 3; // 36px — top margin
 const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3; // 84px — click zone includes ledger lines
-const HAIRPIN_VERTICAL_OFFSET = 4; // px above staff at default scale
-const OCTAVE_LINE_VERTICAL_GAP = 6; // px between staff and 8va/8vb line at default scale
+// ── Unified "above/below staff" clearance ──────────────────────────────────
+// Every marking that sits above or below the staff (dynamics, hairpins,
+// staff text/tempo, 8va/8vb, articulations) uses THIS SAME calculation, so
+// they all sit at a consistent, correctly-scaled distance from the staff —
+// previously each one had its own separate (and inconsistent) pixel offset.
+//
+// realSP = actual pixels-per-staff-space for this specific stave, derived
+// directly from the zone's click-zone height (z.height = realSP * 7, since
+// STAVE_HEIGHT = STAFF_HEIGHT(realSP*4) + realSP*3). This is more direct
+// than the old "scale = z.height/98" ratio and avoids compounding error.
+//
+// Clearance = 1.2 staff-spaces — a clearly visible gap in real engraving
+// terms, scaled correctly for whatever staff size is actually rendering.
+function aboveBelowGap(zoneHeight) {
+  const realSP = zoneHeight / 7;
+  return realSP * 1.2;
+}
 
 // Middle of staff for rests — VexFlow places rest glyph at this key position.
 // Bass clef lines (bottom→top): G2 B2 D3 F3 A3 — middle line = D3
@@ -49,24 +64,8 @@ const OCTAVE_LINE_VERTICAL_GAP = 6; // px between staff and 8va/8vb line at defa
 // Treble: whole hangs from D5 (line 4), half sits on B4 (line 3), others on B4 (middle)
 // Bass:   whole hangs from F3 (line 4), half sits on D3 (line 3), others on D3 (middle)
 const REST_KEYS = {
-  treble: {
-    w: "d/5",
-    h: "b/4",
-    q: "b/4",
-    8: "b/4",
-    16: "b/4",
-    32: "b/4",
-    64: "b/4",
-  },
-  bass: {
-    w: "f/3",
-    h: "d/3",
-    q: "d/3",
-    8: "d/3",
-    16: "d/3",
-    32: "d/3",
-    64: "d/3",
-  },
+  treble: { w:"d/5", h:"b/4", q:"b/4", "8":"b/4", "16":"b/4", "32":"b/4", "64":"b/4" },
+  bass:   { w:"f/3", h:"d/3", q:"d/3", "8":"d/3", "16":"d/3", "32":"d/3", "64":"d/3" },
 };
 
 function keyNumToVexflow(num) {
@@ -232,14 +231,10 @@ export default function ScoreRenderer() {
   const staffSize = useScoreStore((s) => s.staffSize ?? 10);
   const dynamics = useScoreStore((s) => s.score.dynamics || EMPTY_ARR);
   const hairpins = useScoreStore((s) => s.score.hairpins || EMPTY_ARR);
-  const rehearsalMarks = useScoreStore(
-    (s) => s.score.rehearsalMarks || EMPTY_ARR,
-  );
+  const rehearsalMarks = useScoreStore((s) => s.score.rehearsalMarks || EMPTY_ARR);
   const barlines = useScoreStore((s) => s.score.barlines || EMPTY_ARR);
   const octaveLines = useScoreStore((s) => s.score.octaveLines || EMPTY_ARR);
-  const staffTextsForLanes = useScoreStore(
-    (s) => s.score.staffTexts || EMPTY_ARR,
-  );
+  const staffTextsForLanes = useScoreStore((s) => s.score.staffTexts || EMPTY_ARR);
 
   // Multiple text/line-based markings (dynamics, staff text, hairpins, octave
   // lines) can land on the same bar. Without this they'd render on top of each
@@ -252,24 +247,10 @@ export default function ScoreRenderer() {
       if (!byMeasure.has(key)) byMeasure.set(key, []);
       byMeasure.get(key).push({ id, beat });
     };
-    dynamics.forEach((d) =>
-      push(d.partId, d.measureIndex, d.id, d.beat, "above"),
-    );
-    staffTextsForLanes.forEach((t) =>
-      push(t.partId, t.measureIndex, t.id, t.beat, "above"),
-    );
-    hairpins.forEach((h) =>
-      push(h.partId, h.startMeasure, h.id, h.startBeat, "above"),
-    );
-    octaveLines.forEach((o) =>
-      push(
-        o.partId,
-        o.startMeasure,
-        o.id,
-        0,
-        o.type === "8va" ? "above" : "below",
-      ),
-    );
+    dynamics.forEach((d) => push(d.partId, d.measureIndex, d.id, d.beat, "above"));
+    staffTextsForLanes.forEach((t) => push(t.partId, t.measureIndex, t.id, t.beat, "above"));
+    hairpins.forEach((h) => push(h.partId, h.startMeasure, h.id, h.startBeat, "above"));
+    octaveLines.forEach((o) => push(o.partId, o.startMeasure, o.id, 0, o.type === "8va" ? "above" : "below"));
     const map = new Map();
     byMeasure.forEach((list) => {
       list.sort((a, b) => a.beat - b.beat);
@@ -301,10 +282,10 @@ export default function ScoreRenderer() {
     // Compute minimum pixel width for each measure based on content density.
     // This is the core of the dynamic layout — denser measures get more space.
     const NOTE_PX = {
-      w: SP * 9,
-      h: SP * 6.5,
-      q: SP * 5,
-      8: SP * 4,
+      w:  SP * 9,
+      h:  SP * 6.5,
+      q:  SP * 5,
+      8:  SP * 4,
       16: SP * 3.2,
       32: SP * 2.8,
       64: SP * 2.4,
@@ -584,18 +565,15 @@ export default function ScoreRenderer() {
             // snake_case keys are silently ignored, causing every Voice
             // to default to 4/4 internally — corrupting all other meters.
             const voice = new Voice({
-              numBeats: measure.timeSignature.beats,
+              numBeats:  measure.timeSignature.beats,
               beatValue: measure.timeSignature.beatType,
             }).setStrict(false);
             voice.addTickables(vfNotes);
             // Formatter width = stave width minus glyph overhead.
             // getGlyphOverhead() accounts for clef + key sig accidentals + time sig.
             const glyphOverhead = getGlyphOverhead(col, isFirst);
-            const BARLINE_PAD = SP * 3; // breathing room from barlines on each side
-            const formatterWidth = Math.max(
-              40,
-              width - glyphOverhead - BARLINE_PAD * 2,
-            );
+            const BARLINE_PAD  = SP * 3; // breathing room from barlines on each side
+            const formatterWidth = Math.max(40, width - glyphOverhead - BARLINE_PAD * 2);
             new Formatter().joinVoices([voice]).format([voice], formatterWidth);
 
             // Re-apply stem directions AFTER formatting — Formatter.format() resets
@@ -645,14 +623,10 @@ export default function ScoreRenderer() {
               }
               if (beatType === 8) {
                 if (beats % 3 === 0) return Array(beats / 3).fill(3);
-                const IRR = { 5: [3, 2], 7: [2, 2, 3], 11: [3, 3, 3, 2] };
+                const IRR = { 5:[3,2], 7:[2,2,3], 11:[3,3,3,2] };
                 if (IRR[beats]) return IRR[beats];
-                const g = [];
-                let r = beats;
-                while (r > 3) {
-                  g.push(2);
-                  r -= 2;
-                }
+                const g = []; let r = beats;
+                while (r > 3) { g.push(2); r -= 2; }
                 if (r > 0) g.push(r);
                 return g;
               }
@@ -667,18 +641,11 @@ export default function ScoreRenderer() {
 
               const grouping = getBeamGrouping(measure.timeSignature);
               // DEBUG — open browser console to see this
-              console.log(
-                "[BEAM] ts=",
-                JSON.stringify(measure.timeSignature),
-                "grouping=",
-                JSON.stringify(grouping),
-                "notes=",
-                renderSeq
-                  .map((n) => n.duration + (n.isRest ? "r" : ""))
-                  .join(","),
-              );
+              console.log('[BEAM] ts=', JSON.stringify(measure.timeSignature),
+                'grouping=', JSON.stringify(grouping),
+                'notes=', renderSeq.map(n=>n.duration+(n.isRest?'r':'')).join(','));
               let boundAcc = 0;
-              const bounds = grouping.map((g) => {
+              const bounds = grouping.map(g => {
                 boundAcc += g * VF_8TH_TICKS;
                 return boundAcc;
               });
@@ -695,52 +662,33 @@ export default function ScoreRenderer() {
               function applyGroupDir(runVfNotes, runSeqNotes) {
                 if (!runVfNotes.length) return;
                 const mid = MIDDLE_LINE[clef] || MIDDLE_LINE.treble;
-                let sum = 0,
-                  cnt = 0;
-                runSeqNotes.forEach((sn) => {
+                let sum = 0, cnt = 0;
+                runSeqNotes.forEach(sn => {
                   if (!sn || sn.isRest || !sn.pitch) return;
                   sum += diatonicPos(sn.pitch);
                   cnt++;
                   const extras = chordMap[sn.id] || [];
-                  extras.forEach((cn) => {
-                    if (cn.pitch) {
-                      sum += diatonicPos(cn.pitch);
-                      cnt++;
-                    }
+                  extras.forEach(cn => {
+                    if (cn.pitch) { sum += diatonicPos(cn.pitch); cnt++; }
                   });
                 });
-                const dir = cnt > 0 && sum / cnt >= mid ? -1 : 1;
-                runVfNotes.forEach((vfn) => {
-                  try {
-                    vfn.setStemDirection(dir);
-                  } catch (_) {}
+                const dir = cnt > 0 && (sum / cnt) >= mid ? -1 : 1;
+                runVfNotes.forEach(vfn => {
+                  try { vfn.setStemDirection(dir); } catch (_) {}
                 });
               }
 
               function flushRun(runVfNotes, runSeqNotes) {
                 if (runVfNotes.length < 2) return;
-                console.log(
-                  "[BEAM] flushing run of",
-                  runVfNotes.length,
-                  "notes, durs=",
-                  runVfNotes
-                    .map((n) => {
-                      try {
-                        return n.getDuration();
-                      } catch (_) {
-                        return "?";
-                      }
-                    })
-                    .join(","),
-                );
+                console.log('[BEAM] flushing run of', runVfNotes.length, 'notes, durs=', runVfNotes.map(n=>{try{return n.getDuration()}catch(_){return'?'}}).join(','));
                 applyGroupDir(runVfNotes, runSeqNotes);
                 try {
                   const beam = new Beam(runVfNotes, false);
-                  runVfNotes.forEach((vfn) => {
+                  runVfNotes.forEach(vfn => {
                     try {
                       vfn.setFlagStyle({
                         fillStyle: "transparent",
-                        strokeStyle: "transparent",
+                        strokeStyle: "transparent"
                       });
                     } catch (_) {}
                   });
@@ -748,25 +696,18 @@ export default function ScoreRenderer() {
                 } catch (_) {}
               }
 
-              let run = [],
-                runSeq = [],
-                runGrp = -1,
-                tickPos = 0;
+              let run = [], runSeq = [], runGrp = -1, tickPos = 0;
 
               vfNotes.forEach((vfNote, ni) => {
-                let dur = "",
-                  isBeamable = false,
-                  noteTicks = 16384 / 4;
-                try {
-                  dur = vfNote.getDuration();
-                } catch (_) {}
+                let dur = "", isBeamable = false, noteTicks = 16384 / 4;
+                try { dur = vfNote.getDuration(); } catch (_) {}
                 try {
                   const isRest = vfNote.isRest ? vfNote.isRest() : false;
                   isBeamable = BEAMABLE.has(dur) && !isRest;
                   const denom = parseInt(dur, 10);
                   if (denom >= 8) {
                     noteTicks = 16384 / denom;
-                    const dots = vfNote.dots != null ? vfNote.dots : 0;
+                    const dots = (vfNote.dots != null) ? vfNote.dots : 0;
                     let dotVal = noteTicks / 2;
                     for (let d = 0; d < dots; d++) {
                       noteTicks += dotVal;
@@ -777,15 +718,12 @@ export default function ScoreRenderer() {
 
                 if (!isBeamable) {
                   flushRun(run, runSeq);
-                  run = [];
-                  runSeq = [];
-                  runGrp = -1;
+                  run = []; runSeq = []; runGrp = -1;
                 } else {
                   const g = groupOf(tickPos);
                   if (run.length > 0 && g !== runGrp) {
                     flushRun(run, runSeq);
-                    run = [];
-                    runSeq = [];
+                    run = []; runSeq = [];
                   }
                   if (run.length === 0) runGrp = g;
                   run.push(vfNote);
@@ -818,65 +756,68 @@ export default function ScoreRenderer() {
                 const vfNote = vfNotes[ni];
                 const nx = vfNote.getAbsoluteX() + 4;
 
-                // Default: just above the staff. If the notehead itself sits
-                // higher (on ledger lines above the staff), lift the whole
-                // stack just enough to clear it — capped so it never drifts
-                // far from the staff (getBoundingBox() proved unreliable here).
-                let baseAy = partY - 8;
+                // Default: just above the staff, using the SAME clearance
+                // (1.2 staff-spaces) as dynamics/hairpins/text/8va, so every
+                // "above staff" marking sits at a consistent distance. If the
+                // notehead itself sits higher (on ledger lines above the
+                // staff), lift the whole stack just enough to clear it —
+                // capped so it never drifts far from the staff.
+                let baseAy = partY - SP * 1.2;
                 try {
                   const ys = vfNote.getYs ? vfNote.getYs() : [];
                   if (ys.length) {
                     const topY = Math.min(...ys);
                     if (topY < baseAy) {
-                      baseAy = Math.max(topY - 10, partY - 40);
+                      baseAy = Math.max(topY - SP, partY - SP * 4);
                     }
                   }
                 } catch (_) {}
 
-                const STACK_GAP = 20; // vertical spacing between stacked marks
+                const STACK_GAP = SP * 1.7; // vertical spacing between stacked marks
+                const artFontSize = SP * 1.6;
 
                 marks.forEach((art, markIndex) => {
                   const ay = baseAy - markIndex * STACK_GAP;
 
                   ctx.save();
-                  ctx.setFont("Times New Roman", 15);
+                  ctx.setFont("Times New Roman", artFontSize);
                   ctx.setFillStyle("#1e293b");
 
                   if (art === "staccato") {
                     ctx.beginPath();
-                    ctx.arc(nx, ay, 4, 0, Math.PI * 2);
+                    ctx.arc(nx, ay, SP * 0.4, 0, Math.PI * 2);
                     ctx.fill();
                   } else if (art === "tenuto") {
-                    ctx.fillRect(nx - 8, ay, 16, 3.5);
+                    ctx.fillRect(nx - SP * 0.8, ay, SP * 1.6, SP * 0.35);
                   } else if (art === "accent") {
-                    ctx.font = "bold 22px serif";
-                    ctx.fillText(">", nx - 8, ay + 6);
+                    ctx.font = `bold ${SP * 2.2}px serif`;
+                    ctx.fillText(">", nx - SP * 0.8, ay + SP * 0.6);
                   } else if (art === "marcato") {
-                    ctx.font = "bold 20px serif";
-                    ctx.fillText("^", nx - 6, ay + 2);
+                    ctx.font = `bold ${SP * 2}px serif`;
+                    ctx.fillText("^", nx - SP * 0.6, ay + SP * 0.2);
                   } else if (art === "fermata") {
-                    ctx.font = "bold 24px serif";
-                    ctx.fillText("𝄐", nx - 8, ay + 2);
+                    ctx.font = `bold ${SP * 2.4}px serif`;
+                    ctx.fillText("𝄐", nx - SP * 0.8, ay + SP * 0.2);
                   } else if (art === "trill") {
-                    ctx.font = "italic bold 18px serif";
-                    ctx.fillText("tr", nx - 6, ay + 2);
+                    ctx.font = `italic bold ${SP * 1.8}px serif`;
+                    ctx.fillText("tr", nx - SP * 0.6, ay + SP * 0.2);
                   } else if (art === "mordent") {
-                    ctx.font = "bold 20px serif";
-                    ctx.fillText("𝆁", nx - 6, ay + 2);
+                    ctx.font = `bold ${SP * 2}px serif`;
+                    ctx.fillText("𝆁", nx - SP * 0.6, ay + SP * 0.2);
                   } else if (art === "turn") {
-                    ctx.font = "bold 20px serif";
-                    ctx.fillText("𝆃", nx - 6, ay + 2);
+                    ctx.font = `bold ${SP * 2}px serif`;
+                    ctx.fillText("𝆃", nx - SP * 0.6, ay + SP * 0.2);
                   } else if (art === "staccatissimo") {
                     ctx.beginPath();
-                    ctx.moveTo(nx, ay - 5);
-                    ctx.lineTo(nx - 4, ay + 3);
-                    ctx.lineTo(nx + 4, ay + 3);
+                    ctx.moveTo(nx, ay - SP * 0.5);
+                    ctx.lineTo(nx - SP * 0.4, ay + SP * 0.3);
+                    ctx.lineTo(nx + SP * 0.4, ay + SP * 0.3);
                     ctx.closePath();
                     ctx.fill();
                   } else if (art === "portato") {
-                    ctx.fillRect(nx - 7, ay + 2, 14, 3);
+                    ctx.fillRect(nx - SP * 0.7, ay + SP * 0.2, SP * 1.4, SP * 0.3);
                     ctx.beginPath();
-                    ctx.arc(nx, ay - 4, 3, 0, Math.PI * 2);
+                    ctx.arc(nx, ay - SP * 0.4, SP * 0.3, 0, Math.PI * 2);
                     ctx.fill();
                   } else if (art === "harmonic") {
                     ctx.strokeStyle = "#1e293b";
@@ -1417,10 +1358,7 @@ export default function ScoreRenderer() {
 
       const part = score.parts.find((p) => p.id === z.partId);
       const clef = part?.clef || "treble";
-      const ts = part?.measures[z.measureIndex]?.timeSignature ?? {
-        beats: 4,
-        beatType: 4,
-      };
+      const ts = part?.measures[z.measureIndex]?.timeSignature ?? { beats: 4, beatType: 4 };
       const capacity = measureCapacity(ts);
 
       // X → beat using actual note area coordinates stored in the zone
@@ -1624,9 +1562,7 @@ export default function ScoreRenderer() {
 
         const part = score.parts.find((p) => p.id === z.partId);
         const clef = part?.clef || "treble";
-        const beats = measureCapacity(
-          part?.measures[z.measureIndex]?.timeSignature,
-        );
+        const beats = measureCapacity(part?.measures[z.measureIndex]?.timeSignature);
 
         return (
           <div
@@ -1697,7 +1633,9 @@ export default function ScoreRenderer() {
               boxSizing: "border-box",
               pointerEvents: "none",
               zIndex: 2,
-              border: isExistDrop ? "2px dashed #c2410c" : "2px solid #1d4ed8",
+              border: isExistDrop
+                ? "2px dashed #c2410c"
+                : "2px solid #1d4ed8",
               backgroundColor: isExistDrop
                 ? "rgba(194,65,12,0.10)"
                 : "rgba(29,78,216,0.14)",
@@ -1883,31 +1821,22 @@ export default function ScoreRenderer() {
         const noteWidth =
           z.noteAreaWidth ?? z.width - (dyn.measureIndex === 0 ? 60 : 15);
         const part = score.parts.find((p) => p.id === dyn.partId);
-        const beats = measureCapacity(
-          part?.measures[dyn.measureIndex]?.timeSignature,
-        );
+        const beats = measureCapacity(part?.measures[dyn.measureIndex]?.timeSignature);
         const px = noteStart + (dyn.beat / beats) * noteWidth;
-        const isSel =
-          selectedMarking?.kind === "dynamic" && selectedMarking?.id === dyn.id;
+        const isSel = selectedMarking?.kind === "dynamic" && selectedMarking?.id === dyn.id;
         const lane = textLaneIndex.get(dyn.id) || 0;
-        // Scale relative to the actual rendered staff size (z.height), not a
-        // fixed reference — otherwise fixed px offsets/fonts look oversized
-        // and cramped at smaller zoom/staff-size settings.
-        const scale = z.height / 98;
-        const fontSize = 22 * scale;
-        const gap = 5 * scale; // small breathing room between text and staff
+        const realSP = z.height / 7;
+        const fontSize = realSP * 2.6; // bigger, clearly legible
+        const gap = aboveBelowGap(z.height);
         // "top" is the text box's TOP edge, and text renders DOWNWARD from
         // there — so clearing the staff requires offsetting by the text's own
         // height too, not just a small gap, or the glyph itself dips into the
         // staff even though its anchor point is numerically above it.
-        const laneStep = fontSize + gap;
+        const laneStep = (fontSize + gap);
         return (
           <div
             key={dyn.id}
-            onClick={(e) => {
-              e.stopPropagation();
-              selectMarking("dynamic", dyn.id);
-            }}
+            onClick={(e) => { e.stopPropagation(); selectMarking("dynamic", dyn.id); }}
             title="Click to select, then press Delete to remove"
             style={{
               position: "absolute",
@@ -1950,24 +1879,17 @@ export default function ScoreRenderer() {
           const ns = z.measureIndex === 0 ? z.x + 55 : z.x + 10;
           const nw = z.width - (z.measureIndex === 0 ? 60 : 15);
           const part = score.parts.find((p) => p.id === hp.partId);
-          const beats = measureCapacity(
-            part?.measures[z.measureIndex]?.timeSignature,
-          );
+          const beats = measureCapacity(part?.measures[z.measureIndex]?.timeSignature);
           return ns + (beat / beats) * nw;
         };
         const x1 = beatToX(z1, hp.startBeat);
         const x2 = beatToX(z2, hp.endBeat);
-        const scale = z1.height / 98;
-        const hpLaneStep = 22 * scale + 4 * scale; // match text items' lane step so stacking never collides
-        const topLineY = z1.staveTopLineY ?? z1.y + 30;
-        const y =
-          topLineY -
-          HAIRPIN_VERTICAL_OFFSET * scale -
-          (textLaneIndex.get(hp.id) || 0) * hpLaneStep; // close above the staff, MuseScore-style
-        const mid = 6 * scale;
+        const realSP = z1.height / 7;
+        const hpLaneStep = realSP * 2.6 + aboveBelowGap(z1.height); // match text items' lane step so stacking never collides
+        const y = z1.y - aboveBelowGap(z1.height) - (textLaneIndex.get(hp.id) || 0) * hpLaneStep; // same clearance as everything else above the staff
+        const mid = realSP * 0.45;
         const isC = hp.type === "cresc";
-        const isSel =
-          selectedMarking?.kind === "hairpin" && selectedMarking?.id === hp.id;
+        const isSel = selectedMarking?.kind === "hairpin" && selectedMarking?.id === hp.id;
         // Draw SVG wedge inline
         const d = isC
           ? `M ${x1} ${y} L ${x2} ${y - mid} M ${x1} ${y} L ${x2} ${y + mid}`
@@ -1993,40 +1915,36 @@ export default function ScoreRenderer() {
               strokeWidth="14"
               fill="none"
               style={{ pointerEvents: "stroke", cursor: "pointer" }}
-              onClick={(e) => {
-                e.stopPropagation();
-                selectMarking("hairpin", hp.id);
-              }}
+              onClick={(e) => { e.stopPropagation(); selectMarking("hairpin", hp.id); }}
             />
             <path
               d={d}
               stroke={isSel ? "#2563eb" : "#1e293b"}
-              strokeWidth={(isSel ? 3.4 : 3) * scale}
+              strokeWidth={(isSel ? 3.4 : 3) * (realSP / 14)}
               fill="none"
             />
           </svg>
         );
       })}
 
+
       {/* ── Octave line overlays (8va / 8vb) ─────────────────────────────── */}
       {octaveLines.map((ol) => {
         const z1 = measureZones.find(
-          (mz) =>
-            mz.partId === ol.partId && mz.measureIndex === ol.startMeasure,
+          (mz) => mz.partId === ol.partId && mz.measureIndex === ol.startMeasure,
         );
         const z2 =
           measureZones.find(
-            (mz) =>
-              mz.partId === ol.partId && mz.measureIndex === ol.endMeasure,
+            (mz) => mz.partId === ol.partId && mz.measureIndex === ol.endMeasure,
           ) || z1;
         if (!z1) return null;
         const x1 = z1.noteAreaStart ?? z1.x;
         const x2 = (z2.noteAreaStart ?? z2.x) + (z2.noteAreaWidth ?? z2.width);
         const isAbove = ol.type === "8va";
-        const scale = z1.height / 98;
-        const fontSize = 22 * scale;
-        const lineGap = OCTAVE_LINE_VERTICAL_GAP * scale; // clearance between the dashed line and the staff
-        const laneStep = fontSize + 4 * scale;
+        const realSP = z1.height / 7;
+        const fontSize = realSP * 2.6;
+        const lineGap = aboveBelowGap(z1.height); // clearance between the dashed line and the staff — same as every other marking
+        const laneStep = fontSize + aboveBelowGap(z1.height);
         const lane = textLaneIndex.get(ol.id) || 0;
         // z1.height is the oversized click-zone (includes ~42px of ledger-line
         // buffer), NOT the real staff height — using it directly for "below"
@@ -2040,26 +1958,12 @@ export default function ScoreRenderer() {
         // Text sits entirely on the far side of its own line from the staff —
         // its own height can never carry it back into the staff this way.
         const textTop = isAbove ? lineY - fontSize : lineY;
-        const isSel =
-          selectedMarking?.kind === "octaveLine" &&
-          selectedMarking?.id === ol.id;
+        const isSel = selectedMarking?.kind === "octaveLine" && selectedMarking?.id === ol.id;
         const color = isSel ? "#2563eb" : "#1e293b";
         return (
-          <div
-            key={ol.id}
-            style={{
-              position: "absolute",
-              left: 0,
-              top: 0,
-              pointerEvents: "none",
-              zIndex: 30,
-            }}
-          >
+          <div key={ol.id} style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none", zIndex: 30 }}>
             <div
-              onClick={(e) => {
-                e.stopPropagation();
-                selectMarking("octaveLine", ol.id);
-              }}
+              onClick={(e) => { e.stopPropagation(); selectMarking("octaveLine", ol.id); }}
               title="Click to select, then press Delete to remove"
               style={{
                 position: "absolute",
@@ -2081,32 +1985,11 @@ export default function ScoreRenderer() {
               {ol.type}
             </div>
             <svg
-              style={{
-                position: "absolute",
-                left: 0,
-                top: 0,
-                overflow: "visible",
-              }}
-              width="1"
-              height="1"
+              style={{ position: "absolute", left: 0, top: 0, overflow: "visible" }}
+              width="1" height="1"
             >
-              <line
-                x1={x1 + 26 * scale}
-                y1={lineY}
-                x2={x2}
-                y2={lineY}
-                stroke={color}
-                strokeWidth={1.6 * scale}
-                strokeDasharray="4,3"
-              />
-              <line
-                x1={x2}
-                y1={lineY}
-                x2={x2}
-                y2={lineY + (isAbove ? 6 : -6) * scale}
-                stroke={color}
-                strokeWidth={1.6 * scale}
-              />
+              <line x1={x1 + 26 * (realSP / 14)} y1={lineY} x2={x2} y2={lineY} stroke={color} strokeWidth={1.6 * (realSP / 14)} strokeDasharray="4,3" />
+              <line x1={x2} y1={lineY} x2={x2} y2={lineY + (isAbove ? 6 : -6) * (realSP / 14)} stroke={color} strokeWidth={1.6 * (realSP / 14)} />
             </svg>
           </div>
         );
@@ -2122,25 +2005,18 @@ export default function ScoreRenderer() {
         const ns = z.measureIndex === 0 ? z.x + 55 : z.x + 10;
         const nw = z.width - (z.measureIndex === 0 ? 60 : 15);
         const part = score.parts.find((p) => p.id === st.partId);
-        const beats = measureCapacity(
-          part?.measures[st.measureIndex]?.timeSignature,
-        );
+        const beats = measureCapacity(part?.measures[st.measureIndex]?.timeSignature);
         const px = ns + (st.beat / beats) * nw;
-        const isSel =
-          selectedMarking?.kind === "staffText" &&
-          selectedMarking?.id === st.id;
+        const isSel = selectedMarking?.kind === "staffText" && selectedMarking?.id === st.id;
         const lane = textLaneIndex.get(st.id) || 0;
-        const scale = z.height / 98;
-        const fontSize = 22 * scale;
-        const gap = 5 * scale;
+        const realSP = z.height / 7;
+        const fontSize = realSP * 2.6;
+        const gap = aboveBelowGap(z.height);
         const laneStep = fontSize + gap;
         return (
           <div
             key={st.id}
-            onClick={(e) => {
-              e.stopPropagation();
-              selectMarking("staffText", st.id);
-            }}
+            onClick={(e) => { e.stopPropagation(); selectMarking("staffText", st.id); }}
             title="Click to select, then press Delete to remove"
             style={{
               position: "absolute",
