@@ -1904,7 +1904,7 @@ export default function ScoreRenderer() {
           selectedMarking?.kind === "dynamic" && selectedMarking?.id === dyn.id;
         const lane = textLaneIndex.get(dyn.id) || 0;
         const realSP = z.height / 7;
-        const fontSize = realSP * 2.6; // bigger, clearly legible
+        const fontSize = realSP * 2.0; // bigger, clearly legible
         const gap = aboveBelowGap(z.height);
         // "top" is the text box's TOP edge, and text renders DOWNWARD from
         // there — so clearing the staff requires offsetting by the text's own
@@ -1922,7 +1922,7 @@ export default function ScoreRenderer() {
             style={{
               position: "absolute",
               left: px - 8,
-              top: z.y - gap - fontSize - lane * laneStep,
+              top: z.y - gap - fontSize - lane * laneStep + 50,
               fontSize,
               fontStyle: "italic",
               fontFamily: "Times New Roman, serif",
@@ -2131,9 +2131,9 @@ export default function ScoreRenderer() {
           selectedMarking?.id === st.id;
         const lane = textLaneIndex.get(st.id) || 0;
         const realSP = z.height / 7;
-        const fontSize = realSP * 2.6;
+        const fontSize = realSP * 2.0;
         const gap = aboveBelowGap(z.height);
-        const laneStep = fontSize + gap;
+        const laneStep = fontSize + gap - 15;
         return (
           <div
             key={st.id}
@@ -2145,7 +2145,7 @@ export default function ScoreRenderer() {
             style={{
               position: "absolute",
               left: px,
-              top: z.y - gap - fontSize - lane * laneStep,
+              top: z.y - gap - fontSize - lane * laneStep + 50,
               fontSize,
               fontFamily: "Times New Roman, serif",
               fontWeight: 800,
