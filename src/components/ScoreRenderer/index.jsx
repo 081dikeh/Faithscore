@@ -1968,7 +1968,7 @@ export default function ScoreRenderer() {
         const x1 = beatToX(z1, hp.startBeat);
         const x2 = beatToX(z2, hp.endBeat);
         const realSP = z1.height / 7;
-        const fontSize = realSP * 2.6;
+        const fontSize = realSP * -4.0;
         const gap = aboveBelowGap(z1.height); // consistent clearance from staff
         const y = z1.y - gap - fontSize; // directly above staff (no stacking with dynamics)
         const mid = realSP * 0.45;
@@ -2035,7 +2035,7 @@ export default function ScoreRenderer() {
         const lineGap = aboveBelowGap(z1.height); // clearance between dashed line and staff
         // z1.height is the oversized click-zone, NOT the real staff height.
         // Real staff is exactly 4/7 of click-zone height (STAFF_HEIGHT / STAVE_HEIGHT).
-        const realStaffBottom = z1.y + z1.height * (4 / 7);
+        const realStaffBottom = z1.y + z1.height * (4 / 3.5);
         // Dashed line positioned directly above (8va) or below (8vb) the staff
         const lineY = isAbove ? z1.y - lineGap : realStaffBottom + lineGap;
         // Text sits on the far side of the line from the staff
