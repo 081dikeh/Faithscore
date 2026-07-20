@@ -21,7 +21,7 @@ import { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 're
 import { useSolfaStore, slashPositions, migrateMeasure } from '../../store/solfaStore'
 
 const FONT    = '"Times New Roman", Georgia, serif'
-const NOTE_SZ = 13
+const NOTE_SZ = 14
 const OCT_SZ  = 8
 const SYM_SZ  = 10
 const LYR_SZ  = 10
