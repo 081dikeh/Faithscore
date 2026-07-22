@@ -146,9 +146,12 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
   const clearSlurStart     = useSolfaStore(s=>s.clearSlurStart)
   const addSlur            = useSolfaStore(s=>s.addSlur)
   const removeSlur         = useSolfaStore(s=>s.removeSlur)
+  const removeMark         = useSolfaStore(s=>s.removeMark)
 
   // Map of "partId:measureIdx:beatIdx:eventIdx" → {cx, bottomY} for slur drawing
   const eventPosMap = useRef({})
+  // Map of "partId:measureIdx:beatIdx" → {x, rowY} for mark (tempo/dynamics/text) placement
+  const beatPosMap = useRef({})
 
   useEffect(()=>{
     if (!wrapRef.current) return
@@ -191,6 +194,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
   const elems=[]
   let sysY=HDR_H+20
   eventPosMap.current = {}
+  beatPosMap.current = {}
 
   elems.push(
     <g key="hdr">
@@ -272,6 +276,8 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
             )
             x+=sw
           }
+
+          beatPosMap.current[`${part.id}:${col}:${bi}`] = { x, rowY }
 
           let offset=0
           events.forEach((ev,ei)=>{
@@ -535,6 +541,26 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
           style={{pointerEvents:'none'}}
         />
       </g>
+    )
+  })
+
+  // ── Render marks (tempo text / dynamics / expression) ──────────────────────
+  const marks = score.marks || []
+  marks.forEach(mk => {
+    const pos = beatPosMap.current[`${mk.partId}:${mk.measureIdx}:${mk.beatIdx}`]
+    if (!pos) return
+    const isDynamic = mk.kind === 'dynamic'
+    elems.push(
+      <text key={`mark-${mk.id}`}
+        x={pos.x} y={pos.rowY - NOTE_SZ - 6}
+        fontFamily={FONT} fontSize={10.5} fontWeight={700}
+        fontStyle={isDynamic ? 'normal' : 'italic'}
+        fill={isDynamic ? '#111827' : '#7c3aed'}
+        style={{cursor:'pointer'}}
+        onClick={e=>{ e.stopPropagation(); removeMark(mk.id) }}
+      >
+        {mk.value}
+      </text>
     )
   })
 

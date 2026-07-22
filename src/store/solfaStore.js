@@ -99,7 +99,7 @@ export function buildEmptySolfaScore(voiceComboKey='satb',key='C',beats=4,numMea
     tempo:80, timeSignature:{beats,beatType:4},
     voiceCombo:voiceComboKey,
     parts:combo.voices.map(v=>makePart(v,numMeasures,beats)),
-    sections:[], slurs:[], _savedAt:null, _cloudId:null,
+    sections:[], slurs:[], marks:[], _savedAt:null, _cloudId:null,
   }
 }
 
@@ -136,6 +136,7 @@ export function migrateScore(score) {
   return {
     ...score,
     slurs: score.slurs || [],
+    marks: score.marks || [],
     parts:(score.parts||[]).map(p=>({
       ...p,measures:(p.measures||[]).map(m=>migrateMeasure(m)),
     })),
@@ -209,6 +210,22 @@ export const useSolfaStore = create((set,get) => ({
   removeSlur: (slurId) => {
     get()._snapshot()
     set(s => ({ score: { ...s.score, slurs: (s.score.slurs||[]).filter(sl => sl.id !== slurId) } }))
+  },
+
+  // ── Active part (sidebar "Parts" tab) ─────────────────────────────────────
+  setActivePart: (partId) => set({ selectedPartId: partId }),
+
+  // ── Marks: tempo text / dynamics / expression text pinned above a beat ────
+  addMark: (partId, measureIdx, beatIdx, value, kind='text') => {
+    if (partId==null || measureIdx==null || beatIdx==null) return
+    get()._snapshot()
+    const mark = { id: uid(), partId, measureIdx, beatIdx, value, kind }
+    set(s => ({ score: { ...s.score, marks: [...(s.score.marks||[]), mark] } }))
+  },
+
+  removeMark: (markId) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, marks: (s.score.marks||[]).filter(m => m.id !== markId) } }))
   },
 
   loadScore: rawScore => {

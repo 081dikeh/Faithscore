@@ -29,6 +29,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as Tone from "tone";
 import SolfaRenderer from "../SolfaRenderer";
+import SolfaSidebar from "../SolfaSidebar";
 import {
   useSolfaStore,
   VOICE_COMBOS,
@@ -203,6 +204,7 @@ export default function SolfaApp({ user, onGoHome }) {
   const [selectedPreset, setSelectedPreset] = useState("choir_african");
   const [partVolumes, setPartVolumes] = useState({});
   const [zoom, setZoom] = useState(1.0);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Export state
   const rendererRef   = useRef(null);
@@ -574,13 +576,16 @@ export default function SolfaApp({ user, onGoHome }) {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        height: "100vh",
+        overflow: "hidden",
         display: "flex",
         flexDirection: "column",
         background: "#f3f4f6",
         fontFamily: "system-ui,sans-serif",
       }}
     >
+      {/* ── Sticky top chrome: menu bar + toolbar + playback bar, pinned as one unit ── */}
+      <div style={{ position: "sticky", top: 0, zIndex: 50, flexShrink: 0 }}>
       {/* ── Menu bar ── */}
       <div
         style={{
@@ -593,9 +598,6 @@ export default function SolfaApp({ user, onGoHome }) {
           gap: 8,
           flexShrink: 0,
           boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-          position: "sticky",
-          top: 0,
-          zIndex: 50,
         }}
       >
         <button
@@ -829,9 +831,6 @@ export default function SolfaApp({ user, onGoHome }) {
           alignItems: "center",
           gap: 6,
           flexShrink: 0,
-          position: "sticky",
-          top: 42,
-          zIndex: 45,
         }}
       >
         {/* Mode */}
@@ -1086,39 +1085,7 @@ export default function SolfaApp({ user, onGoHome }) {
         </button>
       </div>
 
-      {/* ── Info bar ── */}
-      <div
-        style={{
-          background: "#f0f9ff",
-          borderBottom: "1px solid #bae6fd",
-          padding: "3px 14px",
-          fontSize: 10,
-          color: "#0369a1",
-          flexShrink: 0,
-          display: "flex",
-          gap: 12,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
-        <span>
-          <strong>Duration keys:</strong> 4=whole · 3=¾ beat · 2=half ·
-          1=quarter
-        </span>
-        <span style={{ borderLeft: "1px solid #bae6fd", paddingLeft: 12 }}>
-          <strong>To change a note's duration:</strong> click the note → press
-          1/2/3/4
-        </span>
-        <span style={{ borderLeft: "1px solid #bae6fd", paddingLeft: 12 }}>
-          <strong>Lyrics:</strong> click the underline below a note
-        </span>
-        <span style={{ borderLeft: "1px solid #bae6fd", paddingLeft: 12 }}>
-          <strong>Keys:</strong> d r m f s l t · – · Space · ← → ↑ ↓ · M=+bar ·
-          Del=delete note · ⌫=delete bar
-        </span>
-      </div>
-
-      {/* ── Transport / Playback bar ── */}
+      {/* ── Transport / Playback bar (pinned directly below toolbar) ── */}
       <div
         style={{
           background: "#1e2433",
@@ -1354,6 +1321,39 @@ export default function SolfaApp({ user, onGoHome }) {
           </span>
         )}
       </div>
+      </div>{/* end sticky top chrome */}
+
+      {/* ── Info bar ── */}
+      <div
+        style={{
+          background: "#f0f9ff",
+          borderBottom: "1px solid #bae6fd",
+          padding: "3px 14px",
+          fontSize: 10,
+          color: "#0369a1",
+          flexShrink: 0,
+          display: "flex",
+          gap: 12,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        <span>
+          <strong>Duration keys:</strong> 4=whole · 3=¾ beat · 2=half ·
+          1=quarter
+        </span>
+        <span style={{ borderLeft: "1px solid #bae6fd", paddingLeft: 12 }}>
+          <strong>To change a note's duration:</strong> click the note → press
+          1/2/3/4
+        </span>
+        <span style={{ borderLeft: "1px solid #bae6fd", paddingLeft: 12 }}>
+          <strong>Lyrics:</strong> click the underline below a note
+        </span>
+        <span style={{ borderLeft: "1px solid #bae6fd", paddingLeft: 12 }}>
+          <strong>Keys:</strong> d r m f s l t · – · Space · ← → ↑ ↓ · M=+bar ·
+          Del=delete note · ⌫=delete bar
+        </span>
+      </div>
 
       {/* ── Mixer panel (per-part volume + preset info) ── */}
       {showMixer && (
@@ -1528,64 +1528,75 @@ export default function SolfaApp({ user, onGoHome }) {
         </div>
       )}
 
-      {/* ── Score canvas ── */}
-      <main
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          overflowX: "hidden",
-          background: "#e5e7eb",
-          padding: "24px",
-        }}
-      >
-        <div
+      {/* ── Main area: Sidebar + Score canvas ── */}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", minHeight: 0 }}>
+        {/* Sidebar — normal flow, fills height of this flex row */}
+        <SolfaSidebar
+          collapsed={sidebarCollapsed}
+          setCollapsed={setSidebarCollapsed}
+          zoom={zoom}
+          setZoom={setZoom}
+        />
+
+        {/* ── Score canvas ── */}
+        <main
           style={{
-            transform: `scale(${zoom})`,
-            transformOrigin: "top center",
-            minHeight: `${1200 * zoom}px`,
+            flex: 1,
+            overflowY: "auto",
+            overflowX: "hidden",
+            background: "#e5e7eb",
+            padding: "24px",
           }}
         >
           <div
             style={{
-              background: "white",
-              maxWidth: 1100,
-              margin: "0 auto",
-              minHeight: 1200,
-              padding: "48px 32px",
-              boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
-              borderRadius: 4,
-              boxSizing: "border-box",
+              transform: `scale(${zoom})`,
+              transformOrigin: "top center",
+              minHeight: `${1200 * zoom}px`,
             }}
           >
             <div
               style={{
-                textAlign: "center",
-                marginBottom: 24,
-                paddingBottom: 12,
-                borderBottom: "2px solid #1e2433",
+                background: "white",
+                maxWidth: 1100,
+                margin: "0 auto",
+                minHeight: 1200,
+                padding: "48px 32px",
+                boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
+                borderRadius: 4,
+                boxSizing: "border-box",
               }}
             >
               <div
                 style={{
-                  fontSize: 26,
-                  fontWeight: 700,
-                  fontFamily: '"Times New Roman",serif',
-                  color: "#111",
+                  textAlign: "center",
+                  marginBottom: 24,
+                  paddingBottom: 12,
+                  borderBottom: "2px solid #1e2433",
                 }}
               >
-                {score.title || "Untitled Score"}
+                <div
+                  style={{
+                    fontSize: 26,
+                    fontWeight: 700,
+                    fontFamily: '"Times New Roman",serif',
+                    color: "#111",
+                  }}
+                >
+                  {score.title || "Untitled Score"}
+                </div>
               </div>
-            </div>
 
-            <SolfaRenderer
-              ref={rendererRef}
-              onSelectEvent={(partId, mIdx, bi, ei) => {
-                useSolfaStore.getState().selectEvent(partId, mIdx, bi, ei);
-              }}
-            />
+              <SolfaRenderer
+                ref={rendererRef}
+                onSelectEvent={(partId, mIdx, bi, ei) => {
+                  useSolfaStore.getState().selectEvent(partId, mIdx, bi, ei);
+                }}
+              />
+            </div>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
       {/* ── Export Modal ── */}
       {showExport && (
         <div
