@@ -147,6 +147,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
   const addSlur            = useSolfaStore(s=>s.addSlur)
   const removeSlur         = useSolfaStore(s=>s.removeSlur)
   const removeMark         = useSolfaStore(s=>s.removeMark)
+  const removeNavigationMarker = useSolfaStore(s=>s.removeNavigationMarker)
 
   // Map of "partId:measureIdx:beatIdx:eventIdx" → {cx, bottomY} for slur drawing
   const eventPosMap = useRef({})
@@ -165,6 +166,22 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
   const topNum   = score.timeSignature?.beats||4
   const botNum   = score.timeSignature?.beatType||4
   const slashSet = slashPositions(topNum,botNum)
+
+  const lyricLayout      = score.lyricLayout || 'inline'
+  const lyricDuplication = score.lyricDuplication || 'per-voice-copy'
+  const instrumentalSet  = new Set(score.instrumentalMeasures||[])
+
+  // "between-alto-tenor" lead = the Alto part (falls back to the middle part)
+  const altoIdx = parts.findIndex(p => (p.label||'').toUpperCase().startsWith('A'))
+  const betweenLeadIdx = altoIdx >= 0 ? altoIdx : Math.floor((parts.length-1)/2)
+
+  function showLyricForPart(pIdx) {
+    if (lyricLayout === 'instrumental' || lyricLayout === 'below-score-only') return false
+    if (lyricLayout === 'per-voice') return true
+    if (lyricLayout === 'between-alto-tenor') return pIdx === betweenLeadIdx
+    // 'inline' / 'verse1-inline-rest-below'
+    return lyricDuplication === 'per-voice-copy' ? true : pIdx === 0
+  }
 
   const rawMWs=Array.from({length:numM},(_,i)=>{
     const m=migrateMeasure(parts[0]?.measures[i])
@@ -189,8 +206,34 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
     return ls
   })()
 
+  const showVerseBlocks = lyricLayout === 'verse1-inline-rest-below' || lyricLayout === 'below-score-only'
+  const verses = score.verses || []
+  const VERSE_LINE_H = 15
+  const VERSE_HEAD_H = 18
+  const verseAvailW = svgW - PAGE_L*2 - PAGE_R
+  const verseCharW  = 6.3
+  const maxChars    = Math.max(20, Math.floor(verseAvailW / verseCharW))
+  function wrapVerseLine(line) {
+    if (line.length <= maxChars) return [line]
+    const words = line.split(' ')
+    const out=[]; let cur=''
+    words.forEach(w=>{
+      if ((cur ? cur+' '+w : w).length > maxChars) { if(cur) out.push(cur); cur=w }
+      else cur = cur ? cur+' '+w : w
+    })
+    if (cur) out.push(cur)
+    return out
+  }
+  const versePrepared = showVerseBlocks ? verses.map(v => ({
+    ...v,
+    lines: (v.text||'').split('\n').flatMap(l => l.trim()==='' ? [''] : wrapVerseLine(l)),
+  })) : []
+  const versesExtraH = showVerseBlocks
+    ? versePrepared.reduce((sum,v) => sum + VERSE_HEAD_H + v.lines.length*VERSE_LINE_H + 10, 20)
+    : 0
+
   const systemH=parts.length*VOICE_H+SYS_GAP
-  const totalH =HDR_H+lines.length*systemH+40
+  const totalH =HDR_H+lines.length*systemH+40+versesExtraH
   const elems=[]
   let sysY=HDR_H+20
   eventPosMap.current = {}
@@ -436,13 +479,8 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
             const lyricTextY  = lyricZoneY + LYRIC_H * 0.7
             const lyricSlotW  = Math.max(totalW, 8 * sc3)
 
-            // Lyric zone — only for notes
-            if (isNote) {
-              const lyricZoneY  = rowY + 4
-              const lyricZoneH  = LYRIC_H
-              const lyricTextY  = lyricZoneY + LYRIC_H * 0.7
-              const lyricSlotW  = Math.max(totalW, 8 * sc3)
-
+            // Lyric zone — only for notes, gated by layout/duplication/instrumental
+            if (isNote && showLyricForPart(pIdx) && !instrumentalSet.has(col)) {
               elems.push(
                 <line key={`lu-${ev.id}`}
                   x1={x} y1={lyricZoneY + lyricZoneH - 2}
@@ -500,8 +538,52 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
       if (last) elems.push(<line key={`bline2-${lineIdx}`} x1={bx+4} y1={lineTop} x2={bx+4} y2={lineBottom} stroke={C.barline} strokeWidth={1}/>)
     })
 
+    // ── Navigation markers for this system ──────────────────────────────────
+    ;(score.navigationMarkers||[]).forEach(mk => {
+      const ci = lineCols.indexOf(mk.atMeasure)
+      if (ci === -1) return
+      const mx = colXs[ci] + 4
+      const isVerseTag = mk.type === 'verse-label'
+      elems.push(
+        <text key={`navmk-${mk.id}`}
+          x={mx} y={isVerseTag ? lineTop - 3 : lineBottom + 13}
+          fontFamily={FONT} fontSize={10.5} fontWeight={700}
+          fontStyle={isVerseTag ? 'normal' : 'italic'}
+          fill={isVerseTag ? '#b45309' : '#1d4ed8'}
+          style={{cursor:'pointer'}}
+          onClick={e=>{ e.stopPropagation(); removeNavigationMarker(mk.id) }}
+        >
+          {mk.label}
+        </text>
+      )
+    })
+
     sysY+=systemH
   })
+
+  // ── Verse paragraph blocks (printed below the full score) ──────────────────
+  if (showVerseBlocks && versePrepared.length) {
+    let vy = sysY + 14
+    versePrepared.forEach(v => {
+      elems.push(
+        <text key={`vhead-${v.number}`} x={PAGE_L} y={vy}
+          fontFamily={FONT} fontSize={12} fontWeight={700} fill="#1e2433">
+          {v.label || `Verse ${v.number}`}
+        </text>
+      )
+      vy += VERSE_HEAD_H
+      v.lines.forEach((ln, li) => {
+        elems.push(
+          <text key={`vline-${v.number}-${li}`} x={PAGE_L+10} y={vy}
+            fontFamily={FONT} fontSize={11} fill="#374151">
+            {ln}
+          </text>
+        )
+        vy += VERSE_LINE_H
+      })
+      vy += 10
+    })
+  }
 
   // ── Render slurs ──────────────────────────────────────────────────────────
   // Slurs are cubic bezier curves drawn below the lyric zone

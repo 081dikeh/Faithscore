@@ -100,6 +100,8 @@ export function buildEmptySolfaScore(voiceComboKey='satb',key='C',beats=4,numMea
     voiceCombo:voiceComboKey,
     parts:combo.voices.map(v=>makePart(v,numMeasures,beats)),
     sections:[], slurs:[], marks:[], _savedAt:null, _cloudId:null,
+    lyricLayout:'inline', lyricDuplication:'per-voice-copy',
+    verses:[], navigationMarkers:[], instrumentalMeasures:[],
   }
 }
 
@@ -137,6 +139,11 @@ export function migrateScore(score) {
     ...score,
     slurs: score.slurs || [],
     marks: score.marks || [],
+    lyricLayout: score.lyricLayout || 'inline',
+    lyricDuplication: score.lyricDuplication || 'per-voice-copy',
+    verses: score.verses || [],
+    navigationMarkers: score.navigationMarkers || [],
+    instrumentalMeasures: score.instrumentalMeasures || [],
     parts:(score.parts||[]).map(p=>({
       ...p,measures:(p.measures||[]).map(m=>migrateMeasure(m)),
     })),
@@ -226,6 +233,56 @@ export const useSolfaStore = create((set,get) => ({
   removeMark: (markId) => {
     get()._snapshot()
     set(s => ({ score: { ...s.score, marks: (s.score.marks||[]).filter(m => m.id !== markId) } }))
+  },
+
+  // ── Lyric layout system ────────────────────────────────────────────────────
+  setLyricLayout: (layout) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, lyricLayout: layout } }))
+  },
+
+  setLyricDuplication: (mode) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, lyricDuplication: mode } }))
+  },
+
+  addVerse: (label) => {
+    get()._snapshot()
+    set(s => {
+      const verses = s.score.verses || []
+      const nextNum = verses.length ? Math.max(...verses.map(v=>v.number)) + 1 : 2
+      return { score: { ...s.score, verses: [...verses, { number: nextNum, label: label || `Verse ${nextNum}`, text: '' }] } }
+    })
+  },
+
+  // Live text/label edits — not undo-snapshotted per keystroke, same as setLyric
+  updateVerse: (number, patch) => {
+    set(s => ({ score: { ...s.score, verses: (s.score.verses||[]).map(v => v.number===number ? { ...v, ...patch } : v) } }))
+  },
+
+  removeVerse: (number) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, verses: (s.score.verses||[]).filter(v => v.number !== number) } }))
+  },
+
+  addNavigationMarker: (type, atMeasure, label, verseNumber=null) => {
+    if (atMeasure==null) return
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, navigationMarkers: [...(s.score.navigationMarkers||[]), { id: uid(), type, atMeasure, label, verseNumber }] } }))
+  },
+
+  removeNavigationMarker: (markerId) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, navigationMarkers: (s.score.navigationMarkers||[]).filter(m => m.id !== markerId) } }))
+  },
+
+  toggleInstrumentalMeasure: (measureIdx) => {
+    get()._snapshot()
+    set(s => {
+      const cur = s.score.instrumentalMeasures || []
+      const next = cur.includes(measureIdx) ? cur.filter(m => m !== measureIdx) : [...cur, measureIdx]
+      return { score: { ...s.score, instrumentalMeasures: next } }
+    })
   },
 
   loadScore: rawScore => {
