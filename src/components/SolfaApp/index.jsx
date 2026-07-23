@@ -1589,6 +1589,7 @@ export default function SolfaApp({ user, onGoHome }) {
 
               <SolfaRenderer
                 ref={rendererRef}
+                playbackBeat={playbackBeat}
                 onSelectEvent={(partId, mIdx, bi, ei) => {
                   useSolfaStore.getState().selectEvent(partId, mIdx, bi, ei);
                 }}

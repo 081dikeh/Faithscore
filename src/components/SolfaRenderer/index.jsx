@@ -121,7 +121,7 @@ function InlineLyricEditor({x,y,w,value,onCommit,onCancel}) {
   )
 }
 
-const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
+const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent, playbackBeat=null}, ref) {
   const wrapRef        = useRef(null)
   const svgNodeRef     = useRef(null)
   const [svgW,setSvgW] = useState(900)
@@ -153,6 +153,8 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
   const eventPosMap = useRef({})
   // Map of "partId:measureIdx:beatIdx" → {x, rowY} for mark (tempo/dynamics/text) placement
   const beatPosMap = useRef({})
+  // Map of measureIdx → {top, bottom} (the system/line it belongs to) for the playback cursor
+  const systemBoundsMap = useRef({})
 
   useEffect(()=>{
     if (!wrapRef.current) return
@@ -238,6 +240,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
   let sysY=HDR_H+20
   eventPosMap.current = {}
   beatPosMap.current = {}
+  systemBoundsMap.current = {}
 
   elems.push(
     <g key="hdr">
@@ -271,6 +274,8 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
     )
     elems.push(<line key={`obar-${lineIdx}`} x1={leftEdge} y1={lineTop} x2={leftEdge} y2={lineBottom} stroke={C.barline} strokeWidth={1.5}/>)
     elems.push(<text key={`mnum-${lineIdx}`} x={leftEdge+2} y={lineTop-2} fontFamily={FONT} fontSize={9} fill="#9ca3af">{lineCols[0]+1}</text>)
+
+    lineCols.forEach(col => { systemBoundsMap.current[col] = { top: lineTop, bottom: lineBottom } })
 
     parts.forEach((part,pIdx)=>{
       const rowY=sysY+pIdx*VOICE_H
@@ -560,6 +565,54 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent}, ref) {
 
     sysY+=systemH
   })
+
+  // ── Playback cursor — red vertical line tracking beat position ─────────────
+  // playbackBeat is a global quarter-note counter from song start (same units
+  // used by the staff ScoreRenderer). We walk the lead part's beats to find
+  // which measure/beat it falls in, then interpolate within that beat using
+  // the exact on-screen positions already captured in beatPosMap.
+  if (playbackBeat !== null && playbackBeat !== undefined && parts.length) {
+    const leadPart = parts[0]
+    let cum = 0, targetCol = null, targetBi = 0, fracInBeat = 0
+    for (let col=0; col<numM; col++) {
+      const m = migrateMeasure(leadPart.measures[col])
+      const nBeats = m?.beats?.length || topNum
+      if (playbackBeat < cum + nBeats || col === numM-1) {
+        const within = playbackBeat - cum
+        targetCol = col
+        targetBi  = Math.min(Math.max(nBeats,1)-1, Math.max(0, Math.floor(within)))
+        fracInBeat = Math.min(1, Math.max(0, within - targetBi))
+        break
+      }
+      cum += nBeats
+    }
+
+    if (targetCol !== null) {
+      const pos = beatPosMap.current[`${leadPart.id}:${targetCol}:${targetBi}`]
+      if (pos) {
+        const m = migrateMeasure(leadPart.measures[targetCol])
+        const nBeats = m?.beats?.length || topNum
+        let nextKey = null
+        if (targetBi+1 < nBeats) nextKey = `${leadPart.id}:${targetCol}:${targetBi+1}`
+        else if (targetCol+1 < numM) nextKey = `${leadPart.id}:${targetCol+1}:0`
+        const nextPos = nextKey ? beatPosMap.current[nextKey] : null
+        const beatW = (nextPos && nextPos.rowY === pos.rowY) ? Math.max(4, nextPos.x - pos.x) : QW*4
+        const cx = pos.x + fracInBeat*beatW
+        const bounds = systemBoundsMap.current[targetCol] || { top: pos.rowY-30, bottom: pos.rowY+30 }
+
+        elems.push(
+          <g key="playback-cursor"
+            transform={`translate(${cx},0)`}
+            style={{ transition:'transform 0.05s linear', pointerEvents:'none' }}>
+            <line x1={0} y1={bounds.top} x2={0} y2={bounds.bottom}
+              stroke="#ef4444" strokeWidth={7} strokeLinecap="round" opacity={0.16}/>
+            <line x1={0} y1={bounds.top} x2={0} y2={bounds.bottom}
+              stroke="#ef4444" strokeWidth={2.2} strokeLinecap="round" opacity={0.9}/>
+          </g>
+        )
+      }
+    }
+  }
 
   // ── Verse paragraph blocks (printed below the full score) ──────────────────
   if (showVerseBlocks && versePrepared.length) {
