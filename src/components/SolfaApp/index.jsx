@@ -116,29 +116,40 @@ function formatTime(sec) {
 // not the whole SolfaApp tree (toolbar/sidebar/menu bar).
 
 function PlaybackSeekBar({ seekBarRef, onBeat, getCurrentSec, getTotalSecs, seekToBeat, displayTempo }) {
-  const [, tick] = useState(0);
+  const curLabelRef = useRef(null);
+  const totLabelRef = useRef(null);
+
   useEffect(() => {
     if (!onBeat) return;
-    return onBeat(() => tick((t) => t + 1));
-  }, [onBeat]);
-
-  const currentSec = getCurrentSec();
-  const totalSecs = getTotalSecs();
+    const update = () => {
+      const cur = getCurrentSec();
+      const tot = getTotalSecs();
+      if (seekBarRef.current) {
+        seekBarRef.current.max = String(Math.max(tot, 1));
+        seekBarRef.current.value = String(Math.min(cur, Math.max(tot, 1)));
+      }
+      if (curLabelRef.current) curLabelRef.current.textContent = formatTime(cur);
+      if (totLabelRef.current) totLabelRef.current.textContent = formatTime(tot);
+    };
+    update();
+    return onBeat(update);
+  }, [onBeat, getCurrentSec, getTotalSecs, seekBarRef]);
 
   return (
     <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
       <span
+        ref={curLabelRef}
         style={{ fontSize: 10, color: "#9ca3af", minWidth: 36, fontFamily: "monospace" }}
       >
-        {formatTime(currentSec)}
+        0:00
       </span>
       <input
         ref={seekBarRef}
         type="range"
         min={0}
-        max={Math.max(totalSecs, 1)}
+        max={1}
         step={0.1}
-        value={Math.min(currentSec, Math.max(totalSecs, 1))}
+        defaultValue={0}
         onChange={async (e) => {
           const sec = Number(e.target.value);
           const bpm = displayTempo;
@@ -147,28 +158,35 @@ function PlaybackSeekBar({ seekBarRef, onBeat, getCurrentSec, getTotalSecs, seek
         style={{ flex: 1, accentColor: "#22c55e", height: 4, cursor: "pointer" }}
       />
       <span
+        ref={totLabelRef}
         style={{ fontSize: 10, color: "#9ca3af", minWidth: 36, fontFamily: "monospace" }}
       >
-        {formatTime(totalSecs)}
+        0:00
       </span>
     </div>
   );
 }
 
 function PlaybackBeatReadout({ onBeat }) {
-  const [beat, setBeat] = useState(null);
+  const spanRef = useRef(null);
   useEffect(() => {
     if (!onBeat) return;
-    return onBeat((b) => setBeat(b));
+    return onBeat((b) => {
+      if (!spanRef.current) return;
+      if (b === null || b === undefined) {
+        spanRef.current.style.display = "none";
+      } else {
+        spanRef.current.style.display = "";
+        spanRef.current.textContent = `beat ${(b + 1).toFixed(1)}`;
+      }
+    });
   }, [onBeat]);
 
-  if (beat === null) return null;
   return (
     <span
-      style={{ fontSize: 10, color: "#6ee7b7", fontFamily: "monospace", minWidth: 60 }}
-    >
-      beat {(beat + 1).toFixed(1)}
-    </span>
+      ref={spanRef}
+      style={{ display: "none", fontSize: 10, color: "#6ee7b7", fontFamily: "monospace", minWidth: 60 }}
+    />
   );
 }
 
