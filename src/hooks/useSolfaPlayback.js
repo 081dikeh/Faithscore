@@ -397,9 +397,9 @@ export function useSolfaPlayback() {
   const metronomeRef    = useRef(null)
 
   const onPlayingChange = useRef(null)
-  const onBeatChange    = useRef(null)
+  const beatListeners   = useRef(new Set())
   function notifyPlaying(v) { onPlayingChange.current?.(v) }
-  function notifyBeat(b)    { onBeatChange.current?.(b) }
+  function notifyBeat(b)    { beatListeners.current.forEach(cb => { try { cb(b) } catch (_) {} }) }
 
   // ── Build audio graph ──────────────────────────────────────────────────────
   function buildGraph(presetId) {
@@ -694,7 +694,10 @@ export function useSolfaPlayback() {
   const getPreset       = useCallback(() => presetRef.current, [])
 
   const onPlaying = useCallback((cb) => { onPlayingChange.current = cb }, [])
-  const onBeat    = useCallback((cb) => { onBeatChange.current    = cb }, [])
+  const onBeat    = useCallback((cb) => {
+    beatListeners.current.add(cb)
+    return () => beatListeners.current.delete(cb)
+  }, [])
 
   useEffect(() => {
     return () => {

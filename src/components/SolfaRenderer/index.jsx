@@ -121,7 +121,17 @@ function InlineLyricEditor({x,y,w,value,onCommit,onCancel}) {
   )
 }
 
-const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent, playbackBeat=null}, ref) {
+const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent, onBeat}, ref) {
+  // Own local, isolated subscription to playback beat updates. Doing this
+  // here (rather than receiving a value prop from the parent) means the
+  // ~60fps beat ticks only re-render this component — not the whole
+  // SolfaApp tree (toolbar/sidebar/menu bar), which is what was causing the
+  // cursor to feel laggy/jumpy.
+  const [playbackBeat, setPlaybackBeat] = useState(null)
+  useEffect(() => {
+    if (!onBeat) return
+    return onBeat(b => setPlaybackBeat(b))
+  }, [onBeat])
   const wrapRef        = useRef(null)
   const svgNodeRef     = useRef(null)
   const [svgW,setSvgW] = useState(900)

@@ -104,6 +104,74 @@ function OctLabel({ o }) {
   return null;
 }
 
+function formatTime(sec) {
+  const s = Math.floor(sec || 0);
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// ── Isolated playback-beat-driven UI ──────────────────────────────────────────
+// These own their own local state and subscribe to onBeat directly, so the
+// ~60fps beat updates during playback only re-render these small pieces —
+// not the whole SolfaApp tree (toolbar/sidebar/menu bar).
+
+function PlaybackSeekBar({ seekBarRef, onBeat, getCurrentSec, getTotalSecs, seekToBeat, displayTempo }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!onBeat) return;
+    return onBeat(() => tick((t) => t + 1));
+  }, [onBeat]);
+
+  const currentSec = getCurrentSec();
+  const totalSecs = getTotalSecs();
+
+  return (
+    <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+      <span
+        style={{ fontSize: 10, color: "#9ca3af", minWidth: 36, fontFamily: "monospace" }}
+      >
+        {formatTime(currentSec)}
+      </span>
+      <input
+        ref={seekBarRef}
+        type="range"
+        min={0}
+        max={Math.max(totalSecs, 1)}
+        step={0.1}
+        value={Math.min(currentSec, Math.max(totalSecs, 1))}
+        onChange={async (e) => {
+          const sec = Number(e.target.value);
+          const bpm = displayTempo;
+          await seekToBeat(sec / (60 / bpm));
+        }}
+        style={{ flex: 1, accentColor: "#22c55e", height: 4, cursor: "pointer" }}
+      />
+      <span
+        style={{ fontSize: 10, color: "#9ca3af", minWidth: 36, fontFamily: "monospace" }}
+      >
+        {formatTime(totalSecs)}
+      </span>
+    </div>
+  );
+}
+
+function PlaybackBeatReadout({ onBeat }) {
+  const [beat, setBeat] = useState(null);
+  useEffect(() => {
+    if (!onBeat) return;
+    return onBeat((b) => setBeat(b));
+  }, [onBeat]);
+
+  if (beat === null) return null;
+  return (
+    <span
+      style={{ fontSize: 10, color: "#6ee7b7", fontFamily: "monospace", minWidth: 60 }}
+    >
+      beat {(beat + 1).toFixed(1)}
+    </span>
+  );
+}
+
 export default function SolfaApp({ user, onGoHome }) {
   const score = useSolfaStore((s) => s.score);
   const inputMode = useSolfaStore((s) => s.inputMode);
@@ -177,23 +245,21 @@ export default function SolfaApp({ user, onGoHome }) {
   } = useSolfaPlayback();
 
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackBeat, setPlaybackBeat] = useState(null);
   const [metronomeOn, setMetronomeOn] = useState(false);
   const [looping, setLooping] = useState(false);
   const [tempoOverride, setTempoOverride] = useState("");
-  const [totalSecs, setTotalSecs] = useState(0);
   const seekBarRef = useRef(null);
 
-  // Subscribe to playback events
+  // Subscribe to playback events. NOTE: we deliberately do NOT subscribe to
+  // onBeat here — that fires ~60x/sec during playback, and setting state on
+  // this (large) component for every tick was what made the playback cursor
+  // feel laggy: it forced the whole toolbar/sidebar/menu tree to re-render
+  // every frame. Beat-driven UI (the cursor, the seek bar, the beat readout)
+  // now subscribes to onBeat directly in small isolated components instead.
   useEffect(() => {
     onPlaying((v) => setIsPlaying(v));
-    onBeat((b) => {
-      setPlaybackBeat(b);
-      setTotalSecs(getTotalSecs());
-    });
   }, []);
 
-  const currentSec = getCurrentSec();
   const displayTempo = tempoOverride
     ? Number(tempoOverride)
     : score.tempo || 80;
@@ -533,12 +599,6 @@ export default function SolfaApp({ user, onGoHome }) {
       setSaveMsg("Save failed");
     }
     setSaving(false);
-  }
-
-  function formatTime(sec) {
-    const s = Math.floor(sec || 0);
-    const m = Math.floor(s / 60);
-    return `${m}:${String(s % 60).padStart(2, "0")}`;
   }
 
   const comboInfo = VOICE_COMBOS[score.voiceCombo] || VOICE_COMBOS.satb;
@@ -1139,48 +1199,15 @@ export default function SolfaApp({ user, onGoHome }) {
           ⏹
         </button>
 
-        {/* Seek bar */}
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
-          <span
-            style={{
-              fontSize: 10,
-              color: "#9ca3af",
-              minWidth: 36,
-              fontFamily: "monospace",
-            }}
-          >
-            {formatTime(getCurrentSec())}
-          </span>
-          <input
-            ref={seekBarRef}
-            type="range"
-            min={0}
-            max={Math.max(totalSecs, 1)}
-            step={0.1}
-            value={Math.min(getCurrentSec(), Math.max(totalSecs, 1))}
-            onChange={async (e) => {
-              const sec = Number(e.target.value);
-              const bpm = displayTempo;
-              await seekToBeat(sec / (60 / bpm));
-            }}
-            style={{
-              flex: 1,
-              accentColor: "#22c55e",
-              height: 4,
-              cursor: "pointer",
-            }}
-          />
-          <span
-            style={{
-              fontSize: 10,
-              color: "#9ca3af",
-              minWidth: 36,
-              fontFamily: "monospace",
-            }}
-          >
-            {formatTime(totalSecs)}
-          </span>
-        </div>
+        {/* Seek bar — isolated: updates live at ~60fps without re-rendering the rest of the app */}
+        <PlaybackSeekBar
+          seekBarRef={seekBarRef}
+          onBeat={onBeat}
+          getCurrentSec={getCurrentSec}
+          getTotalSecs={getTotalSecs}
+          seekToBeat={seekToBeat}
+          displayTempo={displayTempo}
+        />
 
         {/* Tempo */}
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -1307,19 +1334,8 @@ export default function SolfaApp({ user, onGoHome }) {
           🎚
         </button>
 
-        {/* Beat position indicator */}
-        {playbackBeat !== null && (
-          <span
-            style={{
-              fontSize: 10,
-              color: "#6ee7b7",
-              fontFamily: "monospace",
-              minWidth: 60,
-            }}
-          >
-            beat {(playbackBeat + 1).toFixed(1)}
-          </span>
-        )}
+        {/* Beat position indicator — isolated, updates without re-rendering the app */}
+        <PlaybackBeatReadout onBeat={onBeat} />
       </div>
       </div>{/* end sticky top chrome */}
 
@@ -1589,7 +1605,7 @@ export default function SolfaApp({ user, onGoHome }) {
 
               <SolfaRenderer
                 ref={rendererRef}
-                playbackBeat={playbackBeat}
+                onBeat={onBeat}
                 onSelectEvent={(partId, mIdx, bi, ei) => {
                   useSolfaStore.getState().selectEvent(partId, mIdx, bi, ei);
                 }}
