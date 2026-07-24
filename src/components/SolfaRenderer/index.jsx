@@ -17,7 +17,7 @@
 //
 // BEAT SEPARATOR: ":" before beat 2+; "/" at slashSet positions
 
-import { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react'
+import { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from 'react'
 import { useSolfaStore, slashPositions, migrateMeasure } from '../../store/solfaStore'
 
 const FONT    = '"Times New Roman", Georgia, serif'
@@ -163,6 +163,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent, playback
     return ()=>ro.disconnect()
   },[])
 
+  const { elems, totalH } = useMemo(() => {
   const parts    = score.parts||[]
   const numM     = Math.max(...parts.map(p=>p.measures.length),1)
   const topNum   = score.timeSignature?.beats||4
@@ -566,53 +567,10 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent, playback
     sysY+=systemH
   })
 
-  // ── Playback cursor — red vertical line tracking beat position ─────────────
-  // playbackBeat is a global quarter-note counter from song start (same units
-  // used by the staff ScoreRenderer). We walk the lead part's beats to find
-  // which measure/beat it falls in, then interpolate within that beat using
-  // the exact on-screen positions already captured in beatPosMap.
-  if (playbackBeat !== null && playbackBeat !== undefined && parts.length) {
-    const leadPart = parts[0]
-    let cum = 0, targetCol = null, targetBi = 0, fracInBeat = 0
-    for (let col=0; col<numM; col++) {
-      const m = migrateMeasure(leadPart.measures[col])
-      const nBeats = m?.beats?.length || topNum
-      if (playbackBeat < cum + nBeats || col === numM-1) {
-        const within = playbackBeat - cum
-        targetCol = col
-        targetBi  = Math.min(Math.max(nBeats,1)-1, Math.max(0, Math.floor(within)))
-        fracInBeat = Math.min(1, Math.max(0, within - targetBi))
-        break
-      }
-      cum += nBeats
-    }
-
-    if (targetCol !== null) {
-      const pos = beatPosMap.current[`${leadPart.id}:${targetCol}:${targetBi}`]
-      if (pos) {
-        const m = migrateMeasure(leadPart.measures[targetCol])
-        const nBeats = m?.beats?.length || topNum
-        let nextKey = null
-        if (targetBi+1 < nBeats) nextKey = `${leadPart.id}:${targetCol}:${targetBi+1}`
-        else if (targetCol+1 < numM) nextKey = `${leadPart.id}:${targetCol+1}:0`
-        const nextPos = nextKey ? beatPosMap.current[nextKey] : null
-        const beatW = (nextPos && nextPos.rowY === pos.rowY) ? Math.max(4, nextPos.x - pos.x) : QW*4
-        const cx = pos.x + fracInBeat*beatW
-        const bounds = systemBoundsMap.current[targetCol] || { top: pos.rowY-30, bottom: pos.rowY+30 }
-
-        elems.push(
-          <g key="playback-cursor"
-            transform={`translate(${cx},0)`}
-            style={{ transition:'transform 0.05s linear', pointerEvents:'none' }}>
-            <line x1={0} y1={bounds.top} x2={0} y2={bounds.bottom}
-              stroke="#ef4444" strokeWidth={7} strokeLinecap="round" opacity={0.16}/>
-            <line x1={0} y1={bounds.top} x2={0} y2={bounds.bottom}
-              stroke="#ef4444" strokeWidth={2.2} strokeLinecap="round" opacity={0.9}/>
-          </g>
-        )
-      }
-    }
-  }
+  // NOTE: the playback cursor is intentionally NOT computed here — it's
+  // computed outside this useMemo (using the beatPosMap/systemBoundsMap refs
+  // populated above) so that a moving playhead never forces this expensive
+  // score layout to be rebuilt on every animation frame.
 
   // ── Verse paragraph blocks (printed below the full score) ──────────────────
   if (showVerseBlocks && versePrepared.length) {
@@ -699,18 +657,80 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent, playback
     )
   })
 
-  if (lyricEdit) {
-    elems.push(
-      <InlineLyricEditor key="lyric-ed"
-        x={lyricEdit.x} y={lyricEdit.y} w={lyricEdit.w} value={lyricEdit.current}
-        onCommit={val=>{
-          setLyric(lyricEdit.partId,lyricEdit.measureIdx,lyricEdit.beatIdx,lyricEdit.eventIdx,val.trim())
-          setLyricEdit(null)
-        }}
-        onCancel={()=>setLyricEdit(null)}
-      />
-    )
+  return { elems, totalH }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [score, selectedPartId, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx,
+      inputMode, slurStart, hoveredSlurId, svgW])
+
+  // ── Playback cursor — red vertical line tracking beat position ─────────────
+  // Computed OUTSIDE the useMemo above, every frame, so a moving playhead
+  // never triggers a rebuild of the (expensive) static score layout.
+  // playbackBeat is a global quarter-note counter from song start (same units
+  // used by the staff ScoreRenderer). We walk the lead part's beats to find
+  // which measure/beat it falls in, then interpolate within that beat using
+  // the exact on-screen positions captured in beatPosMap during the last
+  // static layout pass.
+  const parts  = score.parts||[]
+  const numM   = Math.max(...parts.map(p=>p.measures.length),1)
+  const topNum = score.timeSignature?.beats||4
+  let cursorElem = null
+  if (playbackBeat !== null && playbackBeat !== undefined && parts.length) {
+    const leadPart = parts[0]
+    let cum = 0, targetCol = null, targetBi = 0, fracInBeat = 0
+    for (let col=0; col<numM; col++) {
+      const m = migrateMeasure(leadPart.measures[col])
+      // Match the audio scheduler's cumulative-beat source exactly (time
+      // signature, not the rendered beats array) so the cursor never drifts
+      // out of sync with the actual audio position measure-by-measure.
+      const nBeats = m?.timeSignature?.beats || topNum
+      if (playbackBeat < cum + nBeats || col === numM-1) {
+        const within = playbackBeat - cum
+        const actualLen = m?.beats?.length || nBeats
+        targetCol = col
+        targetBi  = Math.min(Math.max(actualLen,1)-1, Math.max(0, Math.floor(within)))
+        fracInBeat = Math.min(1, Math.max(0, within - Math.floor(within)))
+        break
+      }
+      cum += nBeats
+    }
+
+    if (targetCol !== null) {
+      const pos = beatPosMap.current[`${leadPart.id}:${targetCol}:${targetBi}`]
+      if (pos) {
+        const m = migrateMeasure(leadPart.measures[targetCol])
+        const actualLen = m?.beats?.length || topNum
+        let nextKey = null
+        if (targetBi+1 < actualLen) nextKey = `${leadPart.id}:${targetCol}:${targetBi+1}`
+        else if (targetCol+1 < numM) nextKey = `${leadPart.id}:${targetCol+1}:0`
+        const nextPos = nextKey ? beatPosMap.current[nextKey] : null
+        const beatW = (nextPos && nextPos.rowY === pos.rowY) ? Math.max(4, nextPos.x - pos.x) : QW*4
+        const cx = pos.x + fracInBeat*beatW
+        const bounds = systemBoundsMap.current[targetCol] || { top: pos.rowY-30, bottom: pos.rowY+30 }
+
+        cursorElem = (
+          <g key="playback-cursor"
+            transform={`translate(${cx},0)`}
+            style={{ transition:'transform 0.06s linear', pointerEvents:'none' }}>
+            <line x1={0} y1={bounds.top} x2={0} y2={bounds.bottom}
+              stroke="#ef4444" strokeWidth={7} strokeLinecap="round" opacity={0.16}/>
+            <line x1={0} y1={bounds.top} x2={0} y2={bounds.bottom}
+              stroke="#ef4444" strokeWidth={2.2} strokeLinecap="round" opacity={0.9}/>
+          </g>
+        )
+      }
+    }
   }
+
+  const lyricEditElem = lyricEdit ? (
+    <InlineLyricEditor key="lyric-ed"
+      x={lyricEdit.x} y={lyricEdit.y} w={lyricEdit.w} value={lyricEdit.current}
+      onCommit={val=>{
+        setLyric(lyricEdit.partId,lyricEdit.measureIdx,lyricEdit.beatIdx,lyricEdit.eventIdx,val.trim())
+        setLyricEdit(null)
+      }}
+      onCancel={()=>setLyricEdit(null)}
+    />
+  ) : null
 
   return (
     <div ref={wrapRef} style={{width:'100%',overflowX:'auto'}}>
@@ -722,6 +742,8 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent, playback
         style={{display:'block',fontFamily:FONT,userSelect:'none'}}
       >
         {elems}
+        {cursorElem}
+        {lyricEditElem}
       </svg>
     </div>
   )
