@@ -311,12 +311,24 @@ function pitchToMidi(pitch) {
 }
 
 // ── Print / PDF ────────────────────────────────────────────────────────────────
-// printScore — opens a print-ready window using the live SVG strings.
-// The SVG content from VexFlow uses the Bravura music font. Rather than
-// trying to rasterize (which breaks due to cross-origin font restrictions),
-// we inline ALL @font-face CSS rules from the current document directly into
-// the print window's <style> block. Since the print window is opened from the
-// same origin, the browser reuses its font cache and renders glyphs correctly.
+// printScore — prints in THIS window rather than a new popup.
+//
+// Why: VexFlow loads the Bravura music font via the FontFace API straight
+// into document.fonts — it is never registered as a CSS @font-face rule in
+// document.styleSheets. That means there was never any font CSS to copy
+// into a new popup window in the first place (no amount of fixing relative
+// URLs could have helped — the rule just wasn't there to find). Printing in
+// the current window sidesteps the whole problem: the font is already
+// loaded and already rendering correctly right here.
+//
+// We build a dedicated, hidden print-only DOM section, then use @media
+// print to hide everything else in the page and print just that section.
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
+
 export function printScore(score) {
   const title    = score?.title    || 'Untitled Score'
   const composer = score?.composer || ''
@@ -330,129 +342,74 @@ export function printScore(score) {
   })
   if (!svgElements.length) { alert('No score SVG found.'); return }
 
-  // ── Collect ALL CSS from the document — @font-face + any music-related rules ──
-  let allCSS = ''
-  try {
-    for (const sheet of Array.from(document.styleSheets)) {
-      try {
-        const rules = Array.from(sheet.cssRules || [])
-        for (const rule of rules) {
-          // Include font-face rules and any rules referencing music/score classes
-          if (
-            rule.type === CSSRule.FONT_FACE_RULE ||
-            (rule.cssText && rule.cssText.includes('vf-'))
-          ) {
-            allCSS += rule.cssText + '\n'
-          }
-        }
-      } catch(_) { /* cross-origin sheet — skip */ }
-    }
-  } catch(_) {}
+  // Clean up any leftovers from a previous print (e.g. if afterprint never fired)
+  document.getElementById('faithscore-print-root')?.remove()
+  document.getElementById('faithscore-print-style')?.remove()
 
-  // ── Serialize each SVG to a self-contained string ────────────────────────
-  const serializer = new XMLSerializer()
-  const svgStrings = svgElements.map(svg => {
+  // ── Build the print-only DOM (clones of the live, already-rendered SVGs) ──
+  const root = document.createElement('div')
+  root.id = 'faithscore-print-root'
+
+  const page = document.createElement('div')
+  page.className = 'fs-print-page'
+
+  const header = document.createElement('div')
+  header.className = 'fs-print-header'
+  header.innerHTML = `<h1>${escapeHtml(title)}</h1>${composer ? `<p>${escapeHtml(composer)}</p>` : ''}`
+  page.appendChild(header)
+
+  svgElements.forEach(svg => {
     const clone = svg.cloneNode(true)
-    clone.setAttribute('xmlns',       'http://www.w3.org/2000/svg')
-    clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
-    // Remove width/height so CSS can control scaling
     clone.removeAttribute('width')
     clone.removeAttribute('height')
     clone.style.width  = '100%'
     clone.style.height = 'auto'
-    return serializer.serializeToString(clone)
+    const row = document.createElement('div')
+    row.className = 'fs-print-row'
+    row.appendChild(clone)
+    page.appendChild(row)
   })
 
-  const svgBlocks = svgStrings.map(s =>
-    `<div class="score-row">${s}</div>`
-  ).join('\n')
+  root.appendChild(page)
+  document.body.appendChild(root)
 
-  // ── Build print HTML — fonts are embedded via the collected CSS ───────────
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>${title}</title>
-  <style>
-    /* All @font-face rules from the host page — Bravura music font */
-    ${allCSS}
-
-    * { margin:0; padding:0; box-sizing:border-box }
-    html, body { background:white; }
-
-    .page {
-      width: 210mm;
-      min-height: 297mm;
-      padding: 15mm 14mm 12mm 14mm;
-      background: white;
-      margin: 0 auto;
+  // ── Print-only styling: hidden on screen, shown (and everything else
+  //    hidden) during printing ──────────────────────────────────────────────
+  const style = document.createElement('style')
+  style.id = 'faithscore-print-style'
+  style.textContent = `
+    #faithscore-print-root { display: none; }
+    .fs-print-header {
+      text-align: center; margin-bottom: 8mm; padding-bottom: 4mm;
+      border-bottom: 0.5pt solid #ccc; font-family: 'Times New Roman', serif;
     }
-    .header {
-      text-align: center;
-      margin-bottom: 8mm;
-      padding-bottom: 4mm;
-      border-bottom: 0.5pt solid #ccc;
-      font-family: 'Times New Roman', serif;
-    }
-    .header h1 { font-size: 22pt; font-weight: bold; }
-    .header p  { font-size: 11pt; color:#555; text-align:right; margin-top:3mm; }
-
-    .score-row {
-      width: 100%;
-      margin-bottom: 4mm;
-      overflow: visible;
-    }
-    .score-row svg {
-      width: 100% !important;
-      height: auto !important;
-      display: block;
-      overflow: visible;
-    }
-
-    /* VexFlow applies these classes to text glyphs — ensure font is set */
-    text, tspan, .vf-text { font-family: 'Bravura', 'Arial', serif !important; }
-
-    @media screen {
-      body { background: #ccc; padding: 10mm; }
-      .page { box-shadow: 0 2px 12px rgba(0,0,0,0.2); }
-    }
+    .fs-print-header h1 { font-size: 22pt; font-weight: bold; margin: 0; }
+    .fs-print-header p  { font-size: 11pt; color: #555; text-align: right; margin: 3mm 0 0; }
+    .fs-print-row { width: 100%; margin-bottom: 4mm; }
+    .fs-print-row svg { width: 100% !important; height: auto !important; display: block; }
     @media print {
-      html, body { background: white; padding:0; margin:0; }
-      .page { padding: 14mm; }
+      body > *:not(#faithscore-print-root) { display: none !important; }
+      #faithscore-print-root { display: block !important; }
+      @page { size: A4 portrait; margin: 15mm 14mm 12mm 14mm; }
     }
-    @page { size: A4 portrait; margin: 0; }
-  </style>
-</head>
-<body>
-  <div class="page">
-    <div class="header">
-      <h1>${title}</h1>
-      ${composer ? `<p>${composer}</p>` : ''}
-    </div>
-    ${svgBlocks}
-  </div>
-  <script>
-    // Wait for fonts to load before printing
-    document.fonts.ready.then(() => {
-      setTimeout(() => { window.print() }, 600)
-    })
-  <\/script>
-</body>
-</html>`
+  `
+  document.head.appendChild(style)
 
-  const win = window.open('', '_blank')
-  if (!win) {
-    // Popup blocked — download as HTML file instead
-    const blob = new Blob([html], { type: 'text/html' })
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
-    a.href = url; a.download = `${title}.html`; a.click()
-    URL.revokeObjectURL(url)
-    return
+  const cleanup = () => {
+    document.getElementById('faithscore-print-root')?.remove()
+    document.getElementById('faithscore-print-style')?.remove()
+    window.removeEventListener('afterprint', cleanup)
   }
-  win.document.open()
-  win.document.write(html)
-  win.document.close()
+  window.addEventListener('afterprint', cleanup)
+
+  // Give the browser a couple of frames to lay out the cloned SVGs before
+  // opening the print dialog (avoids printing a stale/empty layout).
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    window.print()
+    // Fallback in case `afterprint` doesn't fire (happens in some
+    // print-to-PDF / headless flows) — clean up after a delay regardless.
+    setTimeout(cleanup, 8000)
+  }))
 }
 
 // ── Download helpers ──────────────────────────────────────────────────────────
