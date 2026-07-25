@@ -313,20 +313,89 @@ function pitchToMidi(pitch) {
 // ── Print / PDF ────────────────────────────────────────────────────────────────
 // printScore — prints in THIS window rather than a new popup.
 //
-// Why: VexFlow loads the Bravura music font via the FontFace API straight
-// into document.fonts — it is never registered as a CSS @font-face rule in
-// document.styleSheets. That means there was never any font CSS to copy
-// into a new popup window in the first place (no amount of fixing relative
-// URLs could have helped — the rule just wasn't there to find). Printing in
-// the current window sidesteps the whole problem: the font is already
-// loaded and already rendering correctly right here.
+// Why not a popup: VexFlow loads the Bravura music font via the FontFace API
+// straight into document.fonts — it is never registered as a CSS @font-face
+// rule in document.styleSheets, so there was never any font CSS to copy into
+// a new window. Printing in the current window sidesteps that: the font is
+// already loaded and already rendering correctly right here.
 //
-// We build a dedicated, hidden print-only DOM section, then use @media
-// print to hide everything else in the page and print just that section.
+// Why explicit slicing: the whole score is ONE tall, continuous <svg>. Left
+// to the browser's native print pagination, that single element is treated
+// as an atomic, non-fragmentable block — if it doesn't fit in the space left
+// on a page, browsers just push it whole to the next page (or, worse, clip
+// it at an arbitrary pixel with no regard for where systems fall), which is
+// exactly what produced the blank first page / skipped systems / cropped
+// clef bug. Instead we compute each system's Y-position ourselves (using the
+// small system-start measure-number label ScoreRenderer already draws at a
+// known x-position), group systems into page-sized chunks ourselves, and
+// render each chunk as its OWN cropped <svg> (via viewBox) in its own
+// print-page block with an explicit page-break-after. Each page is then a
+// small, simple, already-correctly-sized element — nothing for the browser's
+// pagination to get wrong.
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
+
+// A4 page geometry, matching the @page rule below (all in mm).
+const PAGE_W_MM   = 210
+const PAGE_H_MM   = 297
+const MARGIN_TOP  = 15
+const MARGIN_BOT  = 12
+const MARGIN_SIDE = 14
+const USABLE_W_MM    = PAGE_W_MM - MARGIN_SIDE * 2
+const USABLE_H_MM    = PAGE_H_MM - MARGIN_TOP - MARGIN_BOT
+const HEADER_H_MM_EST = 24 // rough estimate of .fs-print-header's rendered height
+
+// ScoreRenderer draws each system's starting measure number as text at a
+// fixed x=24, y = systemTopY - 10 (see ScoreRenderer's `ctx.fillText(String(startCol+1), 24, sysY-10)`).
+// We use those labels purely as position markers — they're on-page anyway.
+function findSystemTops(svg) {
+  const markers = Array.from(svg.querySelectorAll('text'))
+    .map(t => ({
+      y: parseFloat(t.getAttribute('y')),
+      x: parseFloat(t.getAttribute('x')),
+      text: (t.textContent || '').trim(),
+    }))
+    .filter(m => /^\d+$/.test(m.text) && !isNaN(m.y) && !isNaN(m.x) && Math.abs(m.x - 24) < 2)
+    .sort((a, b) => a.y - b.y)
+  if (markers.length < 2) return null
+  return markers.map(m => m.y + 10) // undo the "-10" offset used when drawing
+}
+
+// Groups system top-positions into page-sized chunks (in the SVG's own
+// coordinate units), returning [{ y, height }, ...] slices.
+function paginateSystems(sysTops, totalH, usableFirstUnits, usableRestUnits) {
+  const n = sysTops.length
+  const bottoms = sysTops.slice(1).concat([totalH]) // bottoms[i] = bottom Y of system i
+  const slices = []
+  let pageStart = 0
+  let usable = usableFirstUnits
+  for (let i = 0; i < n; i++) {
+    const heightIfIncluded = bottoms[i] - sysTops[pageStart]
+    if (heightIfIncluded > usable && i > pageStart) {
+      // System i doesn't fit on the current page — close the page at the
+      // previous system's bottom and start a fresh page at system i.
+      slices.push({ y: sysTops[pageStart], height: bottoms[i - 1] - sysTops[pageStart] })
+      pageStart = i
+      usable = usableRestUnits
+    }
+  }
+  slices.push({ y: sysTops[pageStart], height: bottoms[n - 1] - sysTops[pageStart] })
+  return slices
+}
+
+// Builds one cropped <svg> clone showing only [y, y+height) of the original.
+function cropSvg(svg, totalW, y, height) {
+  const clone = svg.cloneNode(true)
+  clone.removeAttribute('width')
+  clone.removeAttribute('height')
+  clone.setAttribute('viewBox', `0 ${y} ${totalW} ${height}`)
+  clone.style.width  = '100%'
+  clone.style.height = 'auto'
+  clone.style.display = 'block'
+  return clone
 }
 
 export function printScore(score) {
@@ -346,31 +415,53 @@ export function printScore(score) {
   document.getElementById('faithscore-print-root')?.remove()
   document.getElementById('faithscore-print-style')?.remove()
 
-  // ── Build the print-only DOM (clones of the live, already-rendered SVGs) ──
+  // ── Build the print-only DOM ────────────────────────────────────────────
   const root = document.createElement('div')
   root.id = 'faithscore-print-root'
 
-  const page = document.createElement('div')
-  page.className = 'fs-print-page'
+  const pageEl = document.createElement('div')
+  pageEl.className = 'fs-print-page'
 
   const header = document.createElement('div')
   header.className = 'fs-print-header'
   header.innerHTML = `<h1>${escapeHtml(title)}</h1>${composer ? `<p>${escapeHtml(composer)}</p>` : ''}`
-  page.appendChild(header)
+  pageEl.appendChild(header)
 
+  const rows = []
   svgElements.forEach(svg => {
-    const clone = svg.cloneNode(true)
-    clone.removeAttribute('width')
-    clone.removeAttribute('height')
-    clone.style.width  = '100%'
-    clone.style.height = 'auto'
-    const row = document.createElement('div')
-    row.className = 'fs-print-row'
-    row.appendChild(clone)
-    page.appendChild(row)
+    const vb = svg.viewBox && svg.viewBox.baseVal
+    const totalW = (vb && vb.width)  || svg.width.baseVal.value  || svg.getBoundingClientRect().width
+    const totalH = (vb && vb.height) || svg.height.baseVal.value || svg.getBoundingClientRect().height
+
+    const scaleUnitsPerMm  = totalW / USABLE_W_MM
+    const usableFirstUnits = (USABLE_H_MM - HEADER_H_MM_EST) * scaleUnitsPerMm
+    const usableRestUnits  = USABLE_H_MM * scaleUnitsPerMm
+
+    const sysTops = findSystemTops(svg)
+    const slices = sysTops
+      ? paginateSystems(sysTops, totalH, Math.max(usableFirstUnits, 1), Math.max(usableRestUnits, 1))
+      : [{ y: 0, height: totalH }] // couldn't detect systems — fall back to one uncut block
+
+    slices.forEach(slice => {
+      const clone = cropSvg(svg, totalW, slice.y, slice.height)
+      const row = document.createElement('div')
+      row.className = 'fs-print-row'
+      row.appendChild(clone)
+      rows.push(row)
+    })
   })
 
-  root.appendChild(page)
+  rows.forEach((row, i) => {
+    pageEl.appendChild(row)
+    if (i < rows.length - 1) {
+      row.style.breakAfter = 'page'
+      row.style.pageBreakAfter = 'always'
+    }
+    row.style.breakInside = 'avoid'
+    row.style.pageBreakInside = 'avoid'
+  })
+
+  root.appendChild(pageEl)
   document.body.appendChild(root)
 
   // ── Print-only styling: hidden on screen, shown (and everything else
@@ -385,12 +476,12 @@ export function printScore(score) {
     }
     .fs-print-header h1 { font-size: 22pt; font-weight: bold; margin: 0; }
     .fs-print-header p  { font-size: 11pt; color: #555; text-align: right; margin: 3mm 0 0; }
-    .fs-print-row { width: 100%; margin-bottom: 4mm; }
+    .fs-print-row { width: 100%; }
     .fs-print-row svg { width: 100% !important; height: auto !important; display: block; }
     @media print {
       body > *:not(#faithscore-print-root) { display: none !important; }
       #faithscore-print-root { display: block !important; }
-      @page { size: A4 portrait; margin: 15mm 14mm 12mm 14mm; }
+      @page { size: ${PAGE_W_MM}mm ${PAGE_H_MM}mm; margin: ${MARGIN_TOP}mm ${MARGIN_SIDE}mm ${MARGIN_BOT}mm ${MARGIN_SIDE}mm; }
     }
   `
   document.head.appendChild(style)
