@@ -676,11 +676,17 @@ export default function App() {
           const formatMenu = <>
             <Item icon=""  label="Style…"                                  disabled />
             <Item icon=""  label="Page settings…"                          disabled />
-            <Item icon=""  label="Measures per system…"
+            <CheckItem label="Automatic layout (fit to width)"
+              checked={useScoreStore.getState().autoLayout}
+              onClick={() => useScoreStore.getState().setAutoLayout(true)} />
+            <Item icon=""  label="Fixed measures per system…"
               onClick={() => {
-                const v = prompt('Measures per line (1–8):', useScoreStore.getState().measuresPerLine ?? 4)
+                const v = prompt('Measures per line (1–16):', useScoreStore.getState().measuresPerLine ?? 4)
                 const n = parseInt(v)
-                if (!isNaN(n)) useScoreStore.getState().setMeasuresPerLine(n)
+                if (!isNaN(n)) {
+                  useScoreStore.getState().setMeasuresPerLine(n)
+                  useScoreStore.getState().setAutoLayout(false)
+                }
               }} />
             <Item icon=""  label="Stretch"            arrow               disabled />
             <Sep />

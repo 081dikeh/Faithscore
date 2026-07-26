@@ -244,6 +244,7 @@ export default function ScoreRenderer() {
   const selectedDots = useScoreStore((s) => s.selectedDots);
   const zoom = useScoreStore((s) => s.zoom);
   const measuresPerLine = useScoreStore((s) => s.measuresPerLine ?? 4);
+  const autoLayout = useScoreStore((s) => s.autoLayout ?? true);
   const staffSize = useScoreStore((s) => s.staffSize ?? 10);
   const dynamics = useScoreStore((s) => s.score.dynamics || EMPTY_ARR);
   const hairpins = useScoreStore((s) => s.score.hairpins || EMPTY_ARR);
@@ -292,7 +293,7 @@ export default function ScoreRenderer() {
     const SP = staffSize;
     const STAFF_HEIGHT = SP * 4;
     const PART_HEIGHT = SP * 11;
-    const SYSTEM_GAP = SP * 8;
+    const SYSTEM_GAP = SP * 6.5;
     const STAVE_TOP = SP * 4;
     const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3;
     const LEFT_MARGIN = 20;
@@ -306,15 +307,15 @@ export default function ScoreRenderer() {
     // Compute minimum pixel width for each measure based on content density.
     // This is the core of the dynamic layout — denser measures get more space.
     const NOTE_PX = {
-      w: SP * 9,
-      h: SP * 6.5,
-      q: SP * 5,
-      8: SP * 4,
-      16: SP * 3.2,
-      32: SP * 2.8,
-      64: SP * 2.4,
+      w: SP * 7,
+      h: SP * 5,
+      q: SP * 3.6,
+      8: SP * 2.6,
+      16: SP * 2.1,
+      32: SP * 1.8,
+      64: SP * 1.6,
     };
-    const MIN_MEASURE_WIDTH = SP * 16;
+    const MIN_MEASURE_WIDTH = SP * 11;
     const MAX_MEASURE_WIDTH = SP * 100;
 
     function getMeasureContentWidth(colIdx) {
@@ -339,9 +340,9 @@ export default function ScoreRenderer() {
 
     // First-measure overhead: clef + key sig + time sig
     function getGlyphOverhead(colIdx, isFirstInLine) {
-      if (!isFirstInLine) return SP * 2;
+      if (!isFirstInLine) return SP * 1.2;
       const keySig = score.parts[0]?.measures[colIdx]?.keySignature ?? 0;
-      return SP * 3 + Math.abs(keySig) * SP + SP * 2 + SP;
+      return SP * 2.2 + Math.abs(keySig) * SP * 0.7 + SP * 1.6 + SP * 0.6;
     }
 
     // ── Dynamic line breaking (MuseScore-style) ───────────────────────────────
@@ -367,17 +368,22 @@ export default function ScoreRenderer() {
     while (lineStart < totalCols) {
       let lineWidth = 0;
       let colCount = 0;
-      const preferredMax = measuresPerLine; // soft limit from store
+      // Only enforced when the user has explicitly chosen a fixed layout —
+      // in autoLayout (default) mode, lines fill purely by available width,
+      // exactly like MuseScore/Dorico/Sibelius. This was previously always
+      // applied and capped every line at ~4 bars regardless of how much
+      // width was left over, which is what caused the large empty gaps.
+      const preferredMax = autoLayout ? 0 : measuresPerLine;
 
       for (let c = lineStart; c < totalCols; c++) {
         const isFirst = colCount === 0;
         const overhead = getGlyphOverhead(c, isFirst);
         const content = getMeasureContentWidth(c);
-        const needed = overhead + content + SP * 2;
+        const needed = overhead + content + SP * 1.2;
 
         // Hard break: adding this measure would exceed usable width
-        if (colCount > 0 && lineWidth + needed > USABLE_W + SP * 4) break;
-        // Soft break: reached preferred bars-per-line
+        if (colCount > 0 && lineWidth + needed > USABLE_W + SP * 2) break;
+        // Soft break: reached preferred bars-per-line (manual mode only)
         if (colCount >= preferredMax && preferredMax > 0) break;
 
         lineWidth += needed;
@@ -458,7 +464,7 @@ export default function ScoreRenderer() {
         const isFirst = colIdx === 0;
         const overhead = getGlyphOverhead(col, isFirst);
         const content = getMeasureContentWidth(col);
-        return overhead + content + SP * 2;
+        return overhead + content + SP * 1.2;
       });
 
       // Justify: scale widths proportionally to fill full usable width
@@ -495,10 +501,9 @@ export default function ScoreRenderer() {
           if (isFirst) {
             stave.addClef(clef);
             stave.addKeySignature(keyNumToVexflow(measure.keySignature ?? 0));
-            if (pIdx === 0)
-              stave.addTimeSignature(
-                `${measure.timeSignature.beats}/${measure.timeSignature.beatType}`,
-              );
+            stave.addTimeSignature(
+              `${measure.timeSignature.beats}/${measure.timeSignature.beatType}`,
+            );
           }
 
           // ── Custom barline (applies to every part's stave in this column,
@@ -596,7 +601,7 @@ export default function ScoreRenderer() {
             // Formatter width = stave width minus glyph overhead.
             // getGlyphOverhead() accounts for clef + key sig accidentals + time sig.
             const glyphOverhead = getGlyphOverhead(col, isFirst);
-            const BARLINE_PAD = SP * 3; // breathing room from barlines on each side
+            const BARLINE_PAD = SP * 2; // breathing room from barlines on each side
             const formatterWidth = Math.max(
               40,
               width - glyphOverhead - BARLINE_PAD * 2,
@@ -1308,6 +1313,7 @@ export default function ScoreRenderer() {
     selectedPartId,
     selectedNoteId,
     measuresPerLine,
+    autoLayout,
     staffSize,
     barlines,
     rehearsalMarks,

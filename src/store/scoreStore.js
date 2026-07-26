@@ -290,9 +290,14 @@ export const useScoreStore = create((set, get) => ({
   setIsPlaying:    (v)    => set({ isPlaying: v }),
 
   setZoom: (z) => set({ zoom: Math.max(0.5, Math.min(2.0, z)) }),
+  // autoLayout=true (default): bars-per-line is computed dynamically from
+  // available width + measure content, MuseScore-style — measuresPerLine is
+  // ignored. autoLayout=false: measuresPerLine is used as a fixed count.
+  autoLayout: true,
   measuresPerLine: 4,
   staffSize: 10,
-  setMeasuresPerLine: (v) => set({ measuresPerLine: Math.max(1, Math.min(8, Math.round(v))) }),
+  setAutoLayout: (v) => set({ autoLayout: !!v }),
+  setMeasuresPerLine: (v) => set({ measuresPerLine: Math.max(1, Math.min(16, Math.round(v))) }),
   setStaffSize: (v) => set({ staffSize: Math.max(6, Math.min(20, v)) }),
 
   // ── Snapshot (call before any mutation that should be undoable) ────────
