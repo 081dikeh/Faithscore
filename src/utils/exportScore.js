@@ -346,7 +346,7 @@ const MARGIN_BOT  = 12
 const MARGIN_SIDE = 14
 const USABLE_W_MM    = PAGE_W_MM - MARGIN_SIDE * 2
 const USABLE_H_MM    = PAGE_H_MM - MARGIN_TOP - MARGIN_BOT
-const HEADER_H_MM_EST = 24 // rough estimate of .fs-print-header's rendered height
+const HEADER_H_MM_EST = 14 // rough estimate of .fs-print-header's rendered height
 
 // ScoreRenderer draws each system's starting measure number as text at a
 // fixed x=24, y = systemTopY - 10 (see ScoreRenderer's `ctx.fillText(String(startCol+1), 24, sysY-10)`).
@@ -471,11 +471,11 @@ export function printScore(score) {
   style.textContent = `
     #faithscore-print-root { display: none; }
     .fs-print-header {
-      text-align: center; margin-bottom: 8mm; padding-bottom: 4mm;
+      text-align: center; margin-bottom: 4mm; padding-bottom: 2mm;
       border-bottom: 0.5pt solid #ccc; font-family: 'Times New Roman', serif;
     }
-    .fs-print-header h1 { font-size: 22pt; font-weight: bold; margin: 0; }
-    .fs-print-header p  { font-size: 11pt; color: #555; text-align: right; margin: 3mm 0 0; }
+    .fs-print-header h1 { font-size: 18pt; font-weight: bold; margin: 0; }
+    .fs-print-header p  { font-size: 10pt; color: #555; text-align: right; margin: 1.5mm 0 0; }
     .fs-print-row { width: 100%; }
     .fs-print-row svg { width: 100% !important; height: auto !important; display: block; }
     @media print {

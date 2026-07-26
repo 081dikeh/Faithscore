@@ -293,7 +293,7 @@ export default function ScoreRenderer() {
     const SP = staffSize;
     const STAFF_HEIGHT = SP * 4;
     const PART_HEIGHT = SP * 11;
-    const SYSTEM_GAP = SP * 6.5;
+    const SYSTEM_GAP = SP * 4;
     const STAVE_TOP = SP * 4;
     const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3;
     const LEFT_MARGIN = 20;
