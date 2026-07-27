@@ -1300,7 +1300,10 @@ export const useScoreStore = create((set, get) => ({
     )
   },
 
-  loadScore: (score) => set({ score }),
+  loadScore: (score) => set({
+    score, _undoStack: [], _redoStack: [], isDirty: true,
+    selectedNoteId: null, selectedMeasureIndex: null, selectedPartId: null,
+  }),
 
   // ── Move a part up or down in the list ──────────────────────────────────
   movePartUp: (partId) => {

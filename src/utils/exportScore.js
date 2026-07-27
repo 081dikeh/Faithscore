@@ -3,7 +3,7 @@
 // Export utilities: MusicXML, MIDI (via binary), Print/PDF
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { DURATION_BEATS, noteDuration, measureCapacity } from '../store/scoreStore'
+import { DURATION_BEATS, noteDuration, measureCapacity, normalizeMeasure } from '../store/scoreStore'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function xml(tag, attrs, ...children) {
@@ -209,6 +209,248 @@ ${xml('score-partwise', { version: '3.1' },
 )}`
 
   download(doc, `${score.title || 'score'}.xml`, 'application/vnd.recordare.musicxml+xml')
+}
+
+// ── MusicXML Import ────────────────────────────────────────────────────────────
+const XML_TO_DUR = { whole:'w', half:'h', quarter:'q', eighth:'8', '16th':'16', '32nd':'32', '64th':'64' }
+const XML_TO_ARTICULATION = {}
+Object.entries(ARTICULATION_XML).forEach(([name, info]) => { XML_TO_ARTICULATION[info.tag] = name })
+
+function importUid() {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now()}_${Math.random().toString(36).slice(2)}`
+}
+
+// Parses a MusicXML string (score-partwise) into a score object matching this
+// app's data model (see EMPTY_SCORE in scoreStore.js). Returns { score, warnings }.
+// score is null if the file couldn't be parsed at all; warnings lists anything
+// that was skipped or approximated (this app doesn't support every MusicXML
+// feature — multi-voice staves and grace notes are the main gaps).
+export function importMusicXML(xmlText) {
+  let doc
+  try {
+    doc = new DOMParser().parseFromString(xmlText, 'application/xml')
+    if (doc.querySelector('parsererror')) throw new Error('The file is not valid XML.')
+  } catch (e) {
+    return { score: null, warnings: ['Could not parse this file as MusicXML: ' + e.message] }
+  }
+
+  const root = doc.documentElement
+  if (root.tagName === 'score-timewise') {
+    return { score: null, warnings: [
+      'This file uses "timewise" MusicXML layout, which isn\'t supported. ' +
+      'Please re-export it as "partwise" (the default in most notation software).'
+    ] }
+  }
+  if (root.tagName !== 'score-partwise') {
+    return { score: null, warnings: ['This doesn\'t look like a MusicXML file (expected <score-partwise>).'] }
+  }
+
+  const title = root.querySelector('work > work-title')?.textContent?.trim()
+    || root.querySelector('movement-title')?.textContent?.trim()
+    || 'Imported Score'
+  const composerEl = Array.from(root.querySelectorAll('identification > creator'))
+    .find(c => c.getAttribute('type') === 'composer')
+  const composer = composerEl?.textContent?.trim() || ''
+
+  let tempo = 120
+  const soundTempo = root.querySelector('sound[tempo]')
+  if (soundTempo) {
+    const t = Math.round(parseFloat(soundTempo.getAttribute('tempo')))
+    if (t > 0) tempo = t
+  } else {
+    const perMin = root.querySelector('metronome > per-minute')
+    if (perMin) {
+      const t = Math.round(parseFloat(perMin.textContent))
+      if (t > 0) tempo = t
+    }
+  }
+
+  const partNameById = {}
+  root.querySelectorAll('part-list > score-part').forEach(sp => {
+    partNameById[sp.getAttribute('id')] = sp.querySelector('part-name')?.textContent?.trim() || sp.getAttribute('id')
+  })
+
+  const partEls = Array.from(root.querySelectorAll('part'))
+  if (!partEls.length) return { score: null, warnings: ['No parts found in this file.'] }
+
+  const dynamics = [], hairpins = [], rehearsalMarks = [], staffTexts = [], barlines = []
+  let skippedVoiceNotes = 0, sawGraceNotes = false, sawUnsupportedDur = false
+
+  const parts = partEls.map((partEl, pi) => {
+    const xmlPartId = partEl.getAttribute('id')
+    const name = partNameById[xmlPartId] || `Part ${pi + 1}`
+    const internalPartId = `part-${importUid()}`
+
+    let divisions = 4
+    let clef = 'treble'
+    let currentTs = { beats: 4, beatType: 4 }
+    let currentKs = 0
+
+    const measures = Array.from(partEl.querySelectorAll('measure')).map((measureEl, mi) => {
+      const attrsEl = measureEl.querySelector('attributes')
+      if (attrsEl) {
+        const divEl = attrsEl.querySelector('divisions')
+        if (divEl) divisions = parseFloat(divEl.textContent) || divisions
+        const fifths = attrsEl.querySelector('key > fifths')
+        if (fifths) currentKs = parseInt(fifths.textContent, 10) || 0
+        const beats = attrsEl.querySelector('time > beats')
+        const beatType = attrsEl.querySelector('time > beat-type')
+        if (beats && beatType) {
+          currentTs = { beats: parseInt(beats.textContent, 10) || 4, beatType: parseInt(beatType.textContent, 10) || 4 }
+        }
+        const clefSign = attrsEl.querySelector('clef > sign')
+        if (clefSign) {
+          const sign = clefSign.textContent
+          clef = sign === 'F' ? 'bass' : sign === 'C' ? 'alto' : 'treble'
+        }
+      }
+
+      const capacity = measureCapacity(currentTs)
+      const notes = []
+      let cursorBeat = 0
+      let firstVoiceSeen = null
+      let lastRealNoteId = null
+
+      Array.from(measureEl.children).forEach(child => {
+        const tag = child.tagName
+        if (tag === 'direction') {
+          const dyn = child.querySelector('direction-type > dynamics')
+          if (dyn) {
+            const dynEl = Array.from(dyn.children)[0]
+            const value = dynEl?.tagName === 'other-dynamics' ? dynEl.textContent : dynEl?.tagName
+            if (value) dynamics.push({ id: importUid(), partId: internalPartId, measureIndex: mi, beat: cursorBeat, value })
+          }
+          const words = child.querySelector('direction-type > words')
+          if (words && words.textContent.trim()) {
+            staffTexts.push({ id: importUid(), partId: internalPartId, measureIndex: mi, beat: cursorBeat, text: words.textContent.trim() })
+          }
+          const rehearsal = child.querySelector('direction-type > rehearsal')
+          if (rehearsal && pi === 0) {
+            rehearsalMarks.push({ id: importUid(), measureIndex: mi, text: rehearsal.textContent.trim() })
+          }
+          const wedge = child.querySelector('direction-type > wedge')
+          if (wedge) {
+            const type = wedge.getAttribute('type')
+            if (type === 'crescendo' || type === 'diminuendo') {
+              hairpins.push({
+                id: importUid(), partId: internalPartId, startMeasure: mi, startBeat: cursorBeat,
+                endMeasure: mi, endBeat: capacity, type: type === 'crescendo' ? 'cresc' : 'decresc',
+              })
+            } else if (type === 'stop') {
+              const last = hairpins.filter(h => h.partId === internalPartId).pop()
+              if (last) { last.endMeasure = mi; last.endBeat = cursorBeat }
+            }
+          }
+        } else if (tag === 'barline') {
+          const style = child.querySelector('bar-style')?.textContent
+          const repeat = child.querySelector('repeat')
+          let type = null
+          if (repeat?.getAttribute('direction') === 'forward') type = 'repeat-start'
+          else if (repeat?.getAttribute('direction') === 'backward') type = 'repeat-end'
+          else if (style === 'light-light') type = 'double'
+          else if (style === 'light-heavy') type = 'final'
+          if (type) barlines.push({ id: importUid(), measureIndex: mi, type })
+        } else if (tag === 'backup') {
+          skippedVoiceNotes++
+        } else if (tag === 'note') {
+          const voice = child.querySelector('voice')?.textContent || '1'
+          if (firstVoiceSeen === null) firstVoiceSeen = voice
+          if (voice !== firstVoiceSeen) { skippedVoiceNotes++; return }
+          if (child.querySelector('grace')) { sawGraceNotes = true; return }
+
+          const isChord = !!child.querySelector('chord')
+          const isRest = !!child.querySelector('rest')
+          const typeEl = child.querySelector('type')
+          const duration = typeEl ? (XML_TO_DUR[typeEl.textContent] || 'q') : 'q'
+          if (typeEl && !XML_TO_DUR[typeEl.textContent]) sawUnsupportedDur = true
+          const dots = child.querySelectorAll('dot').length
+
+          const timeMod = child.querySelector('time-modification')
+          let tuplet = null
+          if (timeMod) {
+            const actual = parseInt(timeMod.querySelector('actual-notes')?.textContent, 10)
+            const normal = parseInt(timeMod.querySelector('normal-notes')?.textContent, 10)
+            if (actual && normal) tuplet = { num: actual, den: normal }
+          }
+
+          const noteObj = { id: importUid(), isRest, pitch: null, duration, dots: dots || 0 }
+          if (tuplet) noteObj.tuplet = tuplet
+
+          if (!isRest) {
+            const step = child.querySelector('pitch > step')?.textContent || 'C'
+            const octave = parseInt(child.querySelector('pitch > octave')?.textContent, 10)
+            const alter = parseInt(child.querySelector('pitch > alter')?.textContent || '0', 10)
+            const accidental = alter === 1 ? '#' : alter === -1 ? 'b' : alter === 2 ? '##' : alter === -2 ? 'bb' : ''
+            noteObj.pitch = { step, octave: isNaN(octave) ? 4 : octave, accidental }
+
+            if (Array.from(child.querySelectorAll('tie')).some(t => t.getAttribute('type') === 'start')) {
+              noteObj.tieStart = true
+            }
+            const lyricText = child.querySelector('lyric > text')?.textContent
+            if (lyricText) noteObj.lyric = lyricText
+
+            const arts = []
+            child.querySelectorAll('notations > articulations > *').forEach(a => { if (XML_TO_ARTICULATION[a.tagName]) arts.push(XML_TO_ARTICULATION[a.tagName]) })
+            child.querySelectorAll('notations > fermata').forEach(() => arts.push('fermata'))
+            child.querySelectorAll('notations > ornaments > *').forEach(o => { if (XML_TO_ARTICULATION[o.tagName]) arts.push(XML_TO_ARTICULATION[o.tagName]) })
+            child.querySelectorAll('notations > technical > *').forEach(t => { if (XML_TO_ARTICULATION[t.tagName]) arts.push(XML_TO_ARTICULATION[t.tagName]) })
+            if (arts.length) noteObj.articulations = arts
+          }
+
+          const beatLen = DURATION_BEATS[duration + (dots ? 'd' : '')] || DURATION_BEATS[duration] || 1
+          if (isChord && lastRealNoteId) {
+            noteObj.chordWith = lastRealNoteId
+          } else {
+            lastRealNoteId = noteObj.id
+            cursorBeat += beatLen
+          }
+          notes.push(noteObj)
+        }
+      })
+
+      // normalizeMeasure guarantees exact capacity fill regardless of any
+      // rounding drift or incomplete measures in the source file.
+      return {
+        id: importUid(),
+        timeSignature: { ...currentTs },
+        keySignature: currentKs,
+        notes: normalizeMeasure(notes, capacity),
+      }
+    })
+
+    return { id: internalPartId, name, instrument: 'piano', clef, measures }
+  })
+
+  // Defensive: pad all parts to the same measure count
+  const maxMeasures = Math.max(...parts.map(p => p.measures.length), 0)
+  const paddedParts = parts.map(p => {
+    if (p.measures.length >= maxMeasures) return p
+    const last = p.measures[p.measures.length - 1]
+    const ts = last?.timeSignature || { beats: 4, beatType: 4 }
+    const extra = Array.from({ length: maxMeasures - p.measures.length }, () => ({
+      id: importUid(), timeSignature: ts, keySignature: last?.keySignature || 0,
+      notes: normalizeMeasure([], measureCapacity(ts)),
+    }))
+    return { ...p, measures: [...p.measures, ...extra] }
+  })
+
+  const warnings = []
+  if (skippedVoiceNotes > 0) {
+    warnings.push(`This file has more than one voice per staff (e.g. divisi or a counter-melody sharing a staff) — only the first voice in each measure was imported. ${skippedVoiceNotes} additional note(s) were skipped.`)
+  }
+  if (sawGraceNotes) warnings.push("Grace notes were found and skipped — they aren't supported yet.")
+  if (sawUnsupportedDur) warnings.push('Some notes had an unusual duration type and were approximated as quarter notes.')
+
+  const score = {
+    id: importUid(),
+    title, composer, tempo,
+    parts: paddedParts,
+    dynamics, hairpins, rehearsalMarks, staffTexts, barlines, octaveLines: [],
+  }
+
+  return { score, warnings }
 }
 
 // ── MIDI Export ────────────────────────────────────────────────────────────────

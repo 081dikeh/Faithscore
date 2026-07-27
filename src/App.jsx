@@ -8,7 +8,7 @@ import { useSolfaStore } from './store/solfaStore'
 import HomeScreen from './components/HomeScreen'
 import AuthScreen from './components/AuthScreen'
 import Sidebar from './components/Sidebar'
-import { exportMusicXML, exportMIDI, printScore } from './utils/exportScore'
+import { exportMusicXML, exportMIDI, printScore, importMusicXML } from './utils/exportScore'
 import { usePlayback } from './hooks/usePlayback'
 import PianoKeyboard from './components/PianoKeyboard'
 import { supabase } from './lib/supabase'
@@ -83,6 +83,37 @@ export default function App() {
   }
 
   const goHome = () => { if (confirmLeaveIfDirty()) setAppView('home') }
+
+  // ── Open… (MusicXML import) ─────────────────────────────────────────────
+  const openFileInputRef = useRef(null)
+  const handleOpenClick = () => {
+    if (!confirmLeaveIfDirty()) return
+    openFileInputRef.current?.click()
+  }
+  const handleOpenFileChosen = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-selecting the same file later
+    if (!file) return
+    if (/\.mxl$/i.test(file.name)) {
+      alert('This is a compressed MusicXML file (.mxl), which isn\'t supported yet.\n\nIn MuseScore (or similar), use File → Export → uncompressed MusicXML (.xml/.musicxml) instead.')
+      return
+    }
+    try {
+      const text = await file.text()
+      const { score: imported, warnings } = importMusicXML(text)
+      if (!imported) {
+        alert('Could not open this file:\n\n' + (warnings[0] || 'Unknown error'))
+        return
+      }
+      useScoreStore.getState().loadScore(imported)
+      setAppView('editor')
+      if (warnings.length) {
+        alert('Opened with a few notes:\n\n' + warnings.join('\n\n'))
+      }
+    } catch (err) {
+      alert('Could not open this file: ' + err.message)
+    }
+  }
 
   // Browser-level protection: warns on tab close/refresh/back if there are
   // unsaved changes, using the browser's own native "leave site?" dialog.
@@ -460,6 +491,14 @@ export default function App() {
     <div className={`flex flex-col ${darkMode ? "bg-gray-900 text-gray-100" : "bg-gray-100"}`}
       style={{ height:'100vh', overflow:'hidden' }}>
 
+      <input
+        ref={openFileInputRef}
+        type="file"
+        accept=".xml,.musicxml,application/vnd.recordare.musicxml+xml,text/xml,application/xml"
+        style={{ display: 'none' }}
+        onChange={handleOpenFileChosen}
+      />
+
       {/* ── Sticky top chrome: menu + status + toolbar + shortcuts ── */}
       <div style={{ position: 'sticky', top: 0, zIndex: 50, flexShrink: 0 }}>
       <div data-menubar className="bg-white border-b border-gray-200 flex items-center h-10 px-3 gap-1 shadow-sm">
@@ -563,7 +602,8 @@ export default function App() {
           const fileMenu = <>
             <Item icon="📄" label="New…"              shortcut="Ctrl+N"
               onClick={goHome} />
-            <Item icon="📂" label="Open…"             shortcut="Ctrl+O"   disabled />
+            <Item icon="📂" label="Open…"             shortcut="Ctrl+O"
+              onClick={handleOpenClick} />
             <Item icon=""   label="Open recent"       arrow               disabled />
             <Sep />
             <Item icon="💾" label="Save"              shortcut="Ctrl+S"
