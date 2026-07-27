@@ -225,6 +225,66 @@ function audioBufferToWav(buffer) {
 }
 
 // ── Public: Export PDF / Print ──────────────────────────────────────────────
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
+
+// A4 page geometry (mm) — matches the tightened values used for the staff
+// side's print (see exportScore.js) so both apps produce similarly dense pages.
+const SF_PAGE_W_MM    = 210
+const SF_PAGE_H_MM    = 297
+const SF_MARGIN_TOP   = 8
+const SF_MARGIN_BOT   = 8
+const SF_MARGIN_SIDE  = 14
+const SF_USABLE_W_MM  = SF_PAGE_W_MM - SF_MARGIN_SIDE * 2
+const SF_USABLE_H_MM  = SF_PAGE_H_MM - SF_MARGIN_TOP - SF_MARGIN_BOT
+const SF_HEADER_H_MM_EST = 15 // title + meta row is a bit taller than the staff header
+
+// SolfaRenderer tags each system's starting measure-number label with
+// data-sysmark="1" data-sysy="<system top Y>" specifically so print export
+// can find real system boundaries (see SolfaRenderer's `mnum-` text element).
+function findSolfaSystemTops(svg) {
+  const marks = Array.from(svg.querySelectorAll('[data-sysmark]'))
+    .map(el => parseFloat(el.getAttribute('data-sysy')))
+    .filter(y => !isNaN(y))
+    .sort((a, b) => a - b)
+  return marks.length >= 2 ? marks : null
+}
+
+// Groups system top-positions into page-sized chunks (SVG coordinate units).
+function paginateSolfaSystems(sysTops, totalH, usableFirstUnits, usableRestUnits) {
+  const n = sysTops.length
+  const bottoms = sysTops.slice(1).concat([totalH])
+  const slices = []
+  let pageStart = 0
+  let usable = usableFirstUnits
+  for (let i = 0; i < n; i++) {
+    const heightIfIncluded = bottoms[i] - sysTops[pageStart]
+    if (heightIfIncluded > usable && i > pageStart) {
+      slices.push({ y: sysTops[pageStart], height: bottoms[i - 1] - sysTops[pageStart] })
+      pageStart = i
+      usable = usableRestUnits
+    }
+  }
+  slices.push({ y: sysTops[pageStart], height: bottoms[n - 1] - sysTops[pageStart] })
+  return slices
+}
+
+function cropSolfaSvg(svg, totalW, y, height) {
+  const clone = svg.cloneNode(true)
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+  clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
+  clone.removeAttribute('width')
+  clone.removeAttribute('height')
+  clone.setAttribute('viewBox', `0 ${y} ${totalW} ${height}`)
+  clone.style.width  = '100%'
+  clone.style.height = 'auto'
+  clone.style.display = 'block'
+  return clone
+}
+
 export function exportSolfaPDF(score, svgElement) {
   const title = score?.title || 'Untitled'
   const key   = score?.key   || 'C'
@@ -236,101 +296,104 @@ export function exportSolfaPDF(score, svgElement) {
     return
   }
 
-  // Collect CSS: font-face rules from current doc
-  let allCSS = ''
-  try {
-    for (const sheet of Array.from(document.styleSheets)) {
-      try {
-        for (const rule of Array.from(sheet.cssRules || [])) {
-          if (rule.type === CSSRule.FONT_FACE_RULE) allCSS += rule.cssText + '\n'
-        }
-      } catch(_) {}
-    }
-  } catch(_) {}
-
-  const serializer = new XMLSerializer()
-  const clone = svgElement.cloneNode(true)
-  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
-  clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
-  clone.removeAttribute('width')
-  clone.removeAttribute('height')
-  clone.style.width  = '100%'
-  clone.style.height = 'auto'
-  const svgStr = serializer.serializeToString(clone)
+  // Clean up any leftovers from a previous print (e.g. if afterprint never fired)
+  document.getElementById('faithscore-solfa-print-root')?.remove()
+  document.getElementById('faithscore-solfa-print-style')?.remove()
 
   const partsInfo = (score.parts || [])
-    .map(p => `<span style="margin-right:16px"><strong>${p.label}</strong></span>`)
+    .map(p => `<span style="margin-right:14px"><strong>${escapeHtml(p.label)}</strong></span>`)
     .join('')
 
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>${title}</title>
-  <style>
-    ${allCSS}
-    * { margin:0; padding:0; box-sizing:border-box }
-    html, body { background: white; }
-    @page { size: A4 portrait; margin: 0; }
-    .page {
-      width: 210mm;
-      min-height: 297mm;
-      padding: 14mm 16mm 12mm 16mm;
-      background: white;
-      margin: 0 auto;
-    }
-    .header {
-      text-align: center;
-      margin-bottom: 7mm;
-      padding-bottom: 4mm;
-      border-bottom: 0.6pt solid #ccc;
-      font-family: 'Times New Roman', Times, serif;
-    }
-    .header h1 { font-size: 22pt; font-weight: bold; letter-spacing: -0.01em; }
-    .header .meta {
-      font-size: 10pt;
-      color: #555;
-      margin-top: 3mm;
-      display: flex;
-      justify-content: space-between;
-    }
-    .score-svg { width: 100%; height: auto; display: block; overflow: visible; }
-    @media screen {
-      body { background: #d1d5db; padding: 10mm 0; }
-      .page { box-shadow: 0 2px 16px rgba(0,0,0,0.18); }
-    }
-    @media print {
-      html, body { background: white; padding:0; margin:0; }
-    }
-  </style>
-</head>
-<body>
-  <div class="page">
-    <div class="header">
-      <h1>${title}</h1>
-      <div class="meta">
-        <span>Doh = ${key} &nbsp;·&nbsp; ${ts ? `${ts.beats}/${ts.beatType}` : '4/4'} &nbsp;·&nbsp; ♩ = ${tempo}</span>
-        <span>${partsInfo}</span>
-      </div>
-    </div>
-    <div class="score-svg">${svgStr}</div>
-  </div>
-  <script>
-    document.fonts.ready.then(() => setTimeout(() => window.print(), 500))
-  <\/script>
-</body>
-</html>`
+  // ── Build the print-only DOM ─────────────────────────────────────────────
+  const root = document.createElement('div')
+  root.id = 'faithscore-solfa-print-root'
 
-  const win = window.open('', '_blank')
-  if (!win) {
-    // Popup blocked — download HTML
-    const blob = new Blob([html], { type: 'text/html' })
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a'); a.href = url; a.download = `${title}.html`; a.click()
-    URL.revokeObjectURL(url)
-    return
+  const pageEl = document.createElement('div')
+  pageEl.className = 'sf-print-page'
+
+  const header = document.createElement('div')
+  header.className = 'sf-print-header'
+  header.innerHTML = `
+    <h1>${escapeHtml(title)}</h1>
+    <div class="sf-print-meta">
+      <span>Doh = ${escapeHtml(key)} &nbsp;·&nbsp; ${ts ? `${ts.beats}/${ts.beatType}` : '4/4'} &nbsp;·&nbsp; ♩ = ${tempo}</span>
+      <span>${partsInfo}</span>
+    </div>`
+  pageEl.appendChild(header)
+
+  const vb = svgElement.viewBox && svgElement.viewBox.baseVal
+  const totalW = (vb && vb.width)  || svgElement.width.baseVal.value  || svgElement.getBoundingClientRect().width
+  const totalH = (vb && vb.height) || svgElement.height.baseVal.value || svgElement.getBoundingClientRect().height
+
+  const scaleUnitsPerMm  = totalW / SF_USABLE_W_MM
+  const usableFirstUnits = (SF_USABLE_H_MM - SF_HEADER_H_MM_EST) * scaleUnitsPerMm
+  const usableRestUnits  = SF_USABLE_H_MM * scaleUnitsPerMm
+
+  const sysTops = findSolfaSystemTops(svgElement)
+  const slices = sysTops
+    ? paginateSolfaSystems(sysTops, totalH, Math.max(usableFirstUnits, 1), Math.max(usableRestUnits, 1))
+    : [{ y: 0, height: totalH }] // couldn't detect systems — fall back to one uncut block
+
+  slices.forEach((slice, i) => {
+    const clone = cropSolfaSvg(svgElement, totalW, slice.y, slice.height)
+    const row = document.createElement('div')
+    row.className = 'sf-print-row'
+    row.appendChild(clone)
+    if (i < slices.length - 1) {
+      row.style.breakAfter = 'page'
+      row.style.pageBreakAfter = 'always'
+    }
+    row.style.breakInside = 'avoid'
+    row.style.pageBreakInside = 'avoid'
+    pageEl.appendChild(row)
+  })
+
+  root.appendChild(pageEl)
+  document.body.appendChild(root)
+
+  // ── Print-only styling ───────────────────────────────────────────────────
+  const style = document.createElement('style')
+  style.id = 'faithscore-solfa-print-style'
+  style.textContent = `
+    #faithscore-solfa-print-root { display: none; }
+    .sf-print-header {
+      text-align: center; margin-bottom: 3mm; padding-bottom: 1.5mm;
+      border-bottom: 0.6pt solid #ccc; font-family: 'Times New Roman', Times, serif;
+    }
+    .sf-print-header h1 { font-size: 16pt; font-weight: bold; letter-spacing: -0.01em; margin: 0; }
+    .sf-print-header .sf-print-meta {
+      font-size: 9pt; color: #555; margin-top: 1.5mm;
+      display: flex; justify-content: space-between;
+    }
+    .sf-print-row { width: 100%; }
+    .sf-print-row svg { width: 100% !important; height: auto !important; display: block; overflow: visible; }
+    @media print {
+      body > *:not(#faithscore-solfa-print-root) { display: none !important; }
+      #faithscore-solfa-print-root { display: block !important; }
+      @page { size: ${SF_PAGE_W_MM}mm ${SF_PAGE_H_MM}mm; margin: ${SF_MARGIN_TOP}mm ${SF_MARGIN_SIDE}mm ${SF_MARGIN_BOT}mm ${SF_MARGIN_SIDE}mm; }
+    }
+  `
+  document.head.appendChild(style)
+
+  // Blank the page-title portion of the browser's print header for the
+  // duration of the job (the date/URL/page-number portions are controlled
+  // by the browser's own "Headers and footers" print setting and can't be
+  // touched from the page).
+  const prevTitle = document.title
+  document.title = ''
+
+  const cleanup = () => {
+    document.getElementById('faithscore-solfa-print-root')?.remove()
+    document.getElementById('faithscore-solfa-print-style')?.remove()
+    document.title = prevTitle
+    window.removeEventListener('afterprint', cleanup)
   }
-  win.document.open(); win.document.write(html); win.document.close()
+  window.addEventListener('afterprint', cleanup)
+
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    window.print()
+    setTimeout(cleanup, 8000)
+  }))
 }
 
 // ── Public: Export Audio (WAV) ───────────────────────────────────────────────

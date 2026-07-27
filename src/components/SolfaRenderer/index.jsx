@@ -289,7 +289,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer({onSelectEvent, onBeat},
       </g>
     )
     elems.push(<line key={`obar-${lineIdx}`} x1={leftEdge} y1={lineTop} x2={leftEdge} y2={lineBottom} stroke={C.barline} strokeWidth={1.5}/>)
-    elems.push(<text key={`mnum-${lineIdx}`} x={leftEdge+2} y={lineTop-2} fontFamily={FONT} fontSize={9} fill="#9ca3af">{lineCols[0]+1}</text>)
+    elems.push(<text key={`mnum-${lineIdx}`} data-sysmark="1" data-sysy={lineTop} x={leftEdge+2} y={lineTop-2} fontFamily={FONT} fontSize={9} fill="#9ca3af">{lineCols[0]+1}</text>)
 
     lineCols.forEach(col => { systemBoundsMap.current[col] = { top: lineTop, bottom: lineBottom } })
 
