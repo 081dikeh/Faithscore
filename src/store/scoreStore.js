@@ -300,11 +300,15 @@ export const useScoreStore = create((set, get) => ({
   setMeasuresPerLine: (v) => set({ measuresPerLine: Math.max(1, Math.min(16, Math.round(v))) }),
   setStaffSize: (v) => set({ staffSize: Math.max(6, Math.min(20, v)) }),
 
+  // ── Unsaved-changes tracking ────────────────────────────────────────────
+  isDirty: false,
+  markSaved: () => set({ isDirty: false }),
+
   // ── Snapshot (call before any mutation that should be undoable) ────────
   _snapshot: () => {
     const { score, _undoStack } = get()
     const stack = [..._undoStack, JSON.parse(JSON.stringify(score))]
-    set({ _undoStack: stack.slice(-50), _redoStack: [] })
+    set({ _undoStack: stack.slice(-50), _redoStack: [], isDirty: true })
   },
 
   undo: () => {
@@ -316,6 +320,7 @@ export const useScoreStore = create((set, get) => ({
       _undoStack: _undoStack.slice(0, -1),
       _redoStack: [JSON.parse(JSON.stringify(score)), ..._redoStack].slice(0, 50),
       selectedNoteId: null,
+      isDirty: true,
     })
     saveToStorage(prev)
   },
@@ -329,6 +334,7 @@ export const useScoreStore = create((set, get) => ({
       _undoStack: [..._undoStack, JSON.parse(JSON.stringify(score))].slice(-50),
       _redoStack: _redoStack.slice(1),
       selectedNoteId: null,
+      isDirty: true,
     })
     saveToStorage(next)
   },

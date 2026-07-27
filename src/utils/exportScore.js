@@ -341,12 +341,12 @@ function escapeHtml(str) {
 // A4 page geometry, matching the @page rule below (all in mm).
 const PAGE_W_MM   = 210
 const PAGE_H_MM   = 297
-const MARGIN_TOP  = 15
-const MARGIN_BOT  = 12
+const MARGIN_TOP  = 8
+const MARGIN_BOT  = 8
 const MARGIN_SIDE = 14
 const USABLE_W_MM    = PAGE_W_MM - MARGIN_SIDE * 2
 const USABLE_H_MM    = PAGE_H_MM - MARGIN_TOP - MARGIN_BOT
-const HEADER_H_MM_EST = 14 // rough estimate of .fs-print-header's rendered height
+const HEADER_H_MM_EST = 9 // rough estimate of .fs-print-header's rendered height
 
 // ScoreRenderer draws each system's starting measure number as text at a
 // fixed x=24, y = systemTopY - 10 (see ScoreRenderer's `ctx.fillText(String(startCol+1), 24, sysY-10)`).
@@ -471,11 +471,11 @@ export function printScore(score) {
   style.textContent = `
     #faithscore-print-root { display: none; }
     .fs-print-header {
-      text-align: center; margin-bottom: 4mm; padding-bottom: 2mm;
+      text-align: center; margin-bottom: 2mm; padding-bottom: 1mm;
       border-bottom: 0.5pt solid #ccc; font-family: 'Times New Roman', serif;
     }
-    .fs-print-header h1 { font-size: 18pt; font-weight: bold; margin: 0; }
-    .fs-print-header p  { font-size: 10pt; color: #555; text-align: right; margin: 1.5mm 0 0; }
+    .fs-print-header h1 { font-size: 15pt; font-weight: bold; margin: 0; }
+    .fs-print-header p  { font-size: 9pt; color: #555; text-align: right; margin: 1mm 0 0; }
     .fs-print-row { width: 100%; }
     .fs-print-row svg { width: 100% !important; height: auto !important; display: block; }
     @media print {
@@ -486,9 +486,22 @@ export function printScore(score) {
   `
   document.head.appendChild(style)
 
+  // The browser's own print header/footer (date/time, page title, URL, page
+  // numbers) is NOT something a web page can fully remove — it's controlled
+  // by the browser's print dialog ("Headers and footers" toggle), and there
+  // is no CSS/JS override for the date, URL, or page-number portions. The
+  // page TITLE portion, though, comes from document.title — so we blank
+  // that for the duration of the print job, which removes the "faithscore"
+  // text specifically. For the timestamp/URL to disappear too, the user
+  // still needs to switch off "Headers and footers" in their browser's
+  // print dialog (usually under "More settings").
+  const prevTitle = document.title
+  document.title = ''
+
   const cleanup = () => {
     document.getElementById('faithscore-print-root')?.remove()
     document.getElementById('faithscore-print-style')?.remove()
+    document.title = prevTitle
     window.removeEventListener('afterprint', cleanup)
   }
   window.addEventListener('afterprint', cleanup)

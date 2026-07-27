@@ -300,14 +300,18 @@ export const useSolfaStore = create((set,get) => ({
     selectedPartId:null,selectedMeasureIdx:null,selectedBeatIdx:null,selectedEventIdx:null,
   }),
 
+  // ── Unsaved-changes tracking ────────────────────────────────────────────
+  isDirty: false,
+  markSaved: () => set({ isDirty: false }),
+
   _snapshot: () => {
     const {score,_undoStack}=get()
-    set({_undoStack:[..._undoStack.slice(-30),JSON.parse(JSON.stringify(score))]})
+    set({_undoStack:[..._undoStack.slice(-30),JSON.parse(JSON.stringify(score))], isDirty:true})
   },
   undo: () => {
     const {_undoStack}=get()
     if (!_undoStack.length) return
-    set({score:_undoStack[_undoStack.length-1],_undoStack:_undoStack.slice(0,-1)})
+    set({score:_undoStack[_undoStack.length-1],_undoStack:_undoStack.slice(0,-1), isDirty:true})
   },
 
   // ── Place a note/rest/sustain event into a beat ───────────────────────────

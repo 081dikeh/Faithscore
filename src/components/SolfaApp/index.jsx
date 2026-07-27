@@ -588,7 +588,17 @@ export default function SolfaApp({ user, onGoHome }) {
   ]);
 
   async function saveToCloud() {
-    if (!user) return;
+    if (!user) {
+      try {
+        localStorage.setItem("faithscore_solfa_autosave", JSON.stringify({ ...score, _savedAt: Date.now() }));
+        setSaveMsg("Saved ✓");
+        useSolfaStore.getState().markSaved();
+        setTimeout(() => setSaveMsg(""), 3000);
+      } catch {
+        setSaveMsg("Save failed");
+      }
+      return;
+    }
     setSaving(true);
     setSaveMsg("");
     try {
@@ -612,6 +622,7 @@ export default function SolfaApp({ user, onGoHome }) {
         if (data?.id) useSolfaStore.getState().setCloudId(data.id);
       }
       setSaveMsg("Saved ✓");
+      useSolfaStore.getState().markSaved();
       setTimeout(() => setSaveMsg(""), 3000);
     } catch {
       setSaveMsg("Save failed");

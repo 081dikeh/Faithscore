@@ -4,6 +4,7 @@ import Toolbar from './components/Toolbar'
 import ScoreRenderer from './components/ScoreRenderer'
 import NoteEditor from './components/NoteEditor'
 import { useScoreStore, clearSavedScore } from './store/scoreStore'
+import { useSolfaStore } from './store/solfaStore'
 import HomeScreen from './components/HomeScreen'
 import AuthScreen from './components/AuthScreen'
 import Sidebar from './components/Sidebar'
@@ -58,9 +59,42 @@ export default function App() {
   }, [])
 
   const handleSignOut = async () => {
+    if (!confirmLeaveIfDirty()) return
     await supabase.auth.signOut()
     // onAuthStateChange SIGNED_OUT will clear user and reset view
   }
+
+  // ── Unsaved-changes protection ──────────────────────────────────────────
+  // Returns the isDirty flag for whichever editor is currently on screen.
+  const currentIsDirty = () => {
+    if (appView === 'editor') return useScoreStore.getState().isDirty
+    if (appView === 'solfa-editor') return useSolfaStore.getState().isDirty
+    return false
+  }
+
+  // Ask the user before leaving a score with unsaved changes. Returns true
+  // if it's OK to proceed (nothing unsaved, or the user chose to leave
+  // anyway), false if the navigation should be cancelled.
+  const confirmLeaveIfDirty = () => {
+    if (!currentIsDirty()) return true
+    return window.confirm(
+      "You have unsaved changes.\n\nPress Cancel to go back and save (Ctrl+S), or OK to leave without saving."
+    )
+  }
+
+  const goHome = () => { if (confirmLeaveIfDirty()) setAppView('home') }
+
+  // Browser-level protection: warns on tab close/refresh/back if there are
+  // unsaved changes, using the browser's own native "leave site?" dialog.
+  useEffect(() => {
+    const onBeforeUnload = (e) => {
+      if (!currentIsDirty()) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [appView])
 
   const inputMode              = useScoreStore(s => s.inputMode)
   const selectedMeasureIndex   = useScoreStore(s => s.selectedMeasureIndex)
@@ -418,7 +452,7 @@ export default function App() {
 
   // ── Solfa editor — completely standalone, separate from staff ──────────────
   if (appView === 'solfa-editor') {
-    return <SolfaApp user={user} onGoHome={() => setAppView('home')} />
+    return <SolfaApp user={user} onGoHome={goHome} />
   }
 
 
@@ -430,7 +464,7 @@ export default function App() {
       <div style={{ position: 'sticky', top: 0, zIndex: 50, flexShrink: 0 }}>
       <div data-menubar className="bg-white border-b border-gray-200 flex items-center h-10 px-3 gap-1 shadow-sm">
         {/* ── Logo + Home button ────────────────────────────── */}
-        <button onClick={() => setAppView('home')}
+        <button onClick={goHome}
           title="Back to Home"
           style={{ display:'flex', alignItems:'center', gap:5, fontWeight:700,
             fontSize:13, color:'#2563eb', marginRight:8, letterSpacing:'-0.3px',
@@ -528,7 +562,7 @@ export default function App() {
           // ── FILE ───────────────────────────────────────────────────────────
           const fileMenu = <>
             <Item icon="📄" label="New…"              shortcut="Ctrl+N"
-              onClick={() => { setAppView('home') }} />
+              onClick={goHome} />
             <Item icon="📂" label="Open…"             shortcut="Ctrl+O"   disabled />
             <Item icon=""   label="Open recent"       arrow               disabled />
             <Sep />
@@ -550,9 +584,11 @@ export default function App() {
                       }]).select('id').single()
                       if (data?.id) useScoreStore.getState().setCloudId(data.id)
                     }
+                    useScoreStore.getState().markSaved()
                     alert('Saved to cloud ☁')
                   } catch(e) { alert('Cloud save failed — saved locally instead.') }
                 } else {
+                  useScoreStore.getState().markSaved()
                   alert('Score saved to browser storage.')
                 }
               }} />
