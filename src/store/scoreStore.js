@@ -187,6 +187,18 @@ export const EMPTY_SCORE = {
   staffTexts:       [],   // { id, partId, measureIndex, beat, text }
   barlines:         [],   // { id, measureIndex, type: 'double'|'final'|'repeat-start'|'repeat-end'|'repeat-both' }
   octaveLines:      [],   // { id, partId, startMeasure, endMeasure, type: '8va'|'8vb' }
+  // Print/page layout — read by printScore() in utils/exportScore.js.
+  pageSettings: {
+    size: 'A4',              // 'A4' | 'Letter' | 'Legal' | 'A5'
+    marginTop: 8, marginBottom: 8, marginSide: 14, // mm
+  },
+}
+
+export const PAGE_SIZES_MM = {
+  A4:     { w: 210,   h: 297   },
+  Letter: { w: 215.9, h: 279.4 },
+  Legal:  { w: 215.9, h: 355.6 },
+  A5:     { w: 148,   h: 210   },
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -228,6 +240,7 @@ export const useScoreStore = create((set, get) => ({
     return {
       dynamics: [], hairpins: [], rehearsalMarks: [], staffTexts: [], barlines: [], octaveLines: [],
       ...saved,
+      pageSettings: { ...EMPTY_SCORE.pageSettings, ...(saved.pageSettings || {}) },
       parts: migratedParts,
     }
   })(),
@@ -299,6 +312,10 @@ export const useScoreStore = create((set, get) => ({
   setAutoLayout: (v) => set({ autoLayout: !!v }),
   setMeasuresPerLine: (v) => set({ measuresPerLine: Math.max(1, Math.min(16, Math.round(v))) }),
   setStaffSize: (v) => set({ staffSize: Math.max(6, Math.min(20, v)) }),
+  setPageSettings: (patch) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, pageSettings: { ...(s.score.pageSettings||EMPTY_SCORE.pageSettings), ...patch } } }))
+  },
 
   // ── Unsaved-changes tracking ────────────────────────────────────────────
   isDirty: false,

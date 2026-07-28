@@ -3,7 +3,7 @@
 // Export utilities: MusicXML, MIDI (via binary), Print/PDF
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { DURATION_BEATS, noteDuration, measureCapacity, normalizeMeasure } from '../store/scoreStore'
+import { DURATION_BEATS, noteDuration, measureCapacity, normalizeMeasure, PAGE_SIZES_MM } from '../store/scoreStore'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function xml(tag, attrs, ...children) {
@@ -580,14 +580,14 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
-// A4 page geometry, matching the @page rule below (all in mm).
-const PAGE_W_MM   = 210
-const PAGE_H_MM   = 297
-const MARGIN_TOP  = 8
-const MARGIN_BOT  = 8
-const MARGIN_SIDE = 14
-const USABLE_W_MM    = PAGE_W_MM - MARGIN_SIDE * 2
-const USABLE_H_MM    = PAGE_H_MM - MARGIN_TOP - MARGIN_BOT
+// A4 default page geometry (mm) — actual values used at print time come from
+// score.pageSettings (see Page Settings in the Format menu); these are just
+// the fallback for scores that predate that setting.
+const DEFAULT_PAGE_W_MM   = 210
+const DEFAULT_PAGE_H_MM   = 297
+const DEFAULT_MARGIN_TOP  = 8
+const DEFAULT_MARGIN_BOT  = 8
+const DEFAULT_MARGIN_SIDE = 14
 const HEADER_H_MM_EST = 9 // rough estimate of .fs-print-header's rendered height
 
 // ScoreRenderer draws each system's starting measure number as text at a
@@ -643,6 +643,16 @@ function cropSvg(svg, totalW, y, height) {
 export function printScore(score) {
   const title    = score?.title    || 'Untitled Score'
   const composer = score?.composer || ''
+
+  const ps = score?.pageSettings || {}
+  const sizeMm = PAGE_SIZES_MM[ps.size] || PAGE_SIZES_MM.A4
+  const PAGE_W_MM   = sizeMm.w
+  const PAGE_H_MM   = sizeMm.h
+  const MARGIN_TOP  = ps.marginTop    ?? DEFAULT_MARGIN_TOP
+  const MARGIN_BOT  = ps.marginBottom ?? DEFAULT_MARGIN_BOT
+  const MARGIN_SIDE = ps.marginSide   ?? DEFAULT_MARGIN_SIDE
+  const USABLE_W_MM = PAGE_W_MM - MARGIN_SIDE * 2
+  const USABLE_H_MM = PAGE_H_MM - MARGIN_TOP - MARGIN_BOT
 
   const pages = document.querySelectorAll('.score-page')
   if (!pages.length) { alert('Nothing to print yet — add some notes first.'); return }

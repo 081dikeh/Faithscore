@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import Toolbar from './components/Toolbar'
 import ScoreRenderer from './components/ScoreRenderer'
 import NoteEditor from './components/NoteEditor'
-import { useScoreStore, clearSavedScore } from './store/scoreStore'
+import { useScoreStore, clearSavedScore, PAGE_SIZES_MM } from './store/scoreStore'
 import { useSolfaStore } from './store/solfaStore'
 import HomeScreen from './components/HomeScreen'
 import AuthScreen from './components/AuthScreen'
@@ -17,9 +17,131 @@ import SolfaApp from './components/SolfaApp'
 const DURATION_KEYS = { '1':'w','2':'h','3':'q','4':'8','5':'16','6':'32','7':'64' }
 const KEY_TO_STEP   = { a:'A',b:'B',c:'C',d:'D',e:'E',f:'F',g:'G' }
 
+// ── Page Settings modal ───────────────────────────────────────────────────────
+// Controls the physical page size + margins used by Print (see printScore in
+// utils/exportScore.js), stored per-score in score.pageSettings.
+function PageSettingsModal({ pageSettings, onChange, onClose }) {
+  const ps = pageSettings || { size: 'A4', marginTop: 8, marginBottom: 8, marginSide: 14 }
+  const dims = PAGE_SIZES_MM[ps.size] || PAGE_SIZES_MM.A4
+
+  const field = (label, key, min, max) => (
+    <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 12.5, color: '#374151', marginBottom: 8 }}>
+      {label}
+      <input
+        type="number" min={min} max={max} step={1} value={ps[key]}
+        onChange={e => {
+          const v = Number(e.target.value)
+          if (!isNaN(v)) onChange({ [key]: Math.max(min, Math.min(max, v)) })
+        }}
+        style={{ width: 70, fontSize: 12.5, border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 8px', textAlign: 'right' }}
+      />
+    </label>
+  )
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 200,
+        display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background: 'white', borderRadius: 10, width: 340, padding: '18px 20px 16px',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.25)', fontFamily: 'system-ui,sans-serif' }}
+      >
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 14 }}>Page Settings</div>
+
+        <label style={{ display: 'block', fontSize: 12.5, color: '#374151', marginBottom: 6, fontWeight: 600 }}>
+          Page size
+        </label>
+        <select
+          value={ps.size}
+          onChange={e => onChange({ size: e.target.value })}
+          style={{ width: '100%', fontSize: 12.5, border: '1px solid #d1d5db', borderRadius: 6,
+            padding: '6px 8px', marginBottom: 14, color: '#111827' }}
+        >
+          {Object.keys(PAGE_SIZES_MM).map(k => (
+            <option key={k} value={k}>{k} ({PAGE_SIZES_MM[k].w}×{PAGE_SIZES_MM[k].h}mm)</option>
+          ))}
+        </select>
+
+        <div style={{ fontSize: 12.5, color: '#374151', marginBottom: 8, fontWeight: 600 }}>Margins (mm)</div>
+        {field('Top', 'marginTop', 0, 50)}
+        {field('Bottom', 'marginBottom', 0, 50)}
+        {field('Left / Right', 'marginSide', 0, 50)}
+
+        <div style={{ fontSize: 10.5, color: '#9ca3af', margin: '10px 0 16px', lineHeight: 1.4 }}>
+          Usable print area: {Math.max(0, dims.w - ps.marginSide * 2).toFixed(0)} ×{' '}
+          {Math.max(0, dims.h - ps.marginTop - ps.marginBottom).toFixed(0)} mm. These settings apply to Print / PDF output.
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button onClick={onClose}
+            style={{ fontSize: 12.5, fontWeight: 600, padding: '7px 16px', borderRadius: 7,
+              border: '1px solid #2563eb', background: '#2563eb', color: 'white', cursor: 'pointer' }}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Open Recent modal ─────────────────────────────────────────────────────────
+function OpenRecentModal({ items, loading, onPick, onClose }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 200,
+        display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background: 'white', borderRadius: 10, width: 380, maxHeight: '70vh',
+          display: 'flex', flexDirection: 'column', boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
+          fontFamily: 'system-ui,sans-serif', overflow: 'hidden' }}
+      >
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#111827', padding: '16px 18px 12px' }}>
+          Open Recent
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 10px' }}>
+          {loading && <div style={{ padding: '20px 10px', fontSize: 12.5, color: '#9ca3af', textAlign: 'center' }}>Loading…</div>}
+          {!loading && items.length === 0 && (
+            <div style={{ padding: '20px 10px', fontSize: 12.5, color: '#9ca3af', textAlign: 'center' }}>
+              No recent scores found.
+            </div>
+          )}
+          {!loading && items.map(it => (
+            <button key={it.key} onClick={() => onPick(it)}
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', width: '100%',
+                textAlign: 'left', padding: '9px 10px', borderRadius: 7, border: 'none',
+                background: 'none', cursor: 'pointer', marginBottom: 2 }}
+              onMouseEnter={e => e.currentTarget.style.background = '#f3f4f6'}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#1e2433' }}>{it.title || 'Untitled Score'}</span>
+              <span style={{ fontSize: 10.5, color: '#9ca3af', marginTop: 2 }}>
+                {it.ts ? new Date(it.ts).toLocaleString() : ''}
+              </span>
+            </button>
+          ))}
+        </div>
+        <div style={{ borderTop: '1px solid #f0f0f0', padding: '10px 18px', display: 'flex', justifyContent: 'flex-end' }}>
+          <button onClick={onClose}
+            style={{ fontSize: 12.5, fontWeight: 600, padding: '6px 14px', borderRadius: 7,
+              border: '1px solid #e5e7eb', background: 'white', color: '#374151', cursor: 'pointer' }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const score                  = useScoreStore(s => s.score)
   const [appView, setAppView] = useState('home')
+  const [showPageSettings, setShowPageSettings] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   // ── Auth state ─────────────────────────────────────────────────────────────
   const [user, setUser]           = useState(null)
@@ -84,7 +206,95 @@ export default function App() {
 
   const goHome = () => { if (confirmLeaveIfDirty()) setAppView('home') }
 
-  // ── Open… (MusicXML import) ─────────────────────────────────────────────
+  // ── Save / Save As ───────────────────────────────────────────────────────
+  // asNew=true (Save As): always creates a fresh cloud row / local slot and
+  // points this session at the new one, leaving the original untouched.
+  const doSave = async ({ asNew }) => {
+    let current = useScoreStore.getState().score
+    if (asNew) {
+      const suggested = (current.title || 'Untitled Score') + ' copy'
+      const newTitle = prompt('Save as:', suggested)
+      if (newTitle === null) return // cancelled
+      useScoreStore.getState().setTitle(newTitle || suggested)
+      useScoreStore.getState().setCloudId(null)
+      current = useScoreStore.getState().score
+    }
+
+    const localId = asNew ? crypto.randomUUID() : (current._localId || crypto.randomUUID())
+    try {
+      const toStore = { ...current, _localId: localId, _savedAt: Date.now() }
+      localStorage.setItem('faithscore_autosave', JSON.stringify(toStore))
+      localStorage.setItem(`faithscore_local_${localId}`, JSON.stringify(toStore))
+      useScoreStore.setState(s => ({ score: { ...s.score, _localId: localId } }))
+    } catch (_) {}
+
+    if (user) {
+      try {
+        const cloudId = current._cloudId || null
+        if (cloudId) {
+          await supabase.from('scores')
+            .update({ title: current.title || 'Untitled Score', data: current, updated_at: new Date().toISOString() })
+            .eq('id', cloudId).eq('user_id', user.id)
+        } else {
+          const { data } = await supabase.from('scores').insert([{
+            user_id: user.id, title: current.title || 'Untitled Score', data: current,
+          }]).select('id').single()
+          if (data?.id) useScoreStore.getState().setCloudId(data.id)
+        }
+        useScoreStore.getState().markSaved()
+        alert(asNew ? `Saved a new copy: "${current.title}" ☁` : 'Saved to cloud ☁')
+      } catch (e) {
+        alert('Cloud save failed — saved locally instead.')
+      }
+    } else {
+      useScoreStore.getState().markSaved()
+      alert(asNew ? `Saved a new copy locally: "${current.title}"` : 'Score saved to browser storage.')
+    }
+  }
+
+  // ── Open Recent ──────────────────────────────────────────────────────────
+  const [showOpenRecent, setShowOpenRecent] = useState(false)
+  const [recentScores, setRecentScores] = useState([])
+  const [recentLoading, setRecentLoading] = useState(false)
+
+  const handleOpenRecentClick = async () => {
+    if (!confirmLeaveIfDirty()) return
+    setShowOpenRecent(true)
+    setRecentLoading(true)
+    try {
+      if (user) {
+        const { data, error } = await supabase
+          .from('scores')
+          .select('id, title, updated_at, data')
+          .eq('user_id', user.id)
+          .order('updated_at', { ascending: false })
+          .limit(30)
+        if (!error && data) {
+          setRecentScores(data.map(row => ({
+            key: row.id, title: row.title, ts: new Date(row.updated_at).getTime(),
+            load: () => { useScoreStore.getState().loadScore({ ...row.data, _cloudId: row.id }) },
+          })))
+        } else {
+          setRecentScores([])
+        }
+      } else {
+        const items = []
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i)
+          if (!k?.startsWith('faithscore_local_')) continue
+          try {
+            const s = JSON.parse(localStorage.getItem(k))
+            if (s?.parts) items.push({ key: k, title: s.title || 'Untitled Score', ts: s._savedAt || 0, load: () => useScoreStore.getState().loadScore(s) })
+          } catch (_) {}
+        }
+        setRecentScores(items.sort((a, b) => b.ts - a.ts))
+      }
+    } finally {
+      setRecentLoading(false)
+    }
+  }
+
+
   const openFileInputRef = useRef(null)
   const handleOpenClick = () => {
     if (!confirmLeaveIfDirty()) return
@@ -401,6 +611,13 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return }
       if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return }
 
+      // Save / Save As — previously just a menu label with no actual shortcut wired up
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        doSave({ asNew: e.shiftKey })
+        return
+      }
+
       // Copy / Paste
       if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
         e.preventDefault()
@@ -435,7 +652,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [inputMode, selectedDuration, selectedDots, selectedMeasureIndex, selectedPartId, selectedNoteId, selectedOctave, chordMode, addChordNote, undo, redo, copyMeasure, pasteMeasure, transposeSelection, toggleTie, toggleSlurStart, zoom, setZoom, setMeasureRange, insertTriplet, selectedMarking, deleteSelectedMarking, clearMarkingSelection])
+  }, [inputMode, selectedDuration, selectedDots, selectedMeasureIndex, selectedPartId, selectedNoteId, selectedOctave, chordMode, addChordNote, undo, redo, copyMeasure, pasteMeasure, transposeSelection, toggleTie, toggleSlurStart, zoom, setZoom, setMeasureRange, insertTriplet, selectedMarking, deleteSelectedMarking, clearMarkingSelection, doSave])
 
   const handleContextMenu = e => {
     e.preventDefault()
@@ -498,6 +715,23 @@ export default function App() {
         style={{ display: 'none' }}
         onChange={handleOpenFileChosen}
       />
+
+      {showPageSettings && (
+        <PageSettingsModal
+          pageSettings={score.pageSettings}
+          onChange={patch => useScoreStore.getState().setPageSettings(patch)}
+          onClose={() => setShowPageSettings(false)}
+        />
+      )}
+
+      {showOpenRecent && (
+        <OpenRecentModal
+          items={recentScores}
+          loading={recentLoading}
+          onPick={it => { it.load(); setAppView('editor'); setShowOpenRecent(false) }}
+          onClose={() => setShowOpenRecent(false)}
+        />
+      )}
 
       {/* ── Sticky top chrome: menu + status + toolbar + shortcuts ── */}
       <div style={{ position: 'sticky', top: 0, zIndex: 50, flexShrink: 0 }}>
@@ -604,36 +838,13 @@ export default function App() {
               onClick={goHome} />
             <Item icon="📂" label="Open…"             shortcut="Ctrl+O"
               onClick={handleOpenClick} />
-            <Item icon=""   label="Open recent"       arrow               disabled />
+            <Item icon=""   label="Open recent"
+              onClick={handleOpenRecentClick} />
             <Sep />
             <Item icon="💾" label="Save"              shortcut="Ctrl+S"
-              onClick={async () => {
-                // Always save to localStorage
-                try { localStorage.setItem('faithscore_autosave', JSON.stringify({ ...score, _savedAt: Date.now() })) } catch(_) {}
-                // Also save to cloud if logged in
-                if (user) {
-                  try {
-                    const cloudId = score._cloudId || null
-                    if (cloudId) {
-                      await supabase.from('scores')
-                        .update({ title: score.title || 'Untitled Score', data: score, updated_at: new Date().toISOString() })
-                        .eq('id', cloudId).eq('user_id', user.id)
-                    } else {
-                      const { data } = await supabase.from('scores').insert([{
-                        user_id: user.id, title: score.title || 'Untitled Score', data: score,
-                      }]).select('id').single()
-                      if (data?.id) useScoreStore.getState().setCloudId(data.id)
-                    }
-                    useScoreStore.getState().markSaved()
-                    alert('Saved to cloud ☁')
-                  } catch(e) { alert('Cloud save failed — saved locally instead.') }
-                } else {
-                  useScoreStore.getState().markSaved()
-                  alert('Score saved to browser storage.')
-                }
-              }} />
-            <Item icon=""   label="Save as…"          shortcut="Ctrl+Shift+S" disabled />
-            <Item icon="☁️" label="Save to cloud…"                        disabled />
+              onClick={() => doSave({ asNew: false })} />
+            <Item icon=""   label="Save as…"          shortcut="Ctrl+Shift+S"
+              onClick={() => doSave({ asNew: true })} />
             <Sep />
             <Item icon=""   label="Export MusicXML"   shortcut="Ctrl+Shift+X"
               onClick={() => exportMusicXML(score)} />
@@ -751,7 +962,8 @@ export default function App() {
           // ── FORMAT ─────────────────────────────────────────────────────────
           const formatMenu = <>
             <Item icon=""  label="Style…"                                  disabled />
-            <Item icon=""  label="Page settings…"                          disabled />
+            <Item icon=""  label="Page settings…"
+              onClick={() => setShowPageSettings(true)} />
             <CheckItem label="Automatic layout (fit to width)"
               checked={useScoreStore.getState().autoLayout}
               onClick={() => useScoreStore.getState().setAutoLayout(true)} />
