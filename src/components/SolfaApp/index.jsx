@@ -1346,25 +1346,29 @@ export default function SolfaApp({ user, onGoHome }) {
           ))}
         </select>
 
-        {/* Lyrics mode — shows/hides the lyric underline ruler */}
+        {/* Lyrics mode — shows/hides the lyric underline ruler for every
+            slot at once (batch editing). Individual slots still preview
+            on hover even when this is off, see SolfaRenderer. */}
         <button
           onClick={() => setLyricsMode((v) => !v)}
-          title="Toggle lyrics underline"
+          title="Lyrics mode: show all lyric lines for typing. (Tip: hover any note to preview its lyric line even when this is off.)"
           style={{
-            width: 32,
             height: 32,
+            padding: "0 10px",
             borderRadius: 6,
             border: "none",
             cursor: "pointer",
             background: lyricsMode ? "#059669" : "#374151",
             color: "white",
-            fontSize: 13,
+            fontSize: 11,
+            fontWeight: 500,
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
+            gap: 5,
+            whiteSpace: "nowrap",
           }}
         >
-          🎤
+          🎤 Lyrics
         </button>
 
         {/* Mixer toggle */}

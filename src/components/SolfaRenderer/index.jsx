@@ -184,6 +184,10 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
   const [svgW, setSvgW] = useState(900);
   const [lyricEdit, setLyricEdit] = useState(null);
   const [hoveredSlurId, setHoveredSlurId] = useState(null);
+  // Which lyric slot the mouse is currently over — used to preview the
+  // (otherwise hidden) underline so first-time users can discover that
+  // the space under a note is clickable, without cluttering the score.
+  const [hoveredLyricId, setHoveredLyricId] = useState(null);
 
   // Expose SVG element to parent for PDF export
   useImperativeHandle(
@@ -738,10 +742,15 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
                 showLyricForPart(pIdx) &&
                 !instrumentalSet.has(col)
               ) {
-                // Underline ruler — hidden by default; only drawn while
-                // "lyrics mode" is switched on. Text below is unaffected,
-                // so turning this off just removes the rule, not the words.
-                if (lyricsMode) {
+                // Underline ruler — hidden by default. It's drawn in two
+                // cases: (1) "lyrics mode" is switched on globally, shown
+                // solid/full — for batch-entering lyrics across the piece;
+                // (2) the mouse is hovering this specific slot, shown
+                // faint/dashed — a discoverability hint so a first-time
+                // user learns "the space under a note is clickable"
+                // without the underline being visible all the time.
+                const isLyricHovered = hoveredLyricId === ev.id;
+                if (lyricsMode || isLyricHovered) {
                   elems.push(
                     <line
                       key={`lu-${ev.id}`}
@@ -751,7 +760,11 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
                       y2={lyricZoneY + lyricZoneH - 2}
                       stroke={C.lyricRul}
                       strokeWidth={0.6}
-                      style={{ pointerEvents: "none" }}
+                      strokeDasharray={lyricsMode ? undefined : "2,2"}
+                      style={{
+                        pointerEvents: "none",
+                        opacity: lyricsMode ? 1 : 0.55,
+                      }}
                     />,
                   );
                 }
@@ -778,6 +791,10 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
                     height={lyricZoneH}
                     fill="transparent"
                     style={{ cursor: "text" }}
+                    onMouseEnter={() => setHoveredLyricId(ev.id)}
+                    onMouseLeave={() =>
+                      setHoveredLyricId((cur) => (cur === ev.id ? null : cur))
+                    }
                     onClick={(e) => {
                       e.stopPropagation();
                       setLyricEdit({
@@ -1008,6 +1025,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
     inputMode,
     slurStart,
     hoveredSlurId,
+    hoveredLyricId,
     svgW,
     lyricsMode,
   ]);
