@@ -1176,6 +1176,24 @@ export default function SolfaApp({ user, onGoHome }) {
         >
           − Bar
         </button>
+        <Sep />
+
+        <button
+          onClick={() => setLyricsMode((v) => !v)}
+          title="Lyrics mode: show/hide the lyric underline"
+          style={{
+            padding: "3px 9px",
+            fontSize: 11,
+            fontWeight: 500,
+            border: lyricsMode ? "1px solid #059669" : "1px solid #d1d5db",
+            borderRadius: 5,
+            background: lyricsMode ? "#059669" : "white",
+            color: lyricsMode ? "white" : "#374151",
+            cursor: "pointer",
+          }}
+        >
+          🎤 Lyrics Mode
+        </button>
       </div>
 
       {/* ── Transport / Playback bar (pinned directly below toolbar) ── */}
@@ -1345,31 +1363,6 @@ export default function SolfaApp({ user, onGoHome }) {
             </option>
           ))}
         </select>
-
-        {/* Lyrics mode — shows/hides the lyric underline ruler for every
-            slot at once (batch editing). Individual slots still preview
-            on hover even when this is off, see SolfaRenderer. */}
-        <button
-          onClick={() => setLyricsMode((v) => !v)}
-          title="Lyrics mode: show all lyric lines for typing. (Tip: hover any note to preview its lyric line even when this is off.)"
-          style={{
-            height: 32,
-            padding: "0 10px",
-            borderRadius: 6,
-            border: "none",
-            cursor: "pointer",
-            background: lyricsMode ? "#059669" : "#374151",
-            color: "white",
-            fontSize: 11,
-            fontWeight: 500,
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            whiteSpace: "nowrap",
-          }}
-        >
-          🎤 Lyrics
-        </button>
 
         {/* Mixer toggle */}
         <button
