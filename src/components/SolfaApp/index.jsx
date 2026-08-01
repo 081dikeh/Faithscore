@@ -285,6 +285,10 @@ export default function SolfaApp({ user, onGoHome }) {
   const [saveMsg, setSaveMsg] = useState("");
   const [showChromatic, setShowChromatic] = useState(false);
   const [showMixer, setShowMixer] = useState(false);
+  // Lyrics mode: underline ruler beneath lyrics is hidden by default and
+  // only shown while this is toggled on (handy while entering/checking
+  // lyric alignment); lyric text itself is always visible either way.
+  const [lyricsMode, setLyricsMode] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState("choir_african");
   const [partVolumes, setPartVolumes] = useState({});
   const [zoom, setZoom] = useState(1.0);
@@ -1342,6 +1346,27 @@ export default function SolfaApp({ user, onGoHome }) {
           ))}
         </select>
 
+        {/* Lyrics mode — shows/hides the lyric underline ruler */}
+        <button
+          onClick={() => setLyricsMode((v) => !v)}
+          title="Toggle lyrics underline"
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 6,
+            border: "none",
+            cursor: "pointer",
+            background: lyricsMode ? "#059669" : "#374151",
+            color: "white",
+            fontSize: 13,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          🎤
+        </button>
+
         {/* Mixer toggle */}
         <button
           onClick={() => setShowMixer((v) => !v)}
@@ -1635,6 +1660,7 @@ export default function SolfaApp({ user, onGoHome }) {
               <SolfaRenderer
                 ref={rendererRef}
                 onBeat={onBeat}
+                lyricsMode={lyricsMode}
                 onSelectEvent={(partId, mIdx, bi, ei) => {
                   useSolfaStore.getState().selectEvent(partId, mIdx, bi, ei);
                 }}

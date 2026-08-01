@@ -32,7 +32,7 @@ import {
 } from "../../store/solfaStore";
 
 const FONT = '"Times New Roman", Georgia, serif';
-const NOTE_SZ = 13;
+const NOTE_SZ = 14;
 const OCT_SZ = 8;
 const SYM_SZ = 10;
 const LYR_SZ = 14;
@@ -162,7 +162,7 @@ function InlineLyricEditor({ x, y, w, value, onCommit, onCancel }) {
 }
 
 const SolfaRenderer = forwardRef(function SolfaRenderer(
-  { onSelectEvent, onBeat },
+  { onSelectEvent, onBeat, lyricsMode = false },
   ref,
 ) {
   // The playback cursor is driven by direct DOM mutation, NOT React state.
@@ -738,18 +738,23 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
                 showLyricForPart(pIdx) &&
                 !instrumentalSet.has(col)
               ) {
-                elems.push(
-                  <line
-                    key={`lu-${ev.id}`}
-                    x1={x}
-                    y1={lyricZoneY + lyricZoneH - 2}
-                    x2={x + lyricSlotW}
-                    y2={lyricZoneY + lyricZoneH - 2}
-                    stroke={C.lyricRul}
-                    strokeWidth={0.6}
-                    style={{ pointerEvents: "none" }}
-                  />,
-                );
+                // Underline ruler — hidden by default; only drawn while
+                // "lyrics mode" is switched on. Text below is unaffected,
+                // so turning this off just removes the rule, not the words.
+                if (lyricsMode) {
+                  elems.push(
+                    <line
+                      key={`lu-${ev.id}`}
+                      x1={x}
+                      y1={lyricZoneY + lyricZoneH - 2}
+                      x2={x + lyricSlotW}
+                      y2={lyricZoneY + lyricZoneH - 2}
+                      stroke={C.lyricRul}
+                      strokeWidth={0.6}
+                      style={{ pointerEvents: "none" }}
+                    />,
+                  );
+                }
                 elems.push(
                   <text
                     key={`ly-${ev.id}`}
@@ -1004,6 +1009,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
     slurStart,
     hoveredSlurId,
     svgW,
+    lyricsMode,
   ]);
 
   // ── Playback cursor — red vertical line tracking beat position ─────────────
