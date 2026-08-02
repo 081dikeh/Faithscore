@@ -32,7 +32,7 @@ import {
 } from "../../store/solfaStore";
 
 const FONT = '"Times New Roman", Georgia, serif';
-const NOTE_SZ = 14;
+const NOTE_SZ = 13;
 const OCT_SZ = 8;
 const SYM_SZ = 10;
 const LYR_SZ = 14;
