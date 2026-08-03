@@ -32,11 +32,11 @@ const DYNAMICS = ['ppp','pp','p','mp','mf','f','ff','fff','sfz']
 const EXPRESSION = ['D.C.','D.S.','Fine','Coda','rall.']
 
 // ── Palette item ─────────────────────────────────────────────────────────────
-function PaletteItem({ label, onClick, symbol, disabled, active }) {
+function PaletteItem({ label, onClick, symbol, disabled, active, disabledHint }) {
   return (
     <button onClick={disabled ? undefined : onClick}
       disabled={disabled}
-      title={disabled ? 'Select a beat first' : label}
+      title={disabled ? (disabledHint || 'Select a beat first') : label}
       style={{
         display:'flex', flexDirection:'column', alignItems:'center',
         justifyContent:'center', gap:2,
@@ -86,8 +86,10 @@ function PaletteSection({ title, children, defaultOpen = false }) {
 }
 
 // ── Palettes tab ─────────────────────────────────────────────────────────────
-// Key & time signature apply globally. Tempo / dynamics / text marks attach to
-// whatever beat is currently selected on the score (click a beat first).
+// Key applies globally. Time signature inserts a change AT the selected bar,
+// in effect until the next change (or end of score) — select a bar first.
+// Tempo / dynamics / text marks attach to whatever beat is currently
+// selected on the score (click a beat first).
 function PalettesTab({ search }) {
   const score              = useSolfaStore(s => s.score)
   const selectedPartId     = useSolfaStore(s => s.selectedPartId)
@@ -95,11 +97,20 @@ function PalettesTab({ search }) {
   const selectedBeatIdx    = useSolfaStore(s => s.selectedBeatIdx)
   const setKey              = useSolfaStore(s => s.setKey)
   const setTempo             = useSolfaStore(s => s.setTempo)
-  const changeTimeSig        = useSolfaStore(s => s.changeTimeSig)
+  const changeTimeSigAt      = useSolfaStore(s => s.changeTimeSigAt)
   const addMark               = useSolfaStore(s => s.addMark)
 
   const hasSelection = selectedPartId !== null && selectedMeasureIdx !== null && selectedBeatIdx !== null
-  const currentTS = `${score.timeSignature?.beats || 4}/${score.timeSignature?.beatType || 4}`
+  // Time signature only needs a BAR selected (not a specific beat) — it's
+  // a per-measure change, inserted at whichever bar is selected.
+  const hasBarSelection = selectedMeasureIdx !== null
+  // Reflect the EFFECTIVE signature of the selected bar (or bar 1 if
+  // nothing's selected yet) — not a single score-wide value — since a
+  // score can now contain several time-signature sections.
+  const selectedBarTs = selectedMeasureIdx !== null
+    ? score.parts[0]?.measures?.[selectedMeasureIdx]?.timeSignature
+    : score.parts[0]?.measures?.[0]?.timeSignature
+  const currentTS = `${selectedBarTs?.beats || score.timeSignature?.beats || 4}/${selectedBarTs?.beatType || score.timeSignature?.beatType || 4}`
 
   const handleTempoMark = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'tempo')
   const handleDynamic   = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'dynamic')
@@ -114,7 +125,8 @@ function PalettesTab({ search }) {
     {
       title:'Time Signature', items: TIME_SIGS.map(t => ({
         symbol:t.label, label:t.label, active: currentTS===t.label,
-        onClick:()=>changeTimeSig(t.beats, t.beatType),
+        disabled: !hasBarSelection, disabledHint: 'Select a bar first',
+        onClick:()=>hasBarSelection && changeTimeSigAt(selectedMeasureIdx, t.beats, t.beatType),
       })),
     },
     {
@@ -164,8 +176,9 @@ function PalettesTab({ search }) {
         color: hasSelection ? '#1d4ed8' : '#9a5b13',
         borderBottom:'1px solid #f0f0f0',
       }}>
-        {!hasSelection && 'Select a beat on the score to place tempo / dynamics / text marks.'}
-        {hasSelection && `Applying to bar ${selectedMeasureIdx+1}, beat ${selectedBeatIdx+1}.`}
+        {!hasBarSelection && 'Select a bar to insert a time signature change there, or a beat to place tempo / dynamics / text marks.'}
+        {hasBarSelection && !hasSelection && `Bar ${selectedMeasureIdx+1} selected — Time Signature will insert a change here, in effect until the next change. Select a beat for tempo / dynamics / text marks.`}
+        {hasSelection && `Applying to bar ${selectedMeasureIdx+1}, beat ${selectedBeatIdx+1}. Time Signature will insert a change at bar ${selectedMeasureIdx+1}.`}
       </div>
       {filtered.map((p, i) => (
         <PaletteSection key={p.title} title={p.title} defaultOpen={i < 2}>

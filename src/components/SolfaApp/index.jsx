@@ -1126,30 +1126,25 @@ export default function SolfaApp({ user, onGoHome }) {
         </div>
         <Sep />
 
-        {/* Time signature */}
+        {/* Time signature — read-only display of the score's starting
+            meter. Mid-score changes are inserted per-bar via the sidebar
+            (select a bar → Time Signature), not changed globally here. */}
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ fontSize: 10, color: "#6b7280" }}>Time:</span>
-          <select
-            value={currentTS}
-            onChange={(e) => {
-              const ts = TIME_SIGS.find((t) => t.label === e.target.value);
-              if (ts) changeTimeSig(ts.beats, ts.beatType);
-            }}
+          <span
+            title="This is the score's starting time signature and can't be changed once composing has begun. To change the meter partway through the piece, select a bar and use Time Signature in the sidebar."
             style={{
               fontSize: 12,
-              border: "1px solid #d1d5db",
+              border: "1px solid #e5e7eb",
               borderRadius: 5,
-              padding: "2px 6px",
-              background: "white",
-              color: "#374151",
+              padding: "3px 8px",
+              background: "#f9fafb",
+              color: "#6b7280",
+              cursor: "default",
             }}
           >
-            {TIME_SIGS.map((t) => (
-              <option key={t.label} value={t.label}>
-                {t.label}
-              </option>
-            ))}
-          </select>
+            {currentTS}
+          </span>
         </div>
         <Sep />
 

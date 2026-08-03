@@ -618,6 +618,12 @@ export const useScoreStore = create((set, get) => ({
     score: { ...s.score, parts: s.score.parts.map(p => ({ ...p, measures: p.measures.map(m => ({ ...m, keySignature })) })) },
   })),
 
+  // DEPRECATED: applies to every measure, in every part, across the whole
+  // score. Kept only so any leftover call sites don't crash — new UI uses
+  // setTimeSignatureFrom() below, which inserts a change starting at a
+  // given measure and lets it run until the next explicit change (or the
+  // end of the score), matching how notation software actually treats
+  // time signatures: a per-measure event, not a global setting.
   setGlobalTimeSignature: (beatsOrObj, beatType) => {
     // Accept either setGlobalTimeSignature({beats,beatType}) or setGlobalTimeSignature(beats, beatType)
     const ts = (typeof beatsOrObj === 'object' && beatsOrObj !== null)
@@ -656,6 +662,57 @@ export const useScoreStore = create((set, get) => ({
         })),
       },
     }))
+  },
+
+  // Inserts/replaces a time signature starting at `measureIndex`, in effect
+  // until the next measure that already has its own explicit change (or
+  // the end of the score) — like inserting a time-signature change in
+  // notation software. Measures before `measureIndex` are untouched.
+  setTimeSignatureFrom: (measureIndex, beatsOrObj, beatType) => {
+    const ts = (typeof beatsOrObj === 'object' && beatsOrObj !== null)
+      ? beatsOrObj
+      : { beats: beatsOrObj, beatType }
+    if (!ts.beats || !ts.beatType) return
+    set(s => {
+      const ref = s.score.parts[0]?.measures || []
+      // Section runs up to (not including) the next measure that's
+      // already an explicit change point, or to the end of the score.
+      let endIdx = ref.length
+      for (let i = measureIndex + 1; i < ref.length; i++) {
+        if (ref[i]?.timeSigChange) { endIdx = i; break }
+      }
+      const cap = measureCapacity(ts)
+      return {
+        score: {
+          ...s.score,
+          parts: s.score.parts.map(p => ({
+            ...p,
+            measures: p.measures.map((m, mIdx) => {
+              if (mIdx < measureIndex || mIdx >= endIdx) return m
+              const realNotes = m.notes.filter(n => !n.isRest)
+              const keptNotes = []
+              let cursor = 0
+              for (const n of realNotes) {
+                const dur = noteDuration(n)
+                if (cursor + dur > cap + 0.001) break
+                keptNotes.push(n)
+                cursor += dur
+              }
+              const remaining = cap - cursor
+              const freshRests = remaining > 0.001
+                ? makeRests(remaining, 'ts_' + ts.beats + '_' + ts.beatType + '_m' + mIdx)
+                : []
+              return {
+                ...m,
+                timeSignature: ts,
+                timeSigChange: mIdx === measureIndex,
+                notes: [...keptNotes, ...freshRests],
+              }
+            }),
+          })),
+        },
+      }
+    })
   },
 
   // ── Core note mutation: always normalizes after every change ───────────────

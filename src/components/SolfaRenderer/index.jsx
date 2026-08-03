@@ -32,7 +32,7 @@ import {
 } from "../../store/solfaStore";
 
 const FONT = '"Times New Roman", Georgia, serif';
-const NOTE_SZ = 13;
+const NOTE_SZ = 14;
 const OCT_SZ = 8;
 const SYM_SZ = 10;
 const LYR_SZ = 14;
@@ -260,7 +260,11 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
 
     const rawMWs = Array.from({ length: numM }, (_, i) => {
       const m = migrateMeasure(parts[0]?.measures[i]);
-      return measureWidth(m, slashSet);
+      // Each bar's beat-separator ("/" vs ":") grouping follows ITS OWN
+      // time signature, not the score's starting one — matters once a
+      // score has a mid-score meter change.
+      const mTs = m.timeSignature || { beats: topNum, beatType: botNum };
+      return measureWidth(m, slashPositions(mTs.beats, mTs.beatType));
     });
 
     const leftEdge = PAGE_L + BRAK_W + LABEL_W;
@@ -454,9 +458,40 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
 
         lineCols.forEach((col, ci) => {
           const measure = migrateMeasure(part.measures[col]);
+          const mTs = measure.timeSignature || { beats: topNum, beatType: botNum };
+          const colSlashSet = slashPositions(mTs.beats, mTs.beatType);
           const scaledMW = rawMWs[col] * sc2;
-          const rawW = measureWidth(measure, slashSet);
+          const rawW = measureWidth(measure, colSlashSet);
           const sc3 = rawW > 0 ? scaledMW / rawW : 1;
+
+          // Mid-score meter change marker — drawn once, above the top
+          // part only, exactly at the bar where the time signature
+          // actually changes (bar 1's signature is covered by the page
+          // header, so col 0 never needs this).
+          if (pIdx === 0 && col > 0) {
+            const prevM = migrateMeasure(parts[0]?.measures[col - 1]);
+            const prevTs = prevM.timeSignature || { beats: topNum, beatType: botNum };
+            const tsChanged =
+              prevTs.beats !== mTs.beats || prevTs.beatType !== mTs.beatType;
+            if (tsChanged) {
+              // Nudge right when this bar also starts a new line, so we
+              // don't sit on top of the small bar-number label there.
+              const xOff = ci === 0 ? 16 : 3;
+              elems.push(
+                <text
+                  key={`tschange-${lineIdx}-${col}`}
+                  x={colXs[ci] + xOff}
+                  y={lineTop - 2}
+                  fontFamily={FONT}
+                  fontSize={11}
+                  fontWeight={700}
+                  fill={C.label}
+                >
+                  {mTs.beats}/{mTs.beatType}
+                </text>,
+              );
+            }
+          }
 
           // Alternating measure background — covers note row + lyric row
           if (col % 2 !== 0) {
@@ -479,7 +514,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
 
             // Beat separator
             if (bi > 0) {
-              const isSlash = slashSet.has(bi - 1);
+              const isSlash = colSlashSet.has(bi - 1);
               const sw = SEP_W * sc3;
               elems.push(
                 <text

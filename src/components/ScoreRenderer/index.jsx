@@ -340,9 +340,18 @@ export default function ScoreRenderer() {
 
     // First-measure overhead: clef + key sig + time sig
     function getGlyphOverhead(colIdx, isFirstInLine) {
-      if (!isFirstInLine) return SP * 1.2;
-      const keySig = score.parts[0]?.measures[colIdx]?.keySignature ?? 0;
-      return SP * 2.2 + Math.abs(keySig) * SP * 0.7 + SP * 1.6 + SP * 0.6;
+      if (isFirstInLine) {
+        const keySig = score.parts[0]?.measures[colIdx]?.keySignature ?? 0;
+        return SP * 2.2 + Math.abs(keySig) * SP * 0.7 + SP * 1.6 + SP * 0.6;
+      }
+      // Mid-line meter change: reserve room for the time-signature glyph
+      // itself, even though this bar isn't first in its line.
+      const prevTs = score.parts[0]?.measures[colIdx - 1]?.timeSignature;
+      const thisTs = score.parts[0]?.measures[colIdx]?.timeSignature;
+      const tsChanged =
+        prevTs && thisTs &&
+        (prevTs.beats !== thisTs.beats || prevTs.beatType !== thisTs.beatType);
+      return tsChanged ? SP * 1.2 + SP * 1.6 + SP * 0.4 : SP * 1.2;
     }
 
     // ── Dynamic line breaking (MuseScore-style) ───────────────────────────────
@@ -504,6 +513,20 @@ export default function ScoreRenderer() {
             stave.addTimeSignature(
               `${measure.timeSignature.beats}/${measure.timeSignature.beatType}`,
             );
+          } else {
+            // Mid-line meter change — VexFlow only auto-shows clef/key/time
+            // at a line's first measure, so a change landing further along
+            // the same system needs its glyph added explicitly here.
+            const prevTs = part.measures[col - 1]?.timeSignature;
+            const tsChanged =
+              prevTs &&
+              (prevTs.beats !== measure.timeSignature.beats ||
+                prevTs.beatType !== measure.timeSignature.beatType);
+            if (tsChanged) {
+              stave.addTimeSignature(
+                `${measure.timeSignature.beats}/${measure.timeSignature.beatType}`,
+              );
+            }
           }
 
           // ── Custom barline (applies to every part's stave in this column,

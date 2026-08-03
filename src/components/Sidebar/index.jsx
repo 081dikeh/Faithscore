@@ -197,14 +197,18 @@ function PalettesTab({ search }) {
       ]
     },
     {
-      title:'Time Signatures', items:[
-        { symbol:'4/4', label:'4/4',  onClick:()=>useScoreStore.getState().setGlobalTimeSignature({beats:4,beatType:4}) },
-        { symbol:'3/4', label:'3/4',  onClick:()=>useScoreStore.getState().setGlobalTimeSignature({beats:3,beatType:4}) },
-        { symbol:'2/4', label:'2/4',  onClick:()=>useScoreStore.getState().setGlobalTimeSignature({beats:2,beatType:4}) },
-        { symbol:'6/8', label:'6/8',  onClick:()=>useScoreStore.getState().setGlobalTimeSignature({beats:6,beatType:8}) },
-        { symbol:'𝄵',  label:'Cut',   onClick:()=>useScoreStore.getState().setGlobalTimeSignature({beats:2,beatType:2}) },
-        { symbol:'𝄴',  label:'Common',onClick:()=>useScoreStore.getState().setGlobalTimeSignature({beats:4,beatType:4}) },
-      ]
+      title:'Time Signatures', items: [
+        { symbol:'4/4', label:'4/4',  beats:4, beatType:4 },
+        { symbol:'3/4', label:'3/4',  beats:3, beatType:4 },
+        { symbol:'2/4', label:'2/4',  beats:2, beatType:4 },
+        { symbol:'6/8', label:'6/8',  beats:6, beatType:8 },
+        { symbol:'𝄵',  label:'Cut',   beats:2, beatType:2 },
+        { symbol:'𝄴',  label:'Common',beats:4, beatType:4 },
+      ].map(t => ({
+        ...t,
+        disabled: !hasSelection,
+        onClick: () => hasSelection && useScoreStore.getState().setTimeSignatureFrom(range[0], { beats: t.beats, beatType: t.beatType }),
+      }))
     },
     {
       title:'Tempo', items:[

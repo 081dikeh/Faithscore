@@ -551,9 +551,15 @@ export const useSolfaStore = create((set,get) => ({
 
   addMeasure: () => {
     set(s=>{
-      const beats=s.score.timeSignature.beats
+      // Inherit whatever time signature is currently active at the END of
+      // the score (the last measure's own ts), not the score-wide starting
+      // one — so appending bars after a mid-score meter change keeps that
+      // meter going, matching notation-software behaviour.
+      const lastM = s.score.parts[0]?.measures?.[s.score.parts[0].measures.length - 1]
+      const beats = lastM?.timeSignature?.beats || s.score.timeSignature.beats
+      const beatType = lastM?.timeSignature?.beatType || s.score.timeSignature.beatType || 4
       const parts=s.score.parts.map(p=>({
-        ...p,measures:[...p.measures,makeEmptyMeasure(beats)],
+        ...p,measures:[...p.measures,{ ...makeEmptyMeasure(beats), timeSignature: { beats, beatType } }],
       }))
       return {score:{...s.score,parts}}
     })
@@ -574,6 +580,10 @@ export const useSolfaStore = create((set,get) => ({
     })
   },
 
+  // DEPRECATED: applies to the whole score, every measure, every part.
+  // Kept only so any leftover call sites don't crash. New UI should use
+  // changeTimeSigAt() below, which matches how notation software actually
+  // treats time signatures — as a per-measure event, not a global setting.
   changeTimeSig: (newBeats,newBeatType) => {
     set(s=>{
       const ts={beats:newBeats,beatType:newBeatType}
@@ -587,6 +597,39 @@ export const useSolfaStore = create((set,get) => ({
         }),
       }))
       return {score:{...s.score,timeSignature:ts,parts}}
+    })
+  },
+
+  // Inserts/replaces a time signature starting at `measureIdx`, in effect
+  // until the next measure that already has its own explicit change (or
+  // the end of the score) — exactly like inserting a time signature change
+  // in notation software. Measures before `measureIdx` are untouched.
+  changeTimeSigAt: (measureIdx, newBeats, newBeatType) => {
+    get()._snapshot()
+    set(s => {
+      const ts = { beats: newBeats, beatType: newBeatType }
+      const ref = s.score.parts[0]?.measures || []
+      // Find the next measure (after this one) that's already an explicit
+      // change point — our new section runs up to, but not including, it.
+      let endIdx = ref.length
+      for (let i = measureIdx + 1; i < ref.length; i++) {
+        if (ref[i]?.timeSigChange) { endIdx = i; break }
+      }
+      const parts = s.score.parts.map(p => ({
+        ...p,
+        measures: p.measures.map((m, i) => {
+          if (i < measureIdx || i >= endIdx) return m
+          let beats = [...(m.beats || [])]
+          while (beats.length < newBeats) beats.push(makeEmptyBeat())
+          if (beats.length > newBeats) beats = beats.slice(0, newBeats)
+          return { ...m, timeSignature: ts, beats, timeSigChange: i === measureIdx }
+        }),
+      }))
+      // score.timeSignature represents the piece's *starting* meter (used
+      // when appending brand-new measures past the end, and shown in the
+      // page header) — only move it if the change point is bar 1 itself.
+      const scoreTs = measureIdx === 0 ? ts : s.score.timeSignature
+      return { score: { ...s.score, timeSignature: scoreTs, parts } }
     })
   },
 
