@@ -189,12 +189,20 @@ function PalettesTab({ search }) {
     },
     {
       title:'Key Signatures', items:[
-        { symbol:'♮',  label:'C maj',     onClick:()=>useScoreStore.getState().setGlobalKeySignature(0) },
-        { symbol:'♯',  label:'G maj',     onClick:()=>useScoreStore.getState().setGlobalKeySignature(1) },
-        { symbol:'♯♯', label:'D maj',     onClick:()=>useScoreStore.getState().setGlobalKeySignature(2) },
-        { symbol:'♭',  label:'F maj',     onClick:()=>useScoreStore.getState().setGlobalKeySignature(-1) },
-        { symbol:'♭♭', label:'Bb maj',    onClick:()=>useScoreStore.getState().setGlobalKeySignature(-2) },
-      ]
+        { symbol:'♮',    label:'C maj',  keySignature:0 },
+        { symbol:'♯',    label:'G maj',  keySignature:1 },
+        { symbol:'♯♯',   label:'D maj',  keySignature:2 },
+        { symbol:'♯♯♯',  label:'A maj',  keySignature:3 },
+        { symbol:'♯♯♯♯', label:'E maj',  keySignature:4 },
+        { symbol:'♭',    label:'F maj',  keySignature:-1 },
+        { symbol:'♭♭',   label:'Bb maj', keySignature:-2 },
+        { symbol:'♭♭♭',  label:'Eb maj', keySignature:-3 },
+        { symbol:'♭♭♭♭', label:'Ab maj', keySignature:-4 },
+      ].map(k => ({
+        ...k,
+        disabled: !hasSelection,
+        onClick: () => hasSelection && useScoreStore.getState().setKeySignatureFrom(range[0], k.keySignature),
+      }))
     },
     {
       title:'Time Signatures', items: [

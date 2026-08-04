@@ -77,18 +77,19 @@ function makeEmptyBeat() {
 }
 
 // A measure with `numBeats` empty beats
-function makeEmptyMeasure(numBeats=4) {
+function makeEmptyMeasure(numBeats=4, key='C') {
   return {
     id:uid(),
     timeSignature:{beats:numBeats,beatType:4},
+    key,
     beats:Array.from({length:numBeats},()=>makeEmptyBeat()),
   }
 }
 
-function makePart(voiceDef, numMeasures=12, numBeats=4) {
+function makePart(voiceDef, numMeasures=12, numBeats=4, key='C') {
   return {
     id:voiceDef.id, name:voiceDef.name, label:voiceDef.label,
-    measures:Array.from({length:numMeasures},()=>makeEmptyMeasure(numBeats)),
+    measures:Array.from({length:numMeasures},()=>makeEmptyMeasure(numBeats, key)),
   }
 }
 
@@ -98,7 +99,7 @@ export function buildEmptySolfaScore(voiceComboKey='satb',key='C',beats=4,numMea
     id:uid(), type:'solfa', title:'Untitled', key,
     tempo:80, timeSignature:{beats,beatType:4},
     voiceCombo:voiceComboKey,
-    parts:combo.voices.map(v=>makePart(v,numMeasures,beats)),
+    parts:combo.voices.map(v=>makePart(v,numMeasures,beats,key)),
     sections:[], slurs:[], marks:[], _savedAt:null, _cloudId:null,
     lyricLayout:'inline', lyricDuplication:'per-voice-copy',
     verses:[], navigationMarkers:[], instrumentalMeasures:[],
@@ -193,6 +194,10 @@ export const useSolfaStore = create((set,get) => ({
   slurStart:          null,   // { partId, measureIdx, beatIdx, eventIdx } | null
 
   setTitle:   t  => set(s=>({score:{...s.score,title:t}})),
+  // DEPRECATED for mid-score use: rewrites the score's starting key only —
+  // it does NOT touch any measure's key. Kept for score creation (Wizard)
+  // where there's nothing to modulate from yet. For modulating partway
+  // through a piece, use changeKeyAt() below.
   setKey:     k  => set(s=>({score:{...s.score,key:k}})),
   setTempo:   t  => set(s=>({score:{...s.score,tempo:t}})),
   setCloudId: id => set(s=>({score:{...s.score,_cloudId:id}})),
@@ -551,15 +556,16 @@ export const useSolfaStore = create((set,get) => ({
 
   addMeasure: () => {
     set(s=>{
-      // Inherit whatever time signature is currently active at the END of
-      // the score (the last measure's own ts), not the score-wide starting
-      // one — so appending bars after a mid-score meter change keeps that
-      // meter going, matching notation-software behaviour.
+      // Inherit whatever time signature AND key are currently active at the
+      // END of the score (the last measure's own values), not the score's
+      // starting ones — so appending bars after a mid-score change keeps
+      // that meter/key going, matching notation-software behaviour.
       const lastM = s.score.parts[0]?.measures?.[s.score.parts[0].measures.length - 1]
       const beats = lastM?.timeSignature?.beats || s.score.timeSignature.beats
       const beatType = lastM?.timeSignature?.beatType || s.score.timeSignature.beatType || 4
+      const key = lastM?.key || s.score.key || 'C'
       const parts=s.score.parts.map(p=>({
-        ...p,measures:[...p.measures,{ ...makeEmptyMeasure(beats), timeSignature: { beats, beatType } }],
+        ...p,measures:[...p.measures,{ ...makeEmptyMeasure(beats, key), timeSignature: { beats, beatType } }],
       }))
       return {score:{...s.score,parts}}
     })
@@ -630,6 +636,36 @@ export const useSolfaStore = create((set,get) => ({
       // page header) — only move it if the change point is bar 1 itself.
       const scoreTs = measureIdx === 0 ? ts : s.score.timeSignature
       return { score: { ...s.score, timeSignature: scoreTs, parts } }
+    })
+  },
+
+  // Inserts a key-signature change (modulation) starting at `measureIdx`,
+  // in effect until the next measure that already has its own explicit
+  // key change (or the end of the score). Mirrors changeTimeSigAt(), but
+  // simpler: since sol-fa syllables are stored literally (movable-doh),
+  // modulating does NOT rewrite any existing note — it only changes which
+  // absolute pitch "Doh" maps to from this bar onward (affects playback/
+  // export pitch and the "Doh is X" label, not the syllables on the page).
+  changeKeyAt: (measureIdx, newKey) => {
+    get()._snapshot()
+    set(s => {
+      const ref = s.score.parts[0]?.measures || []
+      let endIdx = ref.length
+      for (let i = measureIdx + 1; i < ref.length; i++) {
+        if (ref[i]?.keySigChange) { endIdx = i; break }
+      }
+      const parts = s.score.parts.map(p => ({
+        ...p,
+        measures: p.measures.map((m, i) => {
+          if (i < measureIdx || i >= endIdx) return m
+          return { ...m, key: newKey, keySigChange: i === measureIdx }
+        }),
+      }))
+      // score.key represents the piece's *starting* key (used when
+      // appending brand-new measures past the end, and shown as the page
+      // header) — only move it if the change point is bar 1 itself.
+      const scoreKey = measureIdx === 0 ? newKey : s.score.key
+      return { score: { ...s.score, key: scoreKey, parts } }
     })
   },
 

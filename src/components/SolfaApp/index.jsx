@@ -204,7 +204,6 @@ export default function SolfaApp({ user, onGoHome }) {
   const setSelectedDuration = useSolfaStore((s) => s.setSelectedDuration);
   const setTitle    = useSolfaStore((s) => s.setTitle);
   const setComposer = useSolfaStore((s) => s.setComposer);
-  const setKey      = useSolfaStore((s) => s.setKey);
   const placeEvent = useSolfaStore((s) => s.placeEvent);
   const placeSustain = useSolfaStore((s) => s.placeSustain);
   const changeEventDuration = useSolfaStore((s) => s.changeEventDuration);
@@ -1100,29 +1099,27 @@ export default function SolfaApp({ user, onGoHome }) {
         </div>
         <Sep />
 
-        {/* Key */}
+        {/* Key — read-only display of the score's starting key. Mid-score
+            modulations are inserted per-bar via the sidebar (select a bar
+            → Key Signature), not changed globally here. */}
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ fontSize: 10, color: "#6b7280", fontStyle: "italic" }}>
             Doh=
           </span>
-          <select
-            value={score.key || "C"}
-            onChange={(e) => setKey(e.target.value)}
+          <span
+            title="This is the score's starting key and can't be changed once composing has begun. To modulate partway through the piece, select a bar and use Key Signature in the sidebar."
             style={{
               fontSize: 12,
-              border: "1px solid #d1d5db",
+              border: "1px solid #e5e7eb",
               borderRadius: 5,
-              padding: "2px 6px",
-              background: "white",
-              color: "#374151",
+              padding: "3px 8px",
+              background: "#f9fafb",
+              color: "#6b7280",
+              cursor: "default",
             }}
           >
-            {KEYS.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </select>
+            {score.key || "C"}
+          </span>
         </div>
         <Sep />
 

@@ -160,7 +160,6 @@ function buildSchedule(score, tempo, partMutes) {
   const bpm         = Math.max(20, Math.min(300, tempo || score.tempo || 80))
   const secPerBeat  = 60 / bpm
   const secPerQUnit = secPerBeat / 4
-  const key         = score.key || 'C'
   const events      = []
   let globalSec     = 0
 
@@ -170,6 +169,9 @@ function buildSchedule(score, tempo, partMutes) {
   for (let mIdx = 0; mIdx < numM; mIdx++) {
     const refM     = migrateMeasure(parts[0]?.measures[mIdx])
     const numBeats = refM?.timeSignature?.beats || 4
+    // Active key for THIS measure — a score can modulate mid-piece, so this
+    // is resolved per-measure rather than once for the whole schedule.
+    const key = refM?.key || score.key || 'C'
 
     for (const part of parts) {
       if (partMutes?.[part.id]) continue

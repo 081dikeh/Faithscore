@@ -614,9 +614,44 @@ export const useScoreStore = create((set, get) => ({
 
   // ── Global settings ────────────────────────────────────────────────────────
 
+  // DEPRECATED: applies to every measure, in every part, across the whole
+  // score. Kept only so any leftover call sites don't crash — new UI uses
+  // setKeySignatureFrom() below, which inserts a change (modulation)
+  // starting at a given measure and lets it run until the next explicit
+  // change (or the end of the score), matching how notation software
+  // treats key signatures: a per-measure event, not a global setting.
   setGlobalKeySignature: (keySignature) => set(s => ({
     score: { ...s.score, parts: s.score.parts.map(p => ({ ...p, measures: p.measures.map(m => ({ ...m, keySignature })) })) },
   })),
+
+  // Inserts a key-signature change (modulation) starting at `measureIndex`,
+  // in effect until the next measure that already has its own explicit
+  // key change (or the end of the score). Measures before `measureIndex`
+  // are untouched. Unlike time signature, this never rewrites notes —
+  // per standard notation practice, a key change only affects how
+  // accidentals/spelling are read from here on, not the pitches already
+  // written (that's a separate, explicit "Transpose Score" action).
+  setKeySignatureFrom: (measureIndex, keySignature) => {
+    set(s => {
+      const ref = s.score.parts[0]?.measures || []
+      let endIdx = ref.length
+      for (let i = measureIndex + 1; i < ref.length; i++) {
+        if (ref[i]?.keySigChange) { endIdx = i; break }
+      }
+      return {
+        score: {
+          ...s.score,
+          parts: s.score.parts.map(p => ({
+            ...p,
+            measures: p.measures.map((m, mIdx) => {
+              if (mIdx < measureIndex || mIdx >= endIdx) return m
+              return { ...m, keySignature, keySigChange: mIdx === measureIndex }
+            }),
+          })),
+        },
+      }
+    })
+  },
 
   // DEPRECATED: applies to every measure, in every part, across the whole
   // score. Kept only so any leftover call sites don't crash — new UI uses

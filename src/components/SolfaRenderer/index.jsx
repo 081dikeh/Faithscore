@@ -235,7 +235,6 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
     const numM = Math.max(...parts.map((p) => p.measures.length), 1);
     const topNum = score.timeSignature?.beats || 4;
     const botNum = score.timeSignature?.beatType || 4;
-    const slashSet = slashPositions(topNum, botNum);
     layoutMetaRef.current = { parts, numM, topNum };
 
     const lyricLayout = score.lyricLayout || "inline";
@@ -464,16 +463,24 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
           const rawW = measureWidth(measure, colSlashSet);
           const sc3 = rawW > 0 ? scaledMW / rawW : 1;
 
-          // Mid-score meter change marker — drawn once, above the top
-          // part only, exactly at the bar where the time signature
-          // actually changes (bar 1's signature is covered by the page
-          // header, so col 0 never needs this).
+          // Mid-score meter/key change marker — drawn once, above the top
+          // part only, exactly at the bar where something actually
+          // changes (bar 1's signature/key is covered by the page header,
+          // so col 0 never needs this). Both changes are combined into one
+          // label when they land on the same bar, since there isn't
+          // vertical room above the staff for two stacked lines.
           if (pIdx === 0 && col > 0) {
             const prevM = migrateMeasure(parts[0]?.measures[col - 1]);
             const prevTs = prevM.timeSignature || { beats: topNum, beatType: botNum };
             const tsChanged =
               prevTs.beats !== mTs.beats || prevTs.beatType !== mTs.beatType;
-            if (tsChanged) {
+            const mKey = measure.key || score.key || "C";
+            const prevKey = prevM.key || score.key || "C";
+            const keyChanged = prevKey !== mKey;
+            if (tsChanged || keyChanged) {
+              const parts2 = [];
+              if (keyChanged) parts2.push(`Doh=${mKey}`);
+              if (tsChanged) parts2.push(`${mTs.beats}/${mTs.beatType}`);
               // Nudge right when this bar also starts a new line, so we
               // don't sit on top of the small bar-number label there.
               const xOff = ci === 0 ? 16 : 3;
@@ -487,7 +494,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
                   fontWeight={700}
                   fill={C.label}
                 >
-                  {mTs.beats}/{mTs.beatType}
+                  {parts2.join("  ·  ")}
                 </text>,
               );
             }

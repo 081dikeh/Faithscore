@@ -344,14 +344,26 @@ export default function ScoreRenderer() {
         const keySig = score.parts[0]?.measures[colIdx]?.keySignature ?? 0;
         return SP * 2.2 + Math.abs(keySig) * SP * 0.7 + SP * 1.6 + SP * 0.6;
       }
-      // Mid-line meter change: reserve room for the time-signature glyph
-      // itself, even though this bar isn't first in its line.
+      // Mid-line meter/key change: reserve room for whichever glyphs
+      // actually land on this bar, even though it isn't first in its line.
       const prevTs = score.parts[0]?.measures[colIdx - 1]?.timeSignature;
       const thisTs = score.parts[0]?.measures[colIdx]?.timeSignature;
       const tsChanged =
         prevTs && thisTs &&
         (prevTs.beats !== thisTs.beats || prevTs.beatType !== thisTs.beatType);
-      return tsChanged ? SP * 1.2 + SP * 1.6 + SP * 0.4 : SP * 1.2;
+      const prevKs = score.parts[0]?.measures[colIdx - 1]?.keySignature ?? 0;
+      const thisKs = score.parts[0]?.measures[colIdx]?.keySignature ?? 0;
+      const keyChanged = prevKs !== thisKs;
+
+      let overhead = SP * 1.2;
+      if (keyChanged) {
+        // New key's own accidentals plus the old key's naturals shown as
+        // courtesy cancellation — roughly double width of a same-size
+        // key with no cancellation.
+        overhead += (Math.abs(thisKs) + Math.abs(prevKs)) * SP * 0.7 + SP * 0.4;
+      }
+      if (tsChanged) overhead += SP * 1.6 + SP * 0.4;
+      return overhead;
     }
 
     // ── Dynamic line breaking (MuseScore-style) ───────────────────────────────
@@ -509,14 +521,35 @@ export default function ScoreRenderer() {
           const stave = new Stave(x, partY, width);
           if (isFirst) {
             stave.addClef(clef);
-            stave.addKeySignature(keyNumToVexflow(measure.keySignature ?? 0));
+            // Courtesy cancellation: if this line's opening key differs
+            // from whatever was active in the immediately preceding bar
+            // (i.e. we're picking up mid-modulation, not just restating
+            // the same key at a new system), show natural signs for the
+            // old key's accidentals before the new key signature.
+            const prevKeyAtLineStart = part.measures[col - 1]?.keySignature;
+            const openingKeyChanged =
+              prevKeyAtLineStart !== undefined &&
+              prevKeyAtLineStart !== (measure.keySignature ?? 0);
+            stave.addKeySignature(
+              keyNumToVexflow(measure.keySignature ?? 0),
+              openingKeyChanged ? keyNumToVexflow(prevKeyAtLineStart) : undefined,
+            );
             stave.addTimeSignature(
               `${measure.timeSignature.beats}/${measure.timeSignature.beatType}`,
             );
           } else {
-            // Mid-line meter change — VexFlow only auto-shows clef/key/time
-            // at a line's first measure, so a change landing further along
-            // the same system needs its glyph added explicitly here.
+            // Mid-line meter/key change — VexFlow only auto-shows clef/key/
+            // time at a line's first measure, so a change landing further
+            // along the same system needs its glyph added explicitly here.
+            const prevKs = part.measures[col - 1]?.keySignature ?? 0;
+            const thisKs = measure.keySignature ?? 0;
+            const keyChanged = prevKs !== thisKs;
+            if (keyChanged) {
+              stave.addKeySignature(
+                keyNumToVexflow(thisKs),
+                keyNumToVexflow(prevKs),
+              );
+            }
             const prevTs = part.measures[col - 1]?.timeSignature;
             const tsChanged =
               prevTs &&
