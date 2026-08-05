@@ -7,7 +7,7 @@
 //   • Its own content area scrolls internally.
 
 import { useState } from 'react'
-import { useSolfaStore, VOICE_COMBOS, migrateMeasure } from '../../store/solfaStore'
+import { useSolfaStore, VOICE_COMBOS, migrateMeasure, resolveKeyAt } from '../../store/solfaStore'
 
 const TABS = [
   { id:'palettes',   label:'Palettes'   },
@@ -86,35 +86,38 @@ function PaletteSection({ title, children, defaultOpen = false }) {
 }
 
 // ── Palettes tab ─────────────────────────────────────────────────────────────
-// Key signature and time signature each insert a change AT the selected
-// bar, in effect until the next change (or end of score) — select a bar
-// first. Tempo / dynamics / text marks attach to whatever beat is
-// currently selected on the score (click a beat first).
+// Time signature inserts a change AT the selected bar (bars can't split
+// mid-way, so bar-level selection is enough). Key signature MODULATES at
+// the selected NOTE — real sol-fa scores pivot key mid-bar, wherever the
+// composer picked the bridge note — so it needs a full note selection,
+// same as tempo/dynamics/text marks (click a beat/note first).
 function PalettesTab({ search }) {
   const score              = useSolfaStore(s => s.score)
   const selectedPartId     = useSolfaStore(s => s.selectedPartId)
   const selectedMeasureIdx = useSolfaStore(s => s.selectedMeasureIdx)
   const selectedBeatIdx    = useSolfaStore(s => s.selectedBeatIdx)
+  const selectedEventIdx   = useSolfaStore(s => s.selectedEventIdx)
   const setTempo             = useSolfaStore(s => s.setTempo)
   const changeTimeSigAt      = useSolfaStore(s => s.changeTimeSigAt)
   const changeKeyAt          = useSolfaStore(s => s.changeKeyAt)
   const addMark               = useSolfaStore(s => s.addMark)
 
   const hasSelection = selectedPartId !== null && selectedMeasureIdx !== null && selectedBeatIdx !== null
-  // Time/key signature only need a BAR selected (not a specific beat) —
-  // they're per-measure changes, inserted at whichever bar is selected.
+  // Time signature only needs a BAR selected (not a specific beat) — it's
+  // a per-measure change, inserted at whichever bar is selected.
   const hasBarSelection = selectedMeasureIdx !== null
-  // Reflect the EFFECTIVE signature of the selected bar (or bar 1 if
+  // Reflect the EFFECTIVE time signature of the selected bar (or bar 1 if
   // nothing's selected yet) — not a single score-wide value — since a
-  // score can now contain several time-signature / key sections.
+  // score can now contain several time-signature sections.
   const selectedBarTs = selectedMeasureIdx !== null
     ? score.parts[0]?.measures?.[selectedMeasureIdx]?.timeSignature
     : score.parts[0]?.measures?.[0]?.timeSignature
   const currentTS = `${selectedBarTs?.beats || score.timeSignature?.beats || 4}/${selectedBarTs?.beatType || score.timeSignature?.beatType || 4}`
-  const selectedBarKey = selectedMeasureIdx !== null
-    ? score.parts[0]?.measures?.[selectedMeasureIdx]?.key
-    : score.parts[0]?.measures?.[0]?.key
-  const currentKey = selectedBarKey || score.key || 'C'
+  // Key needs the exact NOTE selected (measure+beat+event) since a
+  // modulation can land anywhere, not just on a bar line.
+  const currentKey = hasSelection
+    ? resolveKeyAt(score, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx || 0)
+    : (score.key || 'C')
 
   const handleTempoMark = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'tempo')
   const handleDynamic   = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'dynamic')
@@ -124,8 +127,8 @@ function PalettesTab({ search }) {
     {
       title:'Key Signature', items: KEYS.map(k => ({
         symbol:'♩', label:k, active: currentKey===k,
-        disabled: !hasBarSelection, disabledHint: 'Select a bar first',
-        onClick:()=>hasBarSelection && changeKeyAt(selectedMeasureIdx, k),
+        disabled: !hasSelection, disabledHint: 'Select a note first',
+        onClick:()=>hasSelection && changeKeyAt(selectedMeasureIdx, selectedBeatIdx, selectedEventIdx || 0, k),
       })),
     },
     {
@@ -182,9 +185,9 @@ function PalettesTab({ search }) {
         color: hasSelection ? '#1d4ed8' : '#9a5b13',
         borderBottom:'1px solid #f0f0f0',
       }}>
-        {!hasBarSelection && 'Select a bar to insert a key or time signature change there, or a beat to place tempo / dynamics / text marks.'}
-        {hasBarSelection && !hasSelection && `Bar ${selectedMeasureIdx+1} selected — Key/Time Signature will insert a change here, in effect until the next change. Select a beat for tempo / dynamics / text marks.`}
-        {hasSelection && `Applying to bar ${selectedMeasureIdx+1}, beat ${selectedBeatIdx+1}. Key/Time Signature will insert a change at bar ${selectedMeasureIdx+1}.`}
+        {!hasBarSelection && 'Select a bar for a time signature change, or a note for a key modulation / tempo / dynamics / text mark.'}
+        {hasBarSelection && !hasSelection && `Bar ${selectedMeasureIdx+1} selected — Time Signature will insert a change here, in effect until the next change. Select a note (not just a bar) to modulate the key there.`}
+        {hasSelection && `Applying to bar ${selectedMeasureIdx+1}, beat ${selectedBeatIdx+1}. Key Signature will modulate starting at this exact note; Time Signature will insert a change at bar ${selectedMeasureIdx+1}.`}
       </div>
       {filtered.map((p, i) => (
         <PaletteSection key={p.title} title={p.title} defaultOpen={i < 2}>

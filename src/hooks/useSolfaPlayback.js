@@ -30,7 +30,7 @@
 
 import { useEffect, useRef, useCallback } from 'react'
 import * as Tone from 'tone'
-import { useSolfaStore, solfaToMidi, migrateMeasure } from '../store/solfaStore'
+import { useSolfaStore, solfaToMidi, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SAMPLE MAPS
@@ -169,9 +169,6 @@ function buildSchedule(score, tempo, partMutes) {
   for (let mIdx = 0; mIdx < numM; mIdx++) {
     const refM     = migrateMeasure(parts[0]?.measures[mIdx])
     const numBeats = refM?.timeSignature?.beats || 4
-    // Active key for THIS measure — a score can modulate mid-piece, so this
-    // is resolved per-measure rather than once for the whole schedule.
-    const key = refM?.key || score.key || 'C'
 
     for (const part of parts) {
       if (partMutes?.[part.id]) continue
@@ -185,14 +182,17 @@ function buildSchedule(score, tempo, partMutes) {
       const gainTrim = VOICE_GAIN_TRIM[vtype] ?? 0
 
       // Flatten all events in this measure with absolute quarter-unit offset
+      // plus their (beatIdx, eventIdx) position — needed to resolve the
+      // active key per-note, since a modulation can land on any note, not
+      // just a bar line.
       const flat = []
       let qAbs = 0
-      for (const beat of measure.beats) {
-        for (const ev of beat.events || []) {
-          flat.push({ ...ev, qAbs })
+      measure.beats.forEach((beat, beatIdx) => {
+        ;(beat.events || []).forEach((ev, eventIdx) => {
+          flat.push({ ...ev, qAbs, beatIdx, eventIdx })
           qAbs += ev.duration
-        }
-      }
+        })
+      })
 
       // Walk events, merging sustains into preceding note, and look ahead
       // to the next note for a small legato overlap.
@@ -217,7 +217,7 @@ function buildSchedule(score, tempo, partMutes) {
           const timingOffset = rand(HUMAN_TIMING_MAX) + lean
           const pitchOffsetCents = rand(HUMAN_PITCH_MAX)
 
-          const midi        = solfaToMidi(ev.syllable, ev.octave || 0, key)
+          const midi        = solfaToMidi(ev.syllable, ev.octave || 0, resolveKeyAt(score, mIdx, ev.beatIdx, ev.eventIdx))
           const pitchedMidi = midi + pitchOffsetCents / 100
           const hz          = midiToHz(pitchedMidi)
 

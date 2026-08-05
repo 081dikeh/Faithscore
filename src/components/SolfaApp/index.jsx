@@ -1107,7 +1107,7 @@ export default function SolfaApp({ user, onGoHome }) {
             Doh=
           </span>
           <span
-            title="This is the score's starting key and can't be changed once composing has begun. To modulate partway through the piece, select a bar and use Key Signature in the sidebar."
+            title="This is the score's starting key and can't be changed once composing has begun. To modulate partway through the piece, select the exact note where the modulation should pivot and use Key Signature in the sidebar."
             style={{
               fontSize: 12,
               border: "1px solid #e5e7eb",

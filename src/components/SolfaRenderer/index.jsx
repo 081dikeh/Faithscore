@@ -29,6 +29,9 @@ import {
   useSolfaStore,
   slashPositions,
   migrateMeasure,
+  resolveKeyAt,
+  resolveKeyBefore,
+  bridgeSyllable,
 } from "../../store/solfaStore";
 
 const FONT = '"Times New Roman", Georgia, serif';
@@ -240,6 +243,15 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
     const lyricLayout = score.lyricLayout || "inline";
     const lyricDuplication = score.lyricDuplication || "per-voice-copy";
     const instrumentalSet = new Set(score.instrumentalMeasures || []);
+
+    // Note-level modulations — keyed by exact (measure, beat, event)
+    // position for O(1) lookup while walking notes below. Real sol-fa
+    // modulation pivots on whatever note the composer picked, not a bar
+    // line, so this can't be resolved per-measure like time signature can.
+    const keyChangeAt = new Map();
+    for (const kc of score.keyChanges || []) {
+      keyChangeAt.set(`${kc.measureIdx}-${kc.beatIdx}-${kc.eventIdx || 0}`, kc);
+    }
 
     // "between-alto-tenor" lead = the Alto part (falls back to the middle part)
     const altoIdx = parts.findIndex((p) =>
@@ -463,24 +475,17 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
           const rawW = measureWidth(measure, colSlashSet);
           const sc3 = rawW > 0 ? scaledMW / rawW : 1;
 
-          // Mid-score meter/key change marker — drawn once, above the top
-          // part only, exactly at the bar where something actually
-          // changes (bar 1's signature/key is covered by the page header,
-          // so col 0 never needs this). Both changes are combined into one
-          // label when they land on the same bar, since there isn't
-          // vertical room above the staff for two stacked lines.
+          // Mid-score meter change marker — drawn once, above the top part
+          // only, exactly at the bar where the time signature changes
+          // (bar 1's signature is covered by the page header, so col 0
+          // never needs this). Key changes are handled separately, below,
+          // at the exact NOTE where the modulation lands — not the bar.
           if (pIdx === 0 && col > 0) {
             const prevM = migrateMeasure(parts[0]?.measures[col - 1]);
             const prevTs = prevM.timeSignature || { beats: topNum, beatType: botNum };
             const tsChanged =
               prevTs.beats !== mTs.beats || prevTs.beatType !== mTs.beatType;
-            const mKey = measure.key || score.key || "C";
-            const prevKey = prevM.key || score.key || "C";
-            const keyChanged = prevKey !== mKey;
-            if (tsChanged || keyChanged) {
-              const parts2 = [];
-              if (keyChanged) parts2.push(`Doh=${mKey}`);
-              if (tsChanged) parts2.push(`${mTs.beats}/${mTs.beatType}`);
+            if (tsChanged) {
               // Nudge right when this bar also starts a new line, so we
               // don't sit on top of the small bar-number label there.
               const xOff = ci === 0 ? 16 : 3;
@@ -494,7 +499,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
                   fontWeight={700}
                   fill={C.label}
                 >
-                  {parts2.join("  ·  ")}
+                  {mTs.beats}/{mTs.beatType}
                 </text>,
               );
             }
@@ -729,6 +734,55 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
                       {Math.abs(ev.octave)}
                     </text>,
                   );
+                }
+
+                // Modulation — anchored to THIS exact note, not the bar.
+                // The pivot syllable (small superscript before the main
+                // syllable) shows what this same pitch was called in the
+                // OLD key, e.g. a note read as "r" here in G shows a tiny
+                // "s" above it because that pitch was "s" back in D —
+                // proving the tonal bridge, same convention as the
+                // reference scores. Computed per-voice since each part
+                // sings a different pitch at the same moment.
+                const kc = keyChangeAt.get(`${col}-${bi}-${ei}`);
+                if (kc) {
+                  const oldKeyHere = resolveKeyBefore(score, col, bi, ei);
+                  const pivot = bridgeSyllable(ev.syllable, ev.octave || 0, kc.key, oldKeyHere);
+                  if (pivot) {
+                    elems.push(
+                      <text
+                        key={`pivot-${ev.id}`}
+                        x={noteCX - NOTE_SZ * 0.15}
+                        y={rowY - NOTE_SZ - 1}
+                        textAnchor="middle"
+                        fontFamily={FONT}
+                        fontSize={Math.max(7, NOTE_SZ * 0.55)}
+                        fontWeight={700}
+                        fill={isSel ? C.sel : C.label}
+                        style={{ pointerEvents: "none" }}
+                      >
+                        {pivot}
+                      </text>,
+                    );
+                  }
+                  // "Key X" label — shown once (top part only) directly
+                  // above the pivot note itself, not the bar line.
+                  if (pIdx === 0) {
+                    elems.push(
+                      <text
+                        key={`keychange-${ev.id}`}
+                        x={noteCX}
+                        y={lineTop - 2}
+                        textAnchor="middle"
+                        fontFamily={FONT}
+                        fontSize={10}
+                        fontWeight={700}
+                        fill={C.label}
+                      >
+                        Key {kc.key}
+                      </text>,
+                    );
+                  }
                 }
               } else if (isHold) {
                 elems.push(

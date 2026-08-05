@@ -77,19 +77,18 @@ function makeEmptyBeat() {
 }
 
 // A measure with `numBeats` empty beats
-function makeEmptyMeasure(numBeats=4, key='C') {
+function makeEmptyMeasure(numBeats=4) {
   return {
     id:uid(),
     timeSignature:{beats:numBeats,beatType:4},
-    key,
     beats:Array.from({length:numBeats},()=>makeEmptyBeat()),
   }
 }
 
-function makePart(voiceDef, numMeasures=12, numBeats=4, key='C') {
+function makePart(voiceDef, numMeasures=12, numBeats=4) {
   return {
     id:voiceDef.id, name:voiceDef.name, label:voiceDef.label,
-    measures:Array.from({length:numMeasures},()=>makeEmptyMeasure(numBeats, key)),
+    measures:Array.from({length:numMeasures},()=>makeEmptyMeasure(numBeats)),
   }
 }
 
@@ -99,11 +98,78 @@ export function buildEmptySolfaScore(voiceComboKey='satb',key='C',beats=4,numMea
     id:uid(), type:'solfa', title:'Untitled', key,
     tempo:80, timeSignature:{beats,beatType:4},
     voiceCombo:voiceComboKey,
-    parts:combo.voices.map(v=>makePart(v,numMeasures,beats,key)),
+    parts:combo.voices.map(v=>makePart(v,numMeasures,beats)),
     sections:[], slurs:[], marks:[], _savedAt:null, _cloudId:null,
     lyricLayout:'inline', lyricDuplication:'per-voice-copy',
     verses:[], navigationMarkers:[], instrumentalMeasures:[],
+    // Modulations — a SPECIFIC NOTE's position where the key changes,
+    // not a measure boundary. `key` is what's active starting exactly at
+    // that note (and every note after it, until the next entry or the
+    // end of the score). `score.key` above remains the STARTING key
+    // (the key in effect before the first entry here).
+    // { measureIdx, beatIdx, eventIdx, key }, sorted ascending by position.
+    keyChanges: [],
   }
+}
+
+// ── Key-change position helpers ─────────────────────────────────────────────
+// A modulation is anchored to an exact NOTE (measure, beat, event), not a
+// bar line — real tonic sol-fa scores pivot key mid-bar, on whatever note
+// the composer chose as the bridge. These helpers compare/resolve those
+// positions.
+function comparePos(a, b) {
+  if (a.measureIdx !== b.measureIdx) return a.measureIdx - b.measureIdx
+  if (a.beatIdx !== b.beatIdx) return a.beatIdx - b.beatIdx
+  return (a.eventIdx || 0) - (b.eventIdx || 0)
+}
+
+// The key in effect AT (and from) a given note position — the most recent
+// keyChanges entry at or before it, falling back to the score's starting key.
+export function resolveKeyAt(score, measureIdx, beatIdx, eventIdx = 0) {
+  const changes = score.keyChanges || []
+  const here = { measureIdx, beatIdx, eventIdx }
+  let active = score.key || 'C'
+  for (const c of changes) {
+    if (comparePos(c, here) <= 0) active = c.key
+    else break
+  }
+  return active
+}
+
+// The key in effect immediately BEFORE a given position — i.e. what a
+// singer would have been reading right up until this note. Used to compute
+// the bridge/pivot syllable shown as a superscript at a modulation.
+export function resolveKeyBefore(score, measureIdx, beatIdx, eventIdx = 0) {
+  const changes = score.keyChanges || []
+  const here = { measureIdx, beatIdx, eventIdx }
+  let active = score.key || 'C'
+  for (const c of changes) {
+    if (comparePos(c, here) < 0) active = c.key
+    else break
+  }
+  return active
+}
+
+// Reverse of solfaToMidi: given an absolute MIDI pitch and a key, what
+// sol-fa syllable names that pitch in that key? Used to compute the pivot
+// syllable — e.g. the pitch sung as "r" in G was "s" in D.
+const SEMITONE_TO_SOLFA = Object.fromEntries(
+  Object.entries(SOLFA_SEMITONES).map(([syl, s]) => [s, syl]),
+)
+export function midiToSolfaSyllable(midi, key = 'C') {
+  const root = KEY_ROOTS[key] ?? 60
+  const semis = (((midi - root) % 12) + 12) % 12
+  return SEMITONE_TO_SOLFA[semis] ?? 'd'
+}
+
+// The bridge/pivot syllable for a modulation: given the note as WRITTEN
+// (its syllable + octave, read in the NEW key), what would this same
+// pitch have been called in the OLD key? Returns null if there's no real
+// key change (nothing to bridge from).
+export function bridgeSyllable(syllable, octave, newKey, oldKey) {
+  if (!oldKey || !newKey || oldKey === newKey || !syllable) return null
+  const midi = solfaToMidi(syllable, octave, newKey)
+  return midiToSolfaSyllable(midi, oldKey)
 }
 
 // ── MIGRATION from old formats ────────────────────────────────────────────────
@@ -556,16 +622,17 @@ export const useSolfaStore = create((set,get) => ({
 
   addMeasure: () => {
     set(s=>{
-      // Inherit whatever time signature AND key are currently active at the
-      // END of the score (the last measure's own values), not the score's
-      // starting ones — so appending bars after a mid-score change keeps
-      // that meter/key going, matching notation-software behaviour.
+      // Inherit whatever time signature is currently active at the END of
+      // the score (the last measure's own ts), not the score-wide starting
+      // one — so appending bars after a mid-score meter change keeps that
+      // meter going. Key doesn't need this: it's resolved per-note via
+      // resolveKeyAt(), which already looks past the end of the measures
+      // array correctly (falls back to the last keyChanges entry).
       const lastM = s.score.parts[0]?.measures?.[s.score.parts[0].measures.length - 1]
       const beats = lastM?.timeSignature?.beats || s.score.timeSignature.beats
       const beatType = lastM?.timeSignature?.beatType || s.score.timeSignature.beatType || 4
-      const key = lastM?.key || s.score.key || 'C'
       const parts=s.score.parts.map(p=>({
-        ...p,measures:[...p.measures,{ ...makeEmptyMeasure(beats, key), timeSignature: { beats, beatType } }],
+        ...p,measures:[...p.measures,{ ...makeEmptyMeasure(beats), timeSignature: { beats, beatType } }],
       }))
       return {score:{...s.score,parts}}
     })
@@ -639,33 +706,40 @@ export const useSolfaStore = create((set,get) => ({
     })
   },
 
-  // Inserts a key-signature change (modulation) starting at `measureIdx`,
-  // in effect until the next measure that already has its own explicit
-  // key change (or the end of the score). Mirrors changeTimeSigAt(), but
-  // simpler: since sol-fa syllables are stored literally (movable-doh),
-  // modulating does NOT rewrite any existing note — it only changes which
-  // absolute pitch "Doh" maps to from this bar onward (affects playback/
-  // export pitch and the "Doh is X" label, not the syllables on the page).
-  changeKeyAt: (measureIdx, newKey) => {
+  // Inserts a modulation (key change) anchored to a SPECIFIC NOTE —
+  // measure, beat, and event index — not a bar line. Real sol-fa scores
+  // pivot key mid-bar, on whatever note the composer chose as the bridge,
+  // so this does NOT snap to measure boundaries like changeTimeSigAt does.
+  // Since sol-fa syllables are stored literally (movable-doh), modulating
+  // does NOT rewrite any existing note — it only changes which absolute
+  // pitch each syllable maps to, from this note onward (affects playback/
+  // export pitch, and the "Doh is X" + pivot-syllable superscript shown
+  // at this note — see resolveKeyAt/bridgeSyllable above).
+  changeKeyAt: (measureIdx, beatIdx, eventIdx, newKey) => {
     get()._snapshot()
     set(s => {
-      const ref = s.score.parts[0]?.measures || []
-      let endIdx = ref.length
-      for (let i = measureIdx + 1; i < ref.length; i++) {
-        if (ref[i]?.keySigChange) { endIdx = i; break }
+      const pos = { measureIdx, beatIdx, eventIdx: eventIdx || 0 }
+      // Bar 1, beat 1, first note = there's nothing to modulate FROM — that
+      // just redefines the score's starting key.
+      if (measureIdx === 0 && beatIdx === 0 && (eventIdx || 0) === 0) {
+        return { score: { ...s.score, key: newKey } }
       }
-      const parts = s.score.parts.map(p => ({
-        ...p,
-        measures: p.measures.map((m, i) => {
-          if (i < measureIdx || i >= endIdx) return m
-          return { ...m, key: newKey, keySigChange: i === measureIdx }
-        }),
-      }))
-      // score.key represents the piece's *starting* key (used when
-      // appending brand-new measures past the end, and shown as the page
-      // header) — only move it if the change point is bar 1 itself.
-      const scoreKey = measureIdx === 0 ? newKey : s.score.key
-      return { score: { ...s.score, key: scoreKey, parts } }
+      const existing = s.score.keyChanges || []
+      const withoutThisPos = existing.filter(c => comparePos(c, pos) !== 0)
+      const keyChanges = [...withoutThisPos, { ...pos, key: newKey }]
+        .sort(comparePos)
+      return { score: { ...s.score, keyChanges } }
+    })
+  },
+
+  // Removes a modulation previously inserted at this exact note position
+  // (if any) — the score reverts to whatever key was active before it.
+  removeKeyChangeAt: (measureIdx, beatIdx, eventIdx) => {
+    get()._snapshot()
+    set(s => {
+      const pos = { measureIdx, beatIdx, eventIdx: eventIdx || 0 }
+      const keyChanges = (s.score.keyChanges || []).filter(c => comparePos(c, pos) !== 0)
+      return { score: { ...s.score, keyChanges } }
     })
   },
 

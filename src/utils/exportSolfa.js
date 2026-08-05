@@ -10,7 +10,7 @@
 // FluidR3 CDN used by useSolfaPlayback.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { solfaToMidi, migrateMeasure } from '../store/solfaStore'
+import { solfaToMidi, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -143,7 +143,6 @@ function buildEventList(score, tempo) {
   for (let mIdx = 0; mIdx < numM; mIdx++) {
     const refM     = migrateMeasure(parts[0]?.measures[mIdx])
     const numBeats = refM?.timeSignature?.beats || 4
-    const key = refM?.key || score.key || 'C'
 
     for (const part of parts) {
       const measure = migrateMeasure(part.measures[mIdx])
@@ -153,12 +152,12 @@ function buildEventList(score, tempo) {
 
       const flat = []
       let qAbs = 0
-      for (const beat of measure.beats) {
-        for (const ev of beat.events || []) {
-          flat.push({ ...ev, qAbs })
+      measure.beats.forEach((beat, beatIdx) => {
+        ;(beat.events || []).forEach((ev, eventIdx) => {
+          flat.push({ ...ev, qAbs, beatIdx, eventIdx })
           qAbs += ev.duration
-        }
-      }
+        })
+      })
 
       let i = 0
       while (i < flat.length) {
@@ -172,7 +171,7 @@ function buildEventList(score, tempo) {
           }
           const startSec = globalSec + ev.qAbs * secPerQUnit
           const durSec   = Math.max(0.08, totalQ * secPerQUnit - 0.025)
-          const midi     = solfaToMidi(ev.syllable, ev.octave || 0, key)
+          const midi     = solfaToMidi(ev.syllable, ev.octave || 0, resolveKeyAt(score, mIdx, ev.beatIdx, ev.eventIdx))
           const panPos   = STEREO_PAN[vtype] ?? 0
           events.push({ startSec, durSec, midi, vtype, panPos, partLabel: part.label })
           i = j
