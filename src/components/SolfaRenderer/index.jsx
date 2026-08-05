@@ -752,12 +752,12 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
                     elems.push(
                       <text
                         key={`pivot-${ev.id}`}
-                        x={noteCX - NOTE_SZ * 0.15}
-                        y={rowY - NOTE_SZ - 1}
+                        x={noteCX - NOTE_SZ * 0.62}
+                        y={rowY - NOTE_SZ - 5}
                         textAnchor="middle"
                         fontFamily={FONT}
-                        fontSize={Math.max(7, NOTE_SZ * 0.55)}
-                        fontWeight={700}
+                        fontSize={Math.max(8, NOTE_SZ * 0.6)}
+                        fontWeight={900}
                         fill={isSel ? C.sel : C.label}
                         style={{ pointerEvents: "none" }}
                       >
@@ -766,13 +766,15 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
                     );
                   }
                   // "Key X" label — shown once (top part only) directly
-                  // above the pivot note itself, not the bar line.
+                  // above the pivot note itself, not the bar line. Sits
+                  // well clear of the note row below (SYS_GAP between
+                  // systems leaves plenty of room for this).
                   if (pIdx === 0) {
                     elems.push(
                       <text
                         key={`keychange-${ev.id}`}
                         x={noteCX}
-                        y={lineTop - 2}
+                        y={lineTop - 11}
                         textAnchor="middle"
                         fontFamily={FONT}
                         fontSize={10}

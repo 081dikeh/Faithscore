@@ -100,6 +100,7 @@ function PalettesTab({ search }) {
   const setTempo             = useSolfaStore(s => s.setTempo)
   const changeTimeSigAt      = useSolfaStore(s => s.changeTimeSigAt)
   const changeKeyAt          = useSolfaStore(s => s.changeKeyAt)
+  const removeKeyChangeAt    = useSolfaStore(s => s.removeKeyChangeAt)
   const addMark               = useSolfaStore(s => s.addMark)
 
   const hasSelection = selectedPartId !== null && selectedMeasureIdx !== null && selectedBeatIdx !== null
@@ -118,6 +119,13 @@ function PalettesTab({ search }) {
   const currentKey = hasSelection
     ? resolveKeyAt(score, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx || 0)
     : (score.key || 'C')
+  // Is there an actual modulation planted AT this exact note (not just
+  // inherited from an earlier one)? Only then is there something to delete.
+  const hasExactKeyChange = hasSelection && (score.keyChanges || []).some(c =>
+    c.measureIdx === selectedMeasureIdx &&
+    c.beatIdx === selectedBeatIdx &&
+    (c.eventIdx || 0) === (selectedEventIdx || 0),
+  )
 
   const handleTempoMark = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'tempo')
   const handleDynamic   = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'dynamic')
@@ -125,11 +133,19 @@ function PalettesTab({ search }) {
 
   const allPalettes = [
     {
-      title:'Key Signature', items: KEYS.map(k => ({
-        symbol:'♩', label:k, active: currentKey===k,
-        disabled: !hasSelection, disabledHint: 'Select a note first',
-        onClick:()=>hasSelection && changeKeyAt(selectedMeasureIdx, selectedBeatIdx, selectedEventIdx || 0, k),
-      })),
+      title:'Key Signature', items: [
+        ...KEYS.map(k => ({
+          symbol:'♩', label:k, active: currentKey===k,
+          disabled: !hasSelection, disabledHint: 'Select a note first',
+          onClick:()=>hasSelection && changeKeyAt(selectedMeasureIdx, selectedBeatIdx, selectedEventIdx || 0, k),
+        })),
+        {
+          symbol:'✕', label:'Remove modulation',
+          disabled: !hasExactKeyChange,
+          disabledHint: hasSelection ? 'This note has no modulation to remove' : 'Select a note first',
+          onClick:()=>hasExactKeyChange && removeKeyChangeAt(selectedMeasureIdx, selectedBeatIdx, selectedEventIdx || 0),
+        },
+      ],
     },
     {
       title:'Time Signature', items: TIME_SIGS.map(t => ({
