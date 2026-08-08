@@ -65,6 +65,18 @@ export default function PianoKeyboard() {
   const selNote = getSelectedNote?.()
   const selPitch = selNote && !selNote.isRest ? selNote.pitch : null
 
+  // Which accidental spelling black keys should use right now. Standard
+  // notation convention: flat-side keys (F, Bb, Eb, Ab, Db, Gb, Cb — negative
+  // keySignature numbers) spell chromatic notes with flats; everything else
+  // (C and sharp-side keys) uses sharps. Falls back to whatever measure 1
+  // is in if nothing's selected yet, so the very first note typed is
+  // spelled correctly too.
+  const activeKeySignature =
+    score.parts[0]?.measures?.[selectedMeasureIndex]?.keySignature ??
+    score.parts[0]?.measures?.[0]?.keySignature ??
+    0
+  const isFlatKey = activeKeySignature < 0
+
   const isSelected = (step, acc, oct) =>
     selPitch?.step === step &&
     (selPitch?.accidental || null) === (acc || null) &&
@@ -217,6 +229,7 @@ export default function PianoKeyboard() {
             setHoveredKey={setHoveredKey}
             pressedKey={pressedKey}
             isSelected={isSelected}
+            isFlatKey={isFlatKey}
           />
         </div>
       </div>
@@ -224,32 +237,18 @@ export default function PianoKeyboard() {
   )
 }
 
+// Each black key has two valid names (e.g. C#/Db) — which one is correct
+// depends on the active key signature, not the key's physical position.
+const FLAT_SPELLING = { C: 'D', D: 'E', F: 'G', G: 'A', A: 'B' } // sharp-letter → flat's step
+function blackKeySpelling(note, isFlatKey) {
+  return isFlatKey ? { step: FLAT_SPELLING[note], acc: 'b' } : { step: note, acc: '#' }
+}
+
 // Black keys rendered as an SVG overlay — pixel-perfect positioning
-function BlackKeyLayer({ whiteCount, onPress, hoveredKey, setHoveredKey, pressedKey, isSelected }) {
+function BlackKeyLayer({ whiteCount, onPress, hoveredKey, setHoveredKey, pressedKey, isSelected, isFlatKey }) {
   // We use a percentage-based approach with a flex row of slots
   // Each slot = 1 white key width. Black keys span 0.65 of a white key, centered between keys.
-  
-  // Build the sequence of slots (white key = empty space, black key = rendered)
   const noteNames = ['C','D','E','F','G','A','B']
-  const slots = []
-  
-  ;[1,2,3,4,5,6,7].forEach(oct => {
-    noteNames.forEach((note, ni) => {
-      // White key slot (empty)
-      slots.push({ type: 'space', key: `s-${note}${oct}` })
-      // Black key after this note?
-      if (HAS_BLACK_AFTER[ni]) {
-        slots.push({ type: 'black', step: note, acc: '#', octave: oct })
-      }
-    })
-  })
-  // Final C8
-  slots.push({ type: 'space', key: 's-C8' })
-
-  // Total slots = 7 notes × 7 octaves + 1 = 50 notes + 5×7 = 35 black key positions + 1
-  // Each white key = 2 slots (white + possible black), except E and B = 1 slot
-  // Actually simpler: total display width = whiteCount units
-  // Black key width = 0.65 white key units, centered between two whites
 
   return (
     <div style={{
@@ -269,13 +268,14 @@ function BlackKeyLayer({ whiteCount, onPress, hoveredKey, setHoveredKey, pressed
               pointerEvents: 'none',
             }}>
               {hasBlack && (() => {
-                const id  = `${note}#${oct}`
-                const sel = isSelected(note, '#', oct)
+                const { step, acc } = blackKeySpelling(note, isFlatKey)
+                const id  = `${step}${acc}${oct}`
+                const sel = isSelected(step, acc, oct)
                 const pressed = pressedKey === id
                 const hov = hoveredKey === id
                 return (
                   <div
-                    onMouseDown={e => { e.stopPropagation(); onPress(note, '#', oct) }}
+                    onMouseDown={e => { e.stopPropagation(); onPress(step, acc, oct) }}
                     onMouseEnter={() => setHoveredKey(id)}
                     onMouseLeave={() => setHoveredKey(null)}
                     style={{
