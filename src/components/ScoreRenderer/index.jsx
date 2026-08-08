@@ -21,6 +21,7 @@ import {
   DURATION_BEATS,
   noteDuration,
   measureCapacity,
+  keySignatureAccidentals,
 } from "../../store/scoreStore";
 
 const MEASURES_PER_LINE = 5;
@@ -105,6 +106,11 @@ function keyNumToVexflow(num) {
   return map[String(num)] ?? "C";
 }
 
+// keySignatureAccidentals() is imported from scoreStore.js — the shared
+// music-theory module also used by chromatic note entry, so both agree on
+// exactly which letters a key signature alters.
+
+
 // ── Stem direction helper ────────────────────────────────────────────────────
 // Returns 1 (up) or -1 (down) based on note position relative to middle line.
 // Standard engraving rule:
@@ -156,7 +162,7 @@ function stemDir(note, chordExtras, clef) {
   return 1;
 }
 
-function buildVfNote(n, clef, isSelected, chordExtras = []) {
+function buildVfNote(n, clef, isSelected, chordExtras = [], keySigAccidentals = {}, accidentalState = {}) {
   const restKeyMap = REST_KEYS[clef] || REST_KEYS.treble;
   const restKey = restKeyMap[n.duration] || restKeyMap["8"]; // per-duration position
   const clefOpt = clef === "bass" ? { clef: "bass" } : {};
@@ -201,8 +207,23 @@ function buildVfNote(n, clef, isSelected, chordExtras = []) {
     sn.setStyle({ fillStyle: "#0d9488", strokeStyle: "#0d9488" });
 
   allNotes.forEach((nn, ki) => {
-    if (nn.pitch?.accidental)
-      sn.addModifier(new Accidental(nn.pitch.accidental), ki);
+    if (!nn.pitch) return;
+    const letter = nn.pitch.step;
+    const octave = nn.pitch.octave;
+    const stateKey = `${letter}${octave}`;
+    const actual = nn.pitch.accidental || null; // '#' | 'b' | null (natural)
+    // What's already "in effect" for this exact letter+octave: an earlier
+    // accidental on the SAME pitch this bar (accidentals only carry within
+    // one bar and don't cross octaves), or — if nothing's overridden it
+    // yet — whatever the key signature itself implies for that letter.
+    const implied = Object.prototype.hasOwnProperty.call(accidentalState, stateKey)
+      ? accidentalState[stateKey]
+      : keySigAccidentals[letter] || null;
+    if (actual !== implied) {
+      // VexFlow's accidental code for "natural" (cancel a sharp/flat) is 'n'.
+      sn.addModifier(new Accidental(actual || "n"), ki);
+    }
+    accidentalState[stateKey] = actual;
   });
 
   if (n.lyric) {
@@ -637,12 +658,19 @@ export default function ScoreRenderer() {
           }
 
           try {
+            // Fresh per-measure accidental tracking — an accidental only
+            // stays "in effect" for the rest of THIS bar, so this must
+            // reset every measure, not persist across the piece.
+            const keySigAccidentals = keySignatureAccidentals(measure.keySignature ?? 0);
+            const accidentalState = {};
             const vfNotes = renderSeq.map((n) =>
               buildVfNote(
                 n,
                 clef,
                 n.id === selectedNoteId,
                 chordMap[n.id] || [],
+                keySigAccidentals,
+                accidentalState,
               ),
             );
 

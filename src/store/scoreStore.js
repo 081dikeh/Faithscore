@@ -15,6 +15,95 @@ function loadFromStorage() {
 export function hasSavedScore() { return !!localStorage.getItem(AUTOSAVE_KEY) }
 export function clearSavedScore() { localStorage.removeItem(AUTOSAVE_KEY) }
 
+// ── Music theory: enharmonic spelling ───────────────────────────────────────
+// Single source of truth for "how should this pitch be written, given the
+// active key?" — used by chromatic note entry (shiftPitchHalfStep below) AND
+// by the renderer's accidental display logic, so both always agree.
+//
+// This deliberately does NOT ask "is this a black key?" — a black key can
+// legitimately be C#, Db, B##, or Dbb depending on context; spelling comes
+// from the key signature, not the piano geometry.
+
+// The correct 7-letter diatonic spelling for every major key signature,
+// keyed by keySignature number (-7..7, sharps positive/flats negative).
+// Each key uses every letter A–G exactly once, matching real notation
+// (e.g. F# major has E#, not F — never two notes sharing a letter).
+const MAJOR_SCALES = {
+  0: ['C', 'D', 'E', 'F', 'G', 'A', 'B'],
+  1: ['G', 'A', 'B', 'C', 'D', 'E', 'F#'],
+  2: ['D', 'E', 'F#', 'G', 'A', 'B', 'C#'],
+  3: ['A', 'B', 'C#', 'D', 'E', 'F#', 'G#'],
+  4: ['E', 'F#', 'G#', 'A', 'B', 'C#', 'D#'],
+  5: ['B', 'C#', 'D#', 'E', 'F#', 'G#', 'A#'],
+  6: ['F#', 'G#', 'A#', 'B', 'C#', 'D#', 'E#'],
+  7: ['C#', 'D#', 'E#', 'F#', 'G#', 'A#', 'B#'],
+  '-1': ['F', 'G', 'A', 'Bb', 'C', 'D', 'E'],
+  '-2': ['Bb', 'C', 'D', 'Eb', 'F', 'G', 'A'],
+  '-3': ['Eb', 'F', 'G', 'Ab', 'Bb', 'C', 'D'],
+  '-4': ['Ab', 'Bb', 'C', 'Db', 'Eb', 'F', 'G'],
+  '-5': ['Db', 'Eb', 'F', 'Gb', 'Ab', 'Bb', 'C'],
+  '-6': ['Gb', 'Ab', 'Bb', 'Cb', 'Db', 'Eb', 'F'],
+  '-7': ['Cb', 'Db', 'Eb', 'Fb', 'Gb', 'Ab', 'Bb'],
+}
+
+// Order sharps/flats are added to a key signature (circle of fifths). Used
+// to work out which letters a given key signature already alters, so notes
+// matching those letters don't need a redundant accidental glyph.
+const SHARP_ORDER = ['F', 'C', 'G', 'D', 'A', 'E', 'B']
+const FLAT_ORDER = ['B', 'E', 'A', 'D', 'G', 'C', 'F']
+export function keySignatureAccidentals(keySignature) {
+  const n = keySignature || 0
+  const map = {}
+  if (n > 0) for (let i = 0; i < Math.min(n, 7); i++) map[SHARP_ORDER[i]] = '#'
+  else if (n < 0) for (let i = 0; i < Math.min(-n, 7); i++) map[FLAT_ORDER[i]] = 'b'
+  return map
+}
+
+const LETTER_PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }
+function parseNoteName(nm) {
+  return { step: nm[0], accidental: nm.length > 1 ? nm.slice(1) : null }
+}
+function noteNameToPc(nm) {
+  const { step, accidental } = parseNoteName(nm)
+  let pc = LETTER_PC[step]
+  if (accidental === '#') pc += 1
+  else if (accidental === 'b') pc -= 1
+  return ((pc % 12) + 12) % 12
+}
+
+// The actual theory engine entry point: given an absolute pitch class
+// (0-11) and a key signature, return the correctly-spelled {step, accidental}.
+// Diatonic scale tones use their exact scale spelling; chromatic
+// (non-diatonic) tones are spelled as a raised neighbor in sharp-side keys
+// or a lowered neighbor in flat-side keys — standard engraving convention.
+export function spellPitch(pitchClass, keySignature) {
+  const pc = ((pitchClass % 12) + 12) % 12
+  const scale = MAJOR_SCALES[String(keySignature || 0)] || MAJOR_SCALES['0']
+
+  for (const nm of scale) {
+    if (noteNameToPc(nm) === pc) return parseNoteName(nm)
+  }
+
+  const isFlatKey = (keySignature || 0) < 0
+  if (!isFlatKey) {
+    for (const nm of scale) {
+      if ((noteNameToPc(nm) + 1) % 12 === pc) {
+        return { step: parseNoteName(nm).step, accidental: '#' }
+      }
+    }
+  } else {
+    for (const nm of scale) {
+      if (((noteNameToPc(nm) - 1) + 12) % 12 === pc) {
+        return { step: parseNoteName(nm).step, accidental: 'b' }
+      }
+    }
+  }
+  // Fallback — shouldn't normally be reached (every pc is either a scale
+  // tone or exactly one semitone from one), but keeps this total.
+  const FALLBACK = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+  return parseNoteName(FALLBACK[pc])
+}
+
 export const DURATION_BEATS = {
   'w': 4, 'h': 2, 'q': 1, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625,
   'wd': 6, 'hd': 3, 'qd': 1.5, '8d': 0.75, '16d': 0.375, '32d': 0.1875,
@@ -1369,15 +1458,10 @@ export const useScoreStore = create((set, get) => ({
 
   // ── Pitch operations ───────────────────────────────────────────────────────
   shiftPitchHalfStep: (dir) => {
-    const CHROMATIC = [
-      {s:'C',a:null},{s:'C',a:'#'},{s:'D',a:null},{s:'D',a:'#'},{s:'E',a:null},
-      {s:'F',a:null},{s:'F',a:'#'},{s:'G',a:null},{s:'G',a:'#'},{s:'A',a:null},
-      {s:'B',a:'b'},{s:'B',a:null},
-    ]
     const base = {C:0,D:2,E:4,F:5,G:7,A:9,B:11}
     const { score, selectedNoteId, selectedPartId, selectedMeasureIndex } = get()
-    const note = score.parts.find(p => p.id === selectedPartId)
-      ?.measures[selectedMeasureIndex]?.notes.find(n => n.id === selectedNoteId)
+    const measure = score.parts.find(p => p.id === selectedPartId)?.measures[selectedMeasureIndex]
+    const note = measure?.notes.find(n => n.id === selectedNoteId)
     if (!note?.pitch) return
     const { step, accidental, octave } = note.pitch
     let semi = base[step] + octave * 12
@@ -1385,8 +1469,12 @@ export const useScoreStore = create((set, get) => ({
     if (accidental === 'b') semi--
     semi += dir
     const oct2 = Math.floor(semi / 12)
-    const idx = ((semi % 12) + 12) % 12
-    const np = { step: CHROMATIC[idx].s, accidental: CHROMATIC[idx].a, octave: oct2 }
+    const pc = ((semi % 12) + 12) % 12
+    // Spell the new pitch according to the ACTIVE key signature (not a
+    // fixed sharps-only table) — e.g. stepping into a black key in Bb
+    // major now correctly yields Eb, not D#.
+    const spelled = spellPitch(pc, measure?.keySignature ?? 0)
+    const np = { step: spelled.step, accidental: spelled.accidental, octave: oct2 }
     get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) =>
       notes.map(n => n.id === selectedNoteId ? { ...n, pitch: np } : n)
     )

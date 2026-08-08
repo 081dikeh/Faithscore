@@ -1,6 +1,6 @@
 // src/components/PianoKeyboard/index.jsx
 import { useState, useCallback } from 'react'
-import { useScoreStore } from '../../store/scoreStore'
+import { useScoreStore, spellPitch } from '../../store/scoreStore'
 
 // ── Piano layout — full 88-key range C1–C8 ──────────────────────────────────
 // Each octave has 7 white keys and 5 black keys.
@@ -65,17 +65,13 @@ export default function PianoKeyboard() {
   const selNote = getSelectedNote?.()
   const selPitch = selNote && !selNote.isRest ? selNote.pitch : null
 
-  // Which accidental spelling black keys should use right now. Standard
-  // notation convention: flat-side keys (F, Bb, Eb, Ab, Db, Gb, Cb — negative
-  // keySignature numbers) spell chromatic notes with flats; everything else
-  // (C and sharp-side keys) uses sharps. Falls back to whatever measure 1
-  // is in if nothing's selected yet, so the very first note typed is
-  // spelled correctly too.
+  // Active key signature for whichever bar is selected (falls back to bar 1
+  // if nothing's selected yet) — passed down so black keys spell correctly
+  // via the shared theory engine (spellPitch), not a fixed sharp/flat guess.
   const activeKeySignature =
     score.parts[0]?.measures?.[selectedMeasureIndex]?.keySignature ??
     score.parts[0]?.measures?.[0]?.keySignature ??
     0
-  const isFlatKey = activeKeySignature < 0
 
   const isSelected = (step, acc, oct) =>
     selPitch?.step === step &&
@@ -229,7 +225,7 @@ export default function PianoKeyboard() {
             setHoveredKey={setHoveredKey}
             pressedKey={pressedKey}
             isSelected={isSelected}
-            isFlatKey={isFlatKey}
+            keySignature={activeKeySignature}
           />
         </div>
       </div>
@@ -239,13 +235,16 @@ export default function PianoKeyboard() {
 
 // Each black key has two valid names (e.g. C#/Db) — which one is correct
 // depends on the active key signature, not the key's physical position.
-const FLAT_SPELLING = { C: 'D', D: 'E', F: 'G', G: 'A', A: 'B' } // sharp-letter → flat's step
-function blackKeySpelling(note, isFlatKey) {
-  return isFlatKey ? { step: FLAT_SPELLING[note], acc: 'b' } : { step: note, acc: '#' }
+// Delegates to the same spellPitch() theory engine used for chromatic note
+// entry and the staff renderer, so all three always agree.
+const WHITE_PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }
+function blackKeySpelling(note, keySignature) {
+  const spelled = spellPitch(WHITE_PC[note] + 1, keySignature)
+  return { step: spelled.step, acc: spelled.accidental }
 }
 
 // Black keys rendered as an SVG overlay — pixel-perfect positioning
-function BlackKeyLayer({ whiteCount, onPress, hoveredKey, setHoveredKey, pressedKey, isSelected, isFlatKey }) {
+function BlackKeyLayer({ whiteCount, onPress, hoveredKey, setHoveredKey, pressedKey, isSelected, keySignature }) {
   // We use a percentage-based approach with a flex row of slots
   // Each slot = 1 white key width. Black keys span 0.65 of a white key, centered between keys.
   const noteNames = ['C','D','E','F','G','A','B']
@@ -268,7 +267,7 @@ function BlackKeyLayer({ whiteCount, onPress, hoveredKey, setHoveredKey, pressed
               pointerEvents: 'none',
             }}>
               {hasBlack && (() => {
-                const { step, acc } = blackKeySpelling(note, isFlatKey)
+                const { step, acc } = blackKeySpelling(note, keySignature)
                 const id  = `${step}${acc}${oct}`
                 const sel = isSelected(step, acc, oct)
                 const pressed = pressedKey === id
