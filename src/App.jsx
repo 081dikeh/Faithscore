@@ -1,5 +1,9 @@
 // src/App.jsx
 import { useEffect, useState, useRef } from 'react'
+import {
+  SkipBack, Play, Pause, Square, Repeat, Metronome, Piano as PianoIcon,
+  Sun, Moon, Minus, Plus, LogOut, Undo2, Redo2,
+} from 'lucide-react'
 import Toolbar from './components/Toolbar'
 import ScoreRenderer from './components/ScoreRenderer'
 import NoteEditor from './components/NoteEditor'
@@ -1052,17 +1056,25 @@ export default function App() {
 
         {/* Undo / Redo */}
         <button onClick={undo} disabled={_undoStack.length === 0} title="Undo (Ctrl+Z)"
-          className="w-7 h-7 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100 disabled:opacity-30 text-sm transition-colors">↩</button>
+          className="w-7 h-7 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100 disabled:opacity-30 transition-colors">
+          <Undo2 size={14} strokeWidth={2} />
+        </button>
         <button onClick={redo} title="Redo (Ctrl+Y)"
-          className="w-7 h-7 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100 text-sm transition-colors">↪</button>
+          className="w-7 h-7 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100 transition-colors">
+          <Redo2 size={14} strokeWidth={2} />
+        </button>
 
         {/* Zoom */}
         <div className="w-px h-4 bg-gray-200 mx-1" />
         <button onClick={() => setZoom(zoom - 0.1)} title="Zoom out (Ctrl+-)"
-          className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100 text-sm">−</button>
+          className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100">
+          <Minus size={13} strokeWidth={2} />
+        </button>
         <span className="text-xs text-gray-500 w-9 text-center font-mono">{Math.round(zoom*100)}%</span>
         <button onClick={() => setZoom(zoom + 0.1)} title="Zoom in (Ctrl+=)"
-          className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100 text-sm">+</button>
+          className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:bg-gray-100">
+          <Plus size={13} strokeWidth={2} />
+        </button>
 
         <div className="flex-1" />
 
@@ -1070,15 +1082,21 @@ export default function App() {
         <div className="flex items-center gap-1.5 mr-2">
           {/* Rewind */}
           <button onClick={rewind} title="Rewind (stop)"
-            className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">⏮</button>
-          {/* Play / Pause */}
+            className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">
+            <SkipBack size={15} fill="currentColor" strokeWidth={0} />
+          </button>
+          {/* Play / Pause — one consistent accent color, icon swaps in place */}
           <button onClick={isPlaying ? pause : handlePlay} title="Play/Pause (Space)"
-            className={`w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition-colors ${isPlaying ? 'bg-orange-500 hover:bg-orange-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
-            {isPlaying ? '⏸' : '▶'}
+            className="w-9 h-9 flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-sm">
+            {isPlaying
+              ? <Pause size={16} fill="currentColor" strokeWidth={0} />
+              : <Play size={16} fill="currentColor" strokeWidth={0} style={{ marginLeft: 1.5 }} />}
           </button>
           {/* Stop */}
           <button onClick={stop} title="Stop"
-            className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs transition-colors">⏹</button>
+            className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">
+            <Square size={13} fill="currentColor" strokeWidth={0} />
+          </button>
 
           {/* Seek bar */}
           <div style={{ display:'flex', alignItems:'center', gap:4, width:160 }}>
@@ -1119,20 +1137,20 @@ export default function App() {
 
           {/* Metronome */}
           <button onClick={() => { const v = toggleMetronome(); setMetronomeOn(v) }} title="Metronome"
-            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors ${metronomeOn ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
-            𝅘
+            className={`w-8 h-8 flex items-center justify-center rounded-md border transition-colors ${metronomeOn ? 'bg-blue-50 border-blue-400 text-blue-600' : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-100'}`}>
+            <Metronome size={16} strokeWidth={1.75} />
           </button>
           {/* Loop */}
           <button onClick={() => { const v = toggleLoop(); setLoopOn(v) }} title="Loop"
-            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors ${loopOn ? 'bg-green-100 border-green-400 text-green-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
-            🔁
+            className={`w-8 h-8 flex items-center justify-center rounded-md border transition-colors ${loopOn ? 'bg-blue-50 border-blue-400 text-blue-600' : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-100'}`}>
+            <Repeat size={15} strokeWidth={2} />
           </button>
           {/* Piano */}
           <button onClick={() => setShowPiano(v => !v)} title="Piano keyboard (P)"
-            className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors ${showPiano ? 'bg-indigo-100 border-indigo-400 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}>
-            🎹
+            className={`w-8 h-8 flex items-center justify-center rounded-md border transition-colors ${showPiano ? 'bg-blue-50 border-blue-400 text-blue-600' : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-100'}`}>
+            <PianoIcon size={16} strokeWidth={1.75} />
           </button>
-          {samplesLoading && <span className="text-amber-500 text-xs animate-pulse">🎹…</span>}
+          {samplesLoading && <span className="text-amber-500 text-xs animate-pulse">Loading…</span>}
         </div>
 
         {/* Dark mode */}
@@ -1142,8 +1160,8 @@ export default function App() {
           document.documentElement.classList.toggle('dark', next)
         }}
           title="Toggle dark mode"
-          className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 text-xs mr-2">
-          {darkMode ? '☀️' : '🌙'}
+          className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors mr-2">
+          {darkMode ? <Sun size={15} strokeWidth={1.75} /> : <Moon size={15} strokeWidth={1.75} />}
         </button>
 
         {/* Part manager moved to Sidebar → Parts tab */}
@@ -1165,10 +1183,12 @@ export default function App() {
             </span>
             <button onClick={handleSignOut}
               title="Sign out"
-              style={{ fontSize:11, color:'#6b7280', background:'none', border:'1px solid #e5e7eb',
-                borderRadius:5, padding:'2px 8px', cursor:'pointer' }}
+              style={{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#6b7280',
+                background:'none', border:'1px solid #e5e7eb',
+                borderRadius:5, padding:'3px 8px', cursor:'pointer' }}
               onMouseEnter={e=>e.currentTarget.style.color='#dc2626'}
               onMouseLeave={e=>e.currentTarget.style.color='#6b7280'}>
+              <LogOut size={12} strokeWidth={2} />
               Sign out
             </button>
           </div>
