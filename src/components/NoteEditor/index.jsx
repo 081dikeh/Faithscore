@@ -1,5 +1,6 @@
 // src/components/NoteEditor/index.jsx
 import { useScoreStore } from '../../store/scoreStore'
+import { Trash2, X } from 'lucide-react'
 
 const STEPS     = ['C','D','E','F','G','A','B']
 const OCTAVES   = [2,3,4,5,6]
@@ -177,13 +178,13 @@ export default function NoteEditor() {
       <div className="flex gap-2">
         {!isRest && (
           <button onClick={() => deleteNote(selectedPartId, selectedMeasureIndex, selectedNoteId)}
-            className="border border-red-300 text-red-600 hover:bg-red-50 px-3 h-7 rounded text-xs font-medium transition-colors">
-            🗑 Delete
+            className="flex items-center gap-1.5 border border-red-300 text-red-600 hover:bg-red-50 px-3 h-7 rounded text-xs font-medium transition-colors">
+            <Trash2 size={12} strokeWidth={2} /> Delete
           </button>
         )}
         <button onClick={clearNoteSelection}
-          className="border border-gray-300 text-gray-600 hover:bg-gray-100 px-3 h-7 rounded text-xs transition-colors">
-          ✕ Deselect
+          className="flex items-center gap-1.5 border border-gray-300 text-gray-600 hover:bg-gray-100 px-3 h-7 rounded text-xs transition-colors">
+          <X size={12} strokeWidth={2} /> Deselect
         </button>
       </div>
     </div>

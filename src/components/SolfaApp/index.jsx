@@ -28,6 +28,10 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as Tone from "tone";
+import {
+  Download, Cloud, Mic, Music, Repeat, Metronome, SlidersHorizontal,
+  FileText, Ruler, ListMusic, PenLine, Volume2, Zap,
+} from "lucide-react";
 import SolfaRenderer from "../SolfaRenderer";
 import SolfaSidebar from "../SolfaSidebar";
 import {
@@ -870,7 +874,7 @@ export default function SolfaApp({ user, onGoHome }) {
             gap: 4,
           }}
         >
-          ⬇ Export
+          <Download size={13} strokeWidth={2} /> Export
         </button>
 
         <button
@@ -885,9 +889,12 @@ export default function SolfaApp({ user, onGoHome }) {
             border: "none",
             borderRadius: 6,
             cursor: saving || !user ? "not-allowed" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
           }}
         >
-          {saving ? "Saving…" : "☁ Save"}
+          {saving ? "Saving…" : <><Cloud size={13} strokeWidth={2} /> Save</>}
         </button>
 
         {user && (
@@ -1177,14 +1184,17 @@ export default function SolfaApp({ user, onGoHome }) {
             padding: "3px 9px",
             fontSize: 11,
             fontWeight: 500,
-            border: lyricsMode ? "1px solid #059669" : "1px solid #d1d5db",
+            border: lyricsMode ? "1px solid #2563eb" : "1px solid #d1d5db",
             borderRadius: 5,
-            background: lyricsMode ? "#059669" : "white",
+            background: lyricsMode ? "#2563eb" : "white",
             color: lyricsMode ? "white" : "#374151",
             cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
           }}
         >
-          🎤 Lyrics Mode
+          <Mic size={13} strokeWidth={2} /> Lyrics Mode
         </button>
       </div>
 
@@ -1295,13 +1305,12 @@ export default function SolfaApp({ user, onGoHome }) {
             cursor: "pointer",
             background: metronomeOn ? "#2563eb" : "#374151",
             color: "white",
-            fontSize: 14,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
           }}
         >
-          🎵
+          <Metronome size={16} strokeWidth={1.75} />
         </button>
 
         {/* Loop */}
@@ -1317,15 +1326,14 @@ export default function SolfaApp({ user, onGoHome }) {
             borderRadius: 6,
             border: "none",
             cursor: "pointer",
-            background: looping ? "#7c3aed" : "#374151",
+            background: looping ? "#2563eb" : "#374151",
             color: "white",
-            fontSize: 13,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
           }}
         >
-          🔁
+          <Repeat size={15} strokeWidth={2} />
         </button>
 
         {/* Preset picker */}
@@ -1366,15 +1374,14 @@ export default function SolfaApp({ user, onGoHome }) {
             borderRadius: 6,
             border: "none",
             cursor: "pointer",
-            background: showMixer ? "#0891b2" : "#374151",
+            background: showMixer ? "#2563eb" : "#374151",
             color: "white",
-            fontSize: 13,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
           }}
         >
-          🎚
+          <SlidersHorizontal size={15} strokeWidth={1.75} />
         </button>
 
         {/* Beat position indicator — isolated, updates without re-rendering the app */}
@@ -1678,7 +1685,9 @@ export default function SolfaApp({ user, onGoHome }) {
           >
             {/* Header */}
             <div style={{ background: "#1e2433", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ color: "white", fontWeight: 700, fontSize: 15 }}>⬇ Export Score</span>
+              <span style={{ color: "white", fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 7 }}>
+                <Download size={15} strokeWidth={2} /> Export Score
+              </span>
               {!exportBusy && (
                 <button onClick={() => setShowExport(false)}
                   style={{ background: "none", border: "none", color: "#9ca3af", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>×</button>
@@ -1687,7 +1696,10 @@ export default function SolfaApp({ user, onGoHome }) {
 
             {/* Tabs */}
             <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb" }}>
-              {[{id:"pdf",label:"📄 Print / PDF"},{id:"audio",label:"🎵 Audio (WAV)"}].map(tab => (
+              {[
+                { id: "pdf", label: "Print / PDF", icon: <FileText size={13} strokeWidth={2} /> },
+                { id: "audio", label: "Audio (WAV)", icon: <Music size={13} strokeWidth={2} /> },
+              ].map(tab => (
                 <button key={tab.id} onClick={() => !exportBusy && setExportTab(tab.id)}
                   style={{
                     flex:1, padding:"10px 0", fontSize:13, fontWeight: exportTab===tab.id ? 700 : 400,
@@ -1695,8 +1707,9 @@ export default function SolfaApp({ user, onGoHome }) {
                     background: exportTab===tab.id ? "#eff6ff" : "white",
                     color: exportTab===tab.id ? "#2563eb" : "#6b7280",
                     cursor: exportBusy ? "not-allowed" : "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                   }}
-                >{tab.label}</button>
+                >{tab.icon}{tab.label}</button>
               ))}
             </div>
 
@@ -1708,10 +1721,10 @@ export default function SolfaApp({ user, onGoHome }) {
                     Opens a print-ready page with your solfa score laid out on A4.
                     Use <strong>File → Print</strong> or <strong>Save as PDF</strong> in the print dialog.
                   </p>
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", marginBottom: 18, fontSize: 12, color: "#64748b" }}>
-                    <div>📐 A4 portrait format</div>
-                    <div>🎼 Includes title, key, time signature &amp; tempo</div>
-                    <div>🖋 All voice parts included</div>
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", marginBottom: 18, fontSize: 12, color: "#64748b", display: "flex", flexDirection: "column", gap: 5 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Ruler size={13} strokeWidth={1.75} /> A4 portrait format</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><ListMusic size={13} strokeWidth={1.75} /> Includes title, key, time signature &amp; tempo</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><PenLine size={13} strokeWidth={1.75} /> All voice parts included</div>
                   </div>
                   <button
                     onClick={() => {
@@ -1749,10 +1762,10 @@ export default function SolfaApp({ user, onGoHome }) {
                     />
                   </div>
 
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", marginBottom: 18, fontSize: 12, color: "#64748b" }}>
-                    <div>🎤 FluidR3 Choir Aahs sampler — all SATB parts</div>
-                    <div>🔊 44.1 kHz stereo WAV with reverb</div>
-                    <div>⚡ Rendered offline (faster than real-time)</div>
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", marginBottom: 18, fontSize: 12, color: "#64748b", display: "flex", flexDirection: "column", gap: 5 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Mic size={13} strokeWidth={1.75} /> FluidR3 Choir Aahs sampler — all SATB parts</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Volume2 size={13} strokeWidth={1.75} /> 44.1 kHz stereo WAV with reverb</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Zap size={13} strokeWidth={1.75} /> Rendered offline (faster than real-time)</div>
                   </div>
 
                   {/* Progress */}
@@ -1794,9 +1807,10 @@ export default function SolfaApp({ user, onGoHome }) {
                       background: exportBusy ? "#93c5fd" : "#2563eb", color: "white",
                       border: "none", borderRadius: 8,
                       cursor: exportBusy ? "not-allowed" : "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
                     }}
                   >
-                    {exportBusy ? "Rendering…" : "⬇ Download WAV"}
+                    {exportBusy ? "Rendering…" : <><Download size={15} strokeWidth={2} /> Download WAV</>}
                   </button>
                 </div>
               )}

@@ -1,5 +1,6 @@
 // src/components/HomeScreen/index.jsx
 import { useState, useEffect, useRef } from 'react'
+import { Music, Puzzle, Headphones, BookOpen, Search, List, LayoutGrid, Cloud, X } from 'lucide-react'
 import { useScoreStore } from '../../store/scoreStore'
 import { useSolfaStore } from '../../store/solfaStore'
 import SolfaWizard from '../SolfaWizard'
@@ -288,7 +289,7 @@ function Wizard({ onDone, onCancel }) {
       <div style={md}>
         <div style={{ ...hd, paddingTop:18, paddingBottom:0 }}>
           <div style={{ display:'flex', alignItems:'center', marginBottom:4 }}>
-            <span style={{ fontSize:13, color:'#6b7280' }}>🎵 New score</span>
+            <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:13, color:'#6b7280' }}><Music size={13} strokeWidth={1.75} /> New score</span>
             <button onClick={onCancel} style={{ marginLeft:'auto', border:'none', background:'none', cursor:'pointer', fontSize:20, color:'#aaa', lineHeight:1 }}>×</button>
           </div>
           <h2 style={{ margin:'8px 0 16px', textAlign:'center', fontSize:18, fontWeight:600, color:'#111' }}>Additional score information</h2>
@@ -705,10 +706,10 @@ export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSi
   }
 
   const NAV = [
-    { id:'scores',  icon:'♪',  label:'Scores'       },
-    { id:'plugins', icon:'⊞',  label:'Plugins'      },
-    { id:'sounds',  icon:'♫',  label:'FaithSounds'  },
-    { id:'learn',   icon:'📖', label:'Learn'        },
+    { id:'scores',  icon:<Music size={15} strokeWidth={1.75} />,     label:'Scores'       },
+    { id:'plugins', icon:<Puzzle size={15} strokeWidth={1.75} />,    label:'Plugins'      },
+    { id:'sounds',  icon:<Headphones size={15} strokeWidth={1.75} />,label:'FaithSounds'  },
+    { id:'learn',   icon:<BookOpen size={15} strokeWidth={1.75} />,  label:'Learn'        },
   ]
 
   return (
@@ -747,7 +748,7 @@ export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSi
           {NAV.map(n=>(
             <button key={n.id} onClick={()=>setNav(n.id)}
               style={{ display:'flex', alignItems:'center', gap:11, width:'100%', padding:'10px 18px', border:'none', background: nav===n.id?'#e0e7ff':'transparent', cursor:'pointer', textAlign:'left', fontSize:13.5, color: nav===n.id?'#3730a3':'#374151', fontWeight: nav===n.id?600:400, borderLeft: nav===n.id?'3px solid #4f46e5':'3px solid transparent' }}>
-              <span style={{ fontSize:16, width:18, textAlign:'center' }}>{n.icon}</span>
+              <span style={{ width:18, display:'flex', justifyContent:'center' }}>{n.icon}</span>
               {n.label}
             </button>
           ))}
@@ -773,7 +774,7 @@ export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSi
           ))}
           <div style={{ flex:1 }}/>
           <div style={{ display:'flex', alignItems:'center', gap:8, background:'#f3f4f6', borderRadius:8, padding:'6px 14px', minWidth:200 }}>
-            <span style={{ color:'#9ca3af', fontSize:13 }}>🔍</span>
+            <Search size={14} strokeWidth={2} color="#9ca3af" />
             <input placeholder="Search scores…" style={{ border:'none', background:'none', outline:'none', fontSize:13, flex:1, color:'#374151' }}/>
           </div>
         </div>
@@ -786,8 +787,8 @@ export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSi
               <h1 style={{ margin:0, fontSize:28, fontWeight:700, color:'#1e2433', letterSpacing:'-0.5px' }}>Scores</h1>
               <div style={{ flex:1 }}/>
               <div style={{ display:'flex', gap:2, background:'#e5e7eb', borderRadius:7, padding:'3px' }}>
-                <button onClick={()=>setViewMode('grid')} style={{ padding:'5px 10px', borderRadius:5, border:'none', background:viewMode==='grid'?'white':'transparent', cursor:'pointer', fontSize:16, color:viewMode==='grid'?'#1e2433':'#9ca3af', boxShadow:viewMode==='grid'?'0 1px 3px rgba(0,0,0,0.1)':'' }}>⊞</button>
-                <button onClick={()=>setViewMode('list')} style={{ padding:'5px 10px', borderRadius:5, border:'none', background:viewMode==='list'?'white':'transparent', cursor:'pointer', fontSize:16, color:viewMode==='list'?'#1e2433':'#9ca3af', boxShadow:viewMode==='list'?'0 1px 3px rgba(0,0,0,0.1)':'' }}>☰</button>
+                <button onClick={()=>setViewMode('grid')} style={{ padding:'5px 10px', borderRadius:5, border:'none', background:viewMode==='grid'?'white':'transparent', cursor:'pointer', display:'flex', color:viewMode==='grid'?'#1e2433':'#9ca3af', boxShadow:viewMode==='grid'?'0 1px 3px rgba(0,0,0,0.1)':'' }}><LayoutGrid size={15} strokeWidth={1.75} /></button>
+                <button onClick={()=>setViewMode('list')} style={{ padding:'5px 10px', borderRadius:5, border:'none', background:viewMode==='list'?'white':'transparent', cursor:'pointer', display:'flex', color:viewMode==='list'?'#1e2433':'#9ca3af', boxShadow:viewMode==='list'?'0 1px 3px rgba(0,0,0,0.1)':'' }}><List size={15} strokeWidth={1.75} /></button>
               </div>
             </div>
 
@@ -808,10 +809,10 @@ export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSi
                     </span>
                   )}
                   <button onClick={saveToCloud} disabled={cloudSaving}
-                    style={{ fontSize:12, fontWeight:600, padding:'5px 14px',
+                    style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, fontWeight:600, padding:'5px 14px',
                       background: cloudSaving ? '#93c5fd' : '#2563eb', color:'white',
                       border:'none', borderRadius:6, cursor: cloudSaving ? 'not-allowed' : 'pointer' }}>
-                    {cloudSaving ? 'Saving…' : '☁ Save to cloud'}
+                    {cloudSaving ? 'Saving…' : <><Cloud size={13} strokeWidth={2} /> Save to cloud</>}
                   </button>
                 </div>
               )}
@@ -865,7 +866,7 @@ export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSi
                         </div>
                         <div style={{ fontSize:11, color:'#9ca3af', marginTop:3, display:'flex', alignItems:'center', gap:6 }}>
                           {score?.type === 'solfa' && <span style={{fontSize:9,fontWeight:700,padding:'1px 5px',borderRadius:3,background:'#fef3c7',color:'#92400e'}}>SOLFA</span>}
-                          {cloudId && <span title="Saved to cloud">☁</span>}
+                          {cloudId && <span title="Saved to cloud" style={{display:'inline-flex'}}><Cloud size={11} strokeWidth={2} /></span>}
                           {timeAgo(ts)}
                         </div>
                       </div>
@@ -875,10 +876,10 @@ export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSi
                         title="Delete score"
                         style={{ position:'absolute', top:8, right:8, width:24, height:24, borderRadius:4,
                           background:'rgba(255,255,255,0.9)', border:'1px solid #e5e7eb',
-                          cursor:'pointer', fontSize:12, color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center' }}
+                          cursor:'pointer', color:'#9ca3af', display:'flex', alignItems:'center', justifyContent:'center' }}
                         onMouseEnter={e=>{e.currentTarget.style.color='#dc2626';e.currentTarget.style.borderColor='#fca5a5'}}
                         onMouseLeave={e=>{e.currentTarget.style.color='#9ca3af';e.currentTarget.style.borderColor='#e5e7eb'}}>
-                        ✕
+                        <X size={13} strokeWidth={2} />
                       </button>
                     )}
                   </div>
@@ -921,16 +922,16 @@ export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSi
                       <div style={{ width:56,height:42,borderRadius:6,overflow:'hidden',border:'1px solid #e5e7eb',flexShrink:0,background:'#fafbfc' }}><Thumbnail score={score}/></div>
                       <div style={{ flex:1 }}>
                         <div style={{ fontSize:13.5,fontWeight:600,color:'#1e2433' }}>{score.title||'Untitled Score'}</div>
-                        <div style={{ fontSize:11.5,color:'#9ca3af',marginTop:2 }}>{score.parts?.length||0} parts · {score.parts?.[0]?.measures?.length||0} bars · {cloudId ? '☁ cloud' : 'local'}</div>
+                        <div style={{ fontSize:11.5,color:'#9ca3af',marginTop:2, display:'flex', alignItems:'center', gap:4 }}>{score.parts?.length||0} parts · {score.parts?.[0]?.measures?.length||0} bars · {cloudId ? <><Cloud size={10} strokeWidth={2} /> cloud</> : 'local'}</div>
                       </div>
                       <div style={{ fontSize:11,color:'#9ca3af',textTransform:'uppercase',letterSpacing:'0.05em',flexShrink:0 }}>{timeAgo(ts)}</div>
                     </button>
                     {cloudId && (
                       <button onClick={()=>deleteCloudScore(cloudId)}
-                        style={{ width:24,height:24,borderRadius:4,background:'none',border:'1px solid #e5e7eb',cursor:'pointer',fontSize:12,color:'#9ca3af',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center' }}
+                        style={{ width:24,height:24,borderRadius:4,background:'none',border:'1px solid #e5e7eb',cursor:'pointer',color:'#9ca3af',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center' }}
                         onMouseEnter={e=>{e.currentTarget.style.color='#dc2626';e.currentTarget.style.borderColor='#fca5a5'}}
                         onMouseLeave={e=>{e.currentTarget.style.color='#9ca3af';e.currentTarget.style.borderColor='#e5e7eb'}}>
-                        ✕
+                        <X size={13} strokeWidth={2} />
                       </button>
                     )}
                   </div>

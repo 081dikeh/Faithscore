@@ -2,6 +2,7 @@
 // FaithScore — Login / Sign-up screen with email+password and Google OAuth
 
 import { useState } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 
 export default function AuthScreen({ onAuth }) {
@@ -193,8 +194,9 @@ export default function AuthScreen({ onAuth }) {
                     onBlur={e => e.target.style.borderColor = '#d1d5db'} />
                   <button type="button" onClick={() => setShowPass(v => !v)}
                     style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                      background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: '#9ca3af' }}>
-                    {showPass ? '🙈' : '👁'}
+                      background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af',
+                      display: 'flex', alignItems: 'center' }}>
+                    {showPass ? <EyeOff size={16} strokeWidth={1.75} /> : <Eye size={16} strokeWidth={1.75} />}
                   </button>
                 </div>
               </div>

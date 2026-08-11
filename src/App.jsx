@@ -3,6 +3,8 @@ import { useEffect, useState, useRef } from 'react'
 import {
   SkipBack, Play, Pause, Square, Repeat, Metronome, Piano as PianoIcon,
   Sun, Moon, Minus, Plus, LogOut, Undo2, Redo2,
+  FilePlus, FolderOpen, Save, Printer, Power, Scissors, Copy, Clipboard,
+  Trash2, Settings, Sparkles, Eraser, ChevronUp, ChevronDown,
 } from 'lucide-react'
 import Toolbar from './components/Toolbar'
 import ScoreRenderer from './components/ScoreRenderer'
@@ -838,14 +840,14 @@ export default function App() {
 
           // ── FILE ───────────────────────────────────────────────────────────
           const fileMenu = <>
-            <Item icon="📄" label="New…"              shortcut="Ctrl+N"
+            <Item icon={<FilePlus size={14} strokeWidth={2} />} label="New…"              shortcut="Ctrl+N"
               onClick={goHome} />
-            <Item icon="📂" label="Open…"             shortcut="Ctrl+O"
+            <Item icon={<FolderOpen size={14} strokeWidth={2} />} label="Open…"             shortcut="Ctrl+O"
               onClick={handleOpenClick} />
             <Item icon=""   label="Open recent"
               onClick={handleOpenRecentClick} />
             <Sep />
-            <Item icon="💾" label="Save"              shortcut="Ctrl+S"
+            <Item icon={<Save size={14} strokeWidth={2} />} label="Save"              shortcut="Ctrl+S"
               onClick={() => doSave({ asNew: false })} />
             <Item icon=""   label="Save as…"          shortcut="Ctrl+Shift+S"
               onClick={() => doSave({ asNew: true })} />
@@ -856,32 +858,32 @@ export default function App() {
               onClick={() => exportMIDI(score)} />
             <Item icon=""   label="Export…"           arrow               disabled />
             <Sep />
-            <Item icon="🖨️" label="Print…"            shortcut="Ctrl+P"
+            <Item icon={<Printer size={14} strokeWidth={2} />} label="Print…"            shortcut="Ctrl+P"
               onClick={() => { printScore(score) }} />
             <Sep />
             <Item icon=""   label="Score properties…"                     disabled />
-            <Item icon="🚪" label="Quit"              shortcut="Ctrl+Q"   danger
+            <Item icon={<Power size={14} strokeWidth={2} />} label="Quit"              shortcut="Ctrl+Q"   danger
               onClick={() => window.close()} />
           </>
 
           // ── EDIT ───────────────────────────────────────────────────────────
           const editMenu = <>
-            <Item icon="↩" label="Undo"               shortcut="Ctrl+Z"
+            <Item icon={<Undo2 size={14} strokeWidth={2} />} label="Undo"               shortcut="Ctrl+Z"
               onClick={undo} disabled={_undoStack.length === 0} />
-            <Item icon="↪" label="Redo"               shortcut="Ctrl+Y"
+            <Item icon={<Redo2 size={14} strokeWidth={2} />} label="Redo"               shortcut="Ctrl+Y"
               onClick={redo} />
             <Item icon=""  label="History"                                 disabled />
             <Sep />
-            <Item icon="✂️" label="Cut"               shortcut="Ctrl+X"   disabled />
-            <Item icon="📋" label="Copy"              shortcut="Ctrl+C"
+            <Item icon={<Scissors size={14} strokeWidth={2} />} label="Cut"               shortcut="Ctrl+X"   disabled />
+            <Item icon={<Copy size={14} strokeWidth={2} />} label="Copy"              shortcut="Ctrl+C"
               onClick={() => { if(selectedMeasureIndex!==null) copyMeasure(selectedPartId, selectedMeasureIndex) }} />
-            <Item icon="📌" label="Paste"             shortcut="Ctrl+V"
+            <Item icon={<Clipboard size={14} strokeWidth={2} />} label="Paste"             shortcut="Ctrl+V"
               onClick={() => { if(selectedMeasureIndex!==null) pasteMeasure(selectedPartId, selectedMeasureIndex) }} />
             <Item icon=""  label="Paste half duration" shortcut="Ctrl+Shift+Q" disabled />
             <Item icon=""  label="Paste double duration" shortcut="Ctrl+Shift+W" disabled />
             <Item icon=""  label="Swap with clipboard" shortcut="Ctrl+Shift+X" disabled />
             <Sep />
-            <Item icon="🗑" label="Delete"            shortcut="Del"
+            <Item icon={<Trash2 size={14} strokeWidth={2} />} label="Delete"            shortcut="Del"
               onClick={() => { if(selectedNoteId) deleteNote(selectedPartId, selectedMeasureIndex, selectedNoteId)
                 else if(selectedMeasureIndex!==null) clearMeasureColumn(selectedMeasureIndex) }} />
             <Sep />
@@ -889,7 +891,7 @@ export default function App() {
             <Item icon=""  label="Select section"                          disabled />
             <Item icon=""  label="Find / Go to"       shortcut="Ctrl+F"   disabled />
             <Sep />
-            <Item icon="⚙️" label="Preferences…"                          disabled />
+            <Item icon={<Settings size={14} strokeWidth={2} />} label="Preferences…"                          disabled />
           </>
 
           // ── VIEW ───────────────────────────────────────────────────────────
@@ -907,7 +909,7 @@ export default function App() {
             <Item icon=""  label="History"                                 disabled />
             <Item icon=""  label="Navigator"                               disabled />
             <Sep />
-            <Item icon="🎹" label="Piano keyboard"   shortcut="P"
+            <Item icon={<PianoIcon size={14} strokeWidth={2} />} label="Piano keyboard"   shortcut="P"
               onClick={() => setShowPiano(v => !v)} />
             <Item icon=""  label="Mixer"              shortcut="F10"      disabled />
             <Item icon=""  label="Playback setup"                         disabled />
@@ -1018,7 +1020,7 @@ export default function App() {
             <Item icon=""  label="Voices"             arrow               disabled />
             <Item icon=""  label="Measures"           arrow               disabled />
             <Sep />
-            <Item icon="🗑" label="Remove selected range" shortcut="Ctrl+Del"
+            <Item icon={<Trash2 size={14} strokeWidth={2} />} label="Remove selected range" shortcut="Ctrl+Del"
               onClick={() => { if(selectedMeasureIndex!==null) deleteMeasureColumn(selectedMeasureIndex) }} />
             <Item icon=""  label="Fill with slashes"                      disabled />
             <Item icon=""  label="Toggle rhythmic slash notation"         disabled />
@@ -1032,11 +1034,11 @@ export default function App() {
               onClick={() => {}} disabled />
             <Sep />
             <Label text="AI Features" />
-            <Item icon="🤖" label="AI: Generate melody…"
+            <Item icon={<Sparkles size={14} strokeWidth={2} />} label="AI: Generate melody…"
               onClick={() => alert('AI melody generation — coming soon!')} />
-            <Item icon="🤖" label="AI: Harmonize…"
+            <Item icon={<Sparkles size={14} strokeWidth={2} />} label="AI: Harmonize…"
               onClick={() => alert('AI harmonization — coming soon!')} />
-            <Item icon="🤖" label="AI: Generate lyrics…"
+            <Item icon={<Sparkles size={14} strokeWidth={2} />} label="AI: Generate lyrics…"
               onClick={() => alert('AI lyric generation — coming soon!')} />
           </>
 
@@ -1359,7 +1361,10 @@ export default function App() {
             fontSize: 11, fontWeight: 600, cursor: 'pointer',
             transition: 'all 0.15s',
           }}>
-          🎹 Piano Keyboard {showPiano ? '▲' : '▼'}
+          <span style={{ display:'inline-flex', alignItems:'center', gap:5 }}>
+            <PianoIcon size={13} strokeWidth={2} /> Piano Keyboard
+            {showPiano ? <ChevronUp size={12} strokeWidth={2} /> : <ChevronDown size={12} strokeWidth={2} />}
+          </span>
         </button>
         <span style={{ color: '#475569', fontSize: 10 }}>
           Press P to toggle · Click key to insert note
@@ -1374,12 +1379,12 @@ export default function App() {
           <div className="px-3 py-1 text-gray-400 text-xs border-b border-gray-100 mb-1">
             Bar {contextMenu.col + 1}
           </div>
-          <button className="w-full text-left px-3 py-1.5 hover:bg-gray-100 text-gray-700"
-            onClick={() => { addMeasure(); setContextMenu(null) }}>➕ Add bar after</button>
-          <button className="w-full text-left px-3 py-1.5 hover:bg-gray-100 text-gray-700"
-            onClick={() => { clearMeasureColumn(contextMenu.col); setContextMenu(null) }}>🧹 Clear bar</button>
-          <button className="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-600"
-            onClick={() => { deleteMeasureColumn(contextMenu.col); setContextMenu(null) }}>🗑 Delete bar</button>
+          <button className="w-full flex items-center gap-2 text-left px-3 py-1.5 hover:bg-gray-100 text-gray-700"
+            onClick={() => { addMeasure(); setContextMenu(null) }}><Plus size={13} strokeWidth={2} /> Add bar after</button>
+          <button className="w-full flex items-center gap-2 text-left px-3 py-1.5 hover:bg-gray-100 text-gray-700"
+            onClick={() => { clearMeasureColumn(contextMenu.col); setContextMenu(null) }}><Eraser size={13} strokeWidth={2} /> Clear bar</button>
+          <button className="w-full flex items-center gap-2 text-left px-3 py-1.5 hover:bg-red-50 text-red-600"
+            onClick={() => { deleteMeasureColumn(contextMenu.col); setContextMenu(null) }}><Trash2 size={13} strokeWidth={2} /> Delete bar</button>
         </div>
       )}
     </div>

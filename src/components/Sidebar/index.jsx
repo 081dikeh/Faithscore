@@ -10,6 +10,7 @@
 //     remaining height via the flex container being `overflow:hidden`.
 
 import { useState } from 'react'
+import { Search } from 'lucide-react'
 import { useScoreStore, measureCapacity } from '../../store/scoreStore'
 
 const TABS = [
@@ -543,7 +544,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
           <div style={{ display:'flex', alignItems:'center', gap:4,
             background:'#f3f4f6', borderRadius:6, padding:'3px 8px',
             border:'1px solid #e5e7eb' }}>
-            <span style={{ color:'#9ca3af', fontSize:11 }}>🔍</span>
+            <Search size={12} strokeWidth={2} color="#9ca3af" />
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}

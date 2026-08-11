@@ -7,6 +7,7 @@
 //   • Its own content area scrolls internally.
 
 import { useState } from 'react'
+import { Search } from 'lucide-react'
 import { useSolfaStore, VOICE_COMBOS, migrateMeasure, resolveKeyAt } from '../../store/solfaStore'
 
 const TABS = [
@@ -622,7 +623,7 @@ export default function SolfaSidebar({ collapsed, setCollapsed, zoom, setZoom })
           <div style={{ display:'flex', alignItems:'center', gap:4,
             background:'#f3f4f6', borderRadius:6, padding:'3px 8px',
             border:'1px solid #e5e7eb' }}>
-            <span style={{ color:'#9ca3af', fontSize:11 }}>🔍</span>
+            <Search size={12} strokeWidth={2} color="#9ca3af" />
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
