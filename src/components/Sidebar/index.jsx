@@ -330,7 +330,7 @@ function PalettesTab({ search }) {
         {hasSelection && !noteIsUsable && range[0] !== range[1] && `Applying to bars ${range[0]+1}–${range[1]+1}.`}
       </div>
       {filtered.map((p, i) => (
-        <PaletteSection key={p.title} title={p.title} defaultOpen={i < 3}>
+        <PaletteSection key={p.title} title={p.title}>
           {p.items.map(item => (
             <PaletteItem key={item.label} {...item} />
           ))}
