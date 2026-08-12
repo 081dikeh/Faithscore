@@ -1,1307 +1,649 @@
-// src/components/SolfaRenderer/index.jsx
-// FaithScore Solfa Renderer
+// src/components/SolfaSidebar/index.jsx
+// FaithScore — Solfa Sidebar (Palettes / Parts / Layout / Properties)
 //
-// Each beat has EVENTS. Each event has duration in quarter-units (1-4).
-// Offset = sum of previous event durations within the beat.
-//
-// PREFIX (before syllable) from offset:
-//   offset=0 → ""     offset=1 → ","     offset=2 → "."     offset=3 → ".,,"
-//
-// SUFFIX (after syllable) from duration+offset:
-//   if note fills to end of beat (offset+dur=4) → ""
-//   duration=4 → ""   duration=3 → ".,"   duration=2 → "."   duration=1 → ","
-//   EXCEPT: last event in beat never needs suffix (nothing comes after)
-//
-// REST events → BLANK (no character rendered, just space)
-// SUSTAIN events → "–"
-//
-// BEAT SEPARATOR: ":" before beat 2+; "/" at slashSet positions
+// Mirrors the staff Sidebar's layout contract:
+//   • Lives in a normal flex row, NOT position:fixed.
+//   • Fills the full height of its flex-row parent (parent must be overflow:hidden).
+//   • Its own content area scrolls internally.
 
-import {
-  useRef,
-  useEffect,
-  useState,
-  useMemo,
-  forwardRef,
-  useImperativeHandle,
-} from "react";
-import {
-  useSolfaStore,
-  slashPositions,
-  migrateMeasure,
-  resolveKeyAt,
-  resolveKeyBefore,
-  bridgeSyllable,
-} from "../../store/solfaStore";
+import { useState } from 'react'
+import { Search } from 'lucide-react'
+import { useSolfaStore, VOICE_COMBOS, migrateMeasure, resolveKeyAt } from '../../store/solfaStore'
 
-const FONT = '"Times New Roman", Georgia, serif';
-const NOTE_SZ = 14;
-const OCT_SZ = 8;
-const SYM_SZ = 10;
-const LYR_SZ = 14;
-const ROW_H = 22; // note row height (baseline of note text)
-const LYRIC_H = 20; // lyric row height
-const VOICE_G = 14; // gap between voice blocks — large enough to prevent overlap
-const NOTE_HIT_H = NOTE_SZ + 4; // note click target — only above baseline, not below
-const SYS_GAP = 46;
-const BRAK_W = 10;
-const LABEL_W = 26;
-const PAGE_L = 36;
-const PAGE_R = 20;
-const HDR_H = 44;
-const VOICE_H = ROW_H + LYRIC_H + VOICE_G;
+const TABS = [
+  { id:'palettes',   label:'Palettes'   },
+  { id:'parts',      label:'Parts'      },
+  { id:'lyrics',     label:'Lyrics'     },
+  { id:'markers',    label:'Markers'    },
+  { id:'layout',     label:'Layout'     },
+  { id:'properties', label:'Properties' },
+]
 
-const QW = 9; // px per quarter-unit (note body width)
-const SYM_W = 5; // px per prefix/suffix character
-const SEP_W = 10; // px for ":" or "/"
-const PAD = 8; // bar padding
+const KEYS = ['C','G','D','A','E','B','F#','Db','Ab','Eb','Bb','F']
+const TIME_SIGS = [
+  { label:'2/4', beats:2, beatType:4 }, { label:'3/4', beats:3, beatType:4 },
+  { label:'4/4', beats:4, beatType:4 }, { label:'5/4', beats:5, beatType:4 },
+  { label:'6/4', beats:6, beatType:4 }, { label:'7/4', beats:7, beatType:4 },
+  { label:'3/8', beats:3, beatType:8 }, { label:'5/8', beats:5, beatType:8 },
+  { label:'6/8', beats:6, beatType:8 }, { label:'7/8', beats:7, beatType:8 },
+  { label:'9/8', beats:9, beatType:8 }, { label:'12/8',beats:12,beatType:8 },
+]
+const TEMPO_MARKS = ['Largo','Lento','Adagio','Andante','Moderato','Allegretto','Allegro','Vivace','Presto','rit.','a tempo']
+const DYNAMICS = ['ppp','pp','p','mp','mf','f','ff','fff','sfz']
+const EXPRESSION = ['D.C.','D.S.','Fine','Coda','rall.']
 
-const C = {
-  ink: "#111827",
-  hold: "#6b7280",
-  sel: "#1d4ed8",
-  selBg: "rgba(29,78,216,0.10)",
-  barline: "#1f2937",
-  bracket: "#1f2937",
-  label: "#1e3a8a",
-  lyric: "#374151",
-  lyricRul: "#b0b8c8",
-  voiceSep: "#e5e7eb",
-  sep: "#4b5563",
-  slash: "#9ca3af",
-  sym: "#374151",
-  mBgAlt: "#f8f9fa",
-  slur: "#374151",
-  slurHover: "#dc2626",
-  slurStart: "#2563eb",
-};
-
-// Prefix string for event starting at quarter-unit `offset` within its beat
-function getPrefix(offset) {
-  if (offset === 0) return "";
-  if (offset === 1) return "";
-  if (offset === 2) return "";
-  if (offset === 3) return "";
-  return "";
-}
-
-// Suffix string for event of `duration` starting at `offset`
-// `isLast` = true if this is the last event in the beat
-function getSuffix(offset, duration, isLast) {
-  const end = offset + duration;
-  // If fills to beat end, or is the last event, no suffix
-  if (end >= 4 || isLast) return "";
-  if (duration === 3) return ".,";
-  if (duration === 2) return ".";
-  if (duration === 1) return ",";
-  return "";
-}
-
-function measureWidth(measure, slashSet) {
-  if (!measure?.beats?.length) return PAD * 2 + QW * 4 * 4 + SEP_W * 3;
-  const nb = measure.beats.length;
-  let w = PAD * 2;
-  for (let bi = 0; bi < nb; bi++) {
-    const beat = measure.beats[bi];
-    const events = beat?.events || [];
-    let beatW = 0;
-    let offset = 0;
-    events.forEach((ev, ei) => {
-      const isRest = ev.type === "rest";
-      const isLast = ei === events.length - 1;
-      const pre = isRest ? "" : getPrefix(offset);
-      const suf = isRest ? "" : getSuffix(offset, ev.duration, isLast);
-      beatW += pre.length * SYM_W + ev.duration * QW + suf.length * SYM_W;
-      offset += ev.duration;
-    });
-    if (beatW === 0) beatW = QW * 4;
-    w += beatW;
-    if (bi < nb - 1) w += SEP_W;
-  }
-  return w;
-}
-
-function InlineLyricEditor({ x, y, w, value, onCommit, onCancel }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    setTimeout(() => {
-      ref.current?.focus();
-      ref.current?.select();
-    }, 30);
-  }, []);
+// ── Palette item ─────────────────────────────────────────────────────────────
+function PaletteItem({ label, onClick, symbol, disabled, active, disabledHint }) {
   return (
-    <foreignObject x={x} y={y} width={Math.max(w + 4, 70)} height={18}>
-      <input
-        ref={ref}
-        defaultValue={value}
-        placeholder="lyric…"
-        style={{
-          width: "100%",
-          height: "100%",
-          border: "1.5px solid #2563eb",
-          borderRadius: 3,
-          fontSize: 10,
-          fontFamily: FONT,
-          padding: "0 3px",
-          boxSizing: "border-box",
-          background: "#eff6ff",
-          color: "#111",
-          outline: "none",
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === "Tab") {
-            e.preventDefault();
-            onCommit(e.target.value);
-          }
-          if (e.key === "Escape") {
-            e.preventDefault();
-            onCancel();
-          }
-        }}
-        onBlur={(e) => onCommit(e.target.value)}
-      />
-    </foreignObject>
-  );
+    <button onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      title={disabled ? (disabledHint || 'Select a beat first') : label}
+      style={{
+        display:'flex', flexDirection:'column', alignItems:'center',
+        justifyContent:'center', gap:2,
+        width:56, height:52, border: active ? '1px solid #2563eb' : '1px solid #e5e7eb',
+        borderRadius:6, background: active ? '#eff6ff' : (disabled ? '#f9fafb' : 'white'),
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontSize:11, color: disabled ? '#c3c9d4' : '#374151', transition:'all 0.12s',
+        padding:'4px 2px', textAlign:'center', lineHeight:1.2,
+        opacity: disabled ? 0.55 : 1,
+      }}
+      onMouseEnter={e => { if (disabled) return; e.currentTarget.style.background='#eff6ff'; e.currentTarget.style.borderColor='#93c5fd' }}
+      onMouseLeave={e => { if (disabled) return; e.currentTarget.style.background = active ? '#eff6ff' : 'white'; e.currentTarget.style.borderColor = active ? '#2563eb' : '#e5e7eb' }}
+    >
+      <span style={{ fontSize:14, lineHeight:1 }}>{symbol}</span>
+      <span style={{ fontSize:9.5, color: disabled ? '#c3c9d4' : '#6b7280', marginTop:1 }}>{label}</span>
+    </button>
+  )
 }
 
-const SolfaRenderer = forwardRef(function SolfaRenderer(
-  { onSelectEvent, onBeat, lyricsMode = false },
-  ref,
-) {
-  // The playback cursor is driven by direct DOM mutation, NOT React state.
-  // A ref-based SVG <g> is written to imperatively on every onBeat tick
-  // (~60/sec) via cursorGroupRef/cursorLineRefs below — this never triggers
-  // a React re-render, so it can't be affected by how expensive the rest of
-  // the component tree is to reconcile. This is the standard technique for
-  // smooth, high-frequency UI (playheads, etc.) in React.
-  const cursorGroupRef = useRef(null);
-  const cursorGlowRef = useRef(null);
-  const cursorLineRef = useRef(null);
-  // Which system (identified by its top-bound y) the view was last
-  // auto-scrolled to during playback — lets us scroll once per new line
-  // reached, instead of fighting the user's scroll every animation frame.
-  const lastScrollTopRef = useRef(null);
-  // Always-fresh snapshot of what the onBeat callback needs, refreshed every
-  // render so the (long-lived, only-subscribed-once) callback below never
-  // reads stale/closed-over data.
-  const layoutMetaRef = useRef({ parts: [], numM: 1, topNum: 4 });
+// ── Palette section (collapsible) ────────────────────────────────────────────
+function PaletteSection({ title, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div style={{ borderBottom:'1px solid #f0f0f0' }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
+          padding:'7px 12px', border:'none', background:'none',
+          cursor:'pointer', fontSize:11.5, fontWeight:700, color:'#1e2433',
+          textAlign:'left', letterSpacing:'0.01em',
+        }}
+        onMouseEnter={e => e.currentTarget.style.background='#f8fafc'}
+        onMouseLeave={e => e.currentTarget.style.background='none'}
+      >
+        <span>{title}</span>
+        <span style={{ fontSize:10, color:'#9ca3af', transition:'transform 0.15s',
+          transform: open ? 'rotate(180deg)' : 'none' }}>▼</span>
+      </button>
+      {open && (
+        <div style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'4px 10px 10px' }}>
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
 
-  const wrapRef = useRef(null);
-  const svgNodeRef = useRef(null);
-  const [svgW, setSvgW] = useState(900);
-  const [lyricEdit, setLyricEdit] = useState(null);
-  const [hoveredSlurId, setHoveredSlurId] = useState(null);
-  // Which lyric slot the mouse is currently over — used to preview the
-  // (otherwise hidden) underline so first-time users can discover that
-  // the space under a note is clickable, without cluttering the score.
-  const [hoveredLyricId, setHoveredLyricId] = useState(null);
+// ── Palettes tab ─────────────────────────────────────────────────────────────
+// Time signature inserts a change AT the selected bar (bars can't split
+// mid-way, so bar-level selection is enough). Key signature MODULATES at
+// the selected NOTE — real sol-fa scores pivot key mid-bar, wherever the
+// composer picked the bridge note — so it needs a full note selection,
+// same as tempo/dynamics/text marks (click a beat/note first).
+function PalettesTab({ search }) {
+  const score              = useSolfaStore(s => s.score)
+  const selectedPartId     = useSolfaStore(s => s.selectedPartId)
+  const selectedMeasureIdx = useSolfaStore(s => s.selectedMeasureIdx)
+  const selectedBeatIdx    = useSolfaStore(s => s.selectedBeatIdx)
+  const selectedEventIdx   = useSolfaStore(s => s.selectedEventIdx)
+  const setTempo             = useSolfaStore(s => s.setTempo)
+  const changeTimeSigAt      = useSolfaStore(s => s.changeTimeSigAt)
+  const changeKeyAt          = useSolfaStore(s => s.changeKeyAt)
+  const removeKeyChangeAt    = useSolfaStore(s => s.removeKeyChangeAt)
+  const addMark               = useSolfaStore(s => s.addMark)
 
-  // Expose SVG element to parent for PDF export
-  useImperativeHandle(
-    ref,
-    () => ({
-      getSvgElement: () => svgNodeRef.current,
-    }),
-    [],
-  );
+  const hasSelection = selectedPartId !== null && selectedMeasureIdx !== null && selectedBeatIdx !== null
+  // Time signature only needs a BAR selected (not a specific beat) — it's
+  // a per-measure change, inserted at whichever bar is selected.
+  const hasBarSelection = selectedMeasureIdx !== null
+  // Reflect the EFFECTIVE time signature of the selected bar (or bar 1 if
+  // nothing's selected yet) — not a single score-wide value — since a
+  // score can now contain several time-signature sections.
+  const selectedBarTs = selectedMeasureIdx !== null
+    ? score.parts[0]?.measures?.[selectedMeasureIdx]?.timeSignature
+    : score.parts[0]?.measures?.[0]?.timeSignature
+  const currentTS = `${selectedBarTs?.beats || score.timeSignature?.beats || 4}/${selectedBarTs?.beatType || score.timeSignature?.beatType || 4}`
+  // Key needs the exact NOTE selected (measure+beat+event) since a
+  // modulation can land anywhere, not just on a bar line.
+  const currentKey = hasSelection
+    ? resolveKeyAt(score, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx || 0)
+    : (score.key || 'C')
+  // Is there an actual modulation planted AT this exact note (not just
+  // inherited from an earlier one)? Only then is there something to delete.
+  const hasExactKeyChange = hasSelection && (score.keyChanges || []).some(c =>
+    c.measureIdx === selectedMeasureIdx &&
+    c.beatIdx === selectedBeatIdx &&
+    (c.eventIdx || 0) === (selectedEventIdx || 0),
+  )
 
-  const score = useSolfaStore((s) => s.score);
-  const selectedPartId = useSolfaStore((s) => s.selectedPartId);
-  const selectedMeasureIdx = useSolfaStore((s) => s.selectedMeasureIdx);
-  const selectedBeatIdx = useSolfaStore((s) => s.selectedBeatIdx);
-  const selectedEventIdx = useSolfaStore((s) => s.selectedEventIdx);
-  const selectEvent = useSolfaStore((s) => s.selectEvent);
-  const setLyric = useSolfaStore((s) => s.setLyric);
-  const inputMode = useSolfaStore((s) => s.inputMode);
-  const slurStart = useSolfaStore((s) => s.slurStart);
-  const setSlurStart = useSolfaStore((s) => s.setSlurStart);
-  const clearSlurStart = useSolfaStore((s) => s.clearSlurStart);
-  const addSlur = useSolfaStore((s) => s.addSlur);
-  const removeSlur = useSolfaStore((s) => s.removeSlur);
-  const removeMark = useSolfaStore((s) => s.removeMark);
-  const removeNavigationMarker = useSolfaStore((s) => s.removeNavigationMarker);
+  const handleTempoMark = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'tempo')
+  const handleDynamic   = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'dynamic')
+  const handleExpr      = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'text')
 
-  // Map of "partId:measureIdx:beatIdx:eventIdx" → {cx, bottomY} for slur drawing
-  const eventPosMap = useRef({});
-  // Map of "partId:measureIdx:beatIdx" → {x, rowY} for mark (tempo/dynamics/text) placement
-  const beatPosMap = useRef({});
-  // Map of measureIdx → {top, bottom} (the system/line it belongs to) for the playback cursor
-  const systemBoundsMap = useRef({});
+  const allPalettes = [
+    {
+      title:'Key Signature', items: [
+        ...KEYS.map(k => ({
+          symbol:'♩', label:k, active: currentKey===k,
+          disabled: !hasSelection, disabledHint: 'Select a note first',
+          onClick:()=>hasSelection && changeKeyAt(selectedMeasureIdx, selectedBeatIdx, selectedEventIdx || 0, k),
+        })),
+        {
+          symbol:'✕', label:'Remove modulation',
+          disabled: !hasExactKeyChange,
+          disabledHint: hasSelection ? 'This note has no modulation to remove' : 'Select a note first',
+          onClick:()=>hasExactKeyChange && removeKeyChangeAt(selectedMeasureIdx, selectedBeatIdx, selectedEventIdx || 0),
+        },
+      ],
+    },
+    {
+      title:'Time Signature', items: TIME_SIGS.map(t => ({
+        symbol:t.label, label:t.label, active: currentTS===t.label,
+        disabled: !hasBarSelection, disabledHint: 'Select a bar first',
+        onClick:()=>hasBarSelection && changeTimeSigAt(selectedMeasureIdx, t.beats, t.beatType),
+      })),
+    },
+    {
+      title:'Tempo', items: TEMPO_MARKS.map(t => ({
+        symbol:'♩=', label:t, disabled:!hasSelection, onClick:()=>handleTempoMark(t),
+      })),
+    },
+    {
+      title:'Dynamics', items: DYNAMICS.map(d => ({
+        symbol:'𝆑', label:d, disabled:!hasSelection, onClick:()=>handleDynamic(d),
+      })),
+    },
+    {
+      title:'Text', items: EXPRESSION.map(t => ({
+        symbol:'𝄐', label:t, disabled:!hasSelection, onClick:()=>handleExpr(t),
+      })),
+    },
+  ]
 
-  useEffect(() => {
-    if (!wrapRef.current) return;
-    const ro = new ResizeObserver((e) =>
-      setSvgW(e[0].contentRect.width || 900),
-    );
-    ro.observe(wrapRef.current);
-    return () => ro.disconnect();
-  }, []);
+  const filtered = search.trim()
+    ? allPalettes.map(p => ({
+        ...p,
+        items: p.items.filter(i => i.label.toLowerCase().includes(search.toLowerCase()))
+      })).filter(p => p.items.length > 0)
+    : allPalettes
 
-  const { elems, totalH } = useMemo(() => {
-    const parts = score.parts || [];
-    const numM = Math.max(...parts.map((p) => p.measures.length), 1);
-    const topNum = score.timeSignature?.beats || 4;
-    const botNum = score.timeSignature?.beatType || 4;
-    layoutMetaRef.current = { parts, numM, topNum };
-
-    const lyricLayout = score.lyricLayout || "inline";
-    const lyricDuplication = score.lyricDuplication || "per-voice-copy";
-    const instrumentalSet = new Set(score.instrumentalMeasures || []);
-
-    // Note-level modulations — keyed by exact (measure, beat, event)
-    // position for O(1) lookup while walking notes below. Real sol-fa
-    // modulation pivots on whatever note the composer picked, not a bar
-    // line, so this can't be resolved per-measure like time signature can.
-    const keyChangeAt = new Map();
-    for (const kc of score.keyChanges || []) {
-      keyChangeAt.set(`${kc.measureIdx}-${kc.beatIdx}-${kc.eventIdx || 0}`, kc);
-    }
-
-    // "between-alto-tenor" lead = the Alto part (falls back to the middle part)
-    const altoIdx = parts.findIndex((p) =>
-      (p.label || "").toUpperCase().startsWith("A"),
-    );
-    const betweenLeadIdx =
-      altoIdx >= 0 ? altoIdx : Math.floor((parts.length - 1) / 2);
-
-    function showLyricForPart(pIdx) {
-      if (lyricLayout === "instrumental" || lyricLayout === "below-score-only")
-        return false;
-      if (lyricLayout === "per-voice") return true;
-      if (lyricLayout === "between-alto-tenor") return pIdx === betweenLeadIdx;
-      // 'inline' / 'verse1-inline-rest-below'
-      return lyricDuplication === "per-voice-copy" ? true : pIdx === 0;
-    }
-
-    const rawMWs = Array.from({ length: numM }, (_, i) => {
-      const m = migrateMeasure(parts[0]?.measures[i]);
-      // Each bar's beat-separator ("/" vs ":") grouping follows ITS OWN
-      // time signature, not the score's starting one — matters once a
-      // score has a mid-score meter change.
-      const mTs = m.timeSignature || { beats: topNum, beatType: botNum };
-      return measureWidth(m, slashPositions(mTs.beats, mTs.beatType));
-    });
-
-    const leftEdge = PAGE_L + BRAK_W + LABEL_W;
-    const available = svgW - leftEdge - PAGE_R;
-
-    const lines = (() => {
-      const ls = [];
-      let start = 0;
-      while (start < numM) {
-        let used = 0,
-          count = 0;
-        for (let i = start; i < numM; i++) {
-          if (count > 0 && used + rawMWs[i] > available) break;
-          used += rawMWs[i];
-          count++;
-        }
-        if (count === 0) count = 1;
-        ls.push(Array.from({ length: count }, (_, i) => start + i));
-        start += count;
-      }
-      return ls;
-    })();
-
-    const showVerseBlocks =
-      lyricLayout === "verse1-inline-rest-below" ||
-      lyricLayout === "below-score-only";
-    const verses = score.verses || [];
-    const VERSE_LINE_H = 15;
-    const VERSE_HEAD_H = 18;
-    const verseAvailW = svgW - PAGE_L * 2 - PAGE_R;
-    const verseCharW = 6.3;
-    const maxChars = Math.max(20, Math.floor(verseAvailW / verseCharW));
-    function wrapVerseLine(line) {
-      if (line.length <= maxChars) return [line];
-      const words = line.split(" ");
-      const out = [];
-      let cur = "";
-      words.forEach((w) => {
-        if ((cur ? cur + " " + w : w).length > maxChars) {
-          if (cur) out.push(cur);
-          cur = w;
-        } else cur = cur ? cur + " " + w : w;
-      });
-      if (cur) out.push(cur);
-      return out;
-    }
-    const versePrepared = showVerseBlocks
-      ? verses.map((v) => ({
-          ...v,
-          lines: (v.text || "")
-            .split("\n")
-            .flatMap((l) => (l.trim() === "" ? [""] : wrapVerseLine(l))),
-        }))
-      : [];
-    const versesExtraH = showVerseBlocks
-      ? versePrepared.reduce(
-          (sum, v) => sum + VERSE_HEAD_H + v.lines.length * VERSE_LINE_H + 10,
-          20,
-        )
-      : 0;
-
-    const systemH = parts.length * VOICE_H + SYS_GAP;
-    const totalH = HDR_H + lines.length * systemH + 40 + versesExtraH;
-    const elems = [];
-    let sysY = HDR_H + 20;
-    eventPosMap.current = {};
-    beatPosMap.current = {};
-    systemBoundsMap.current = {};
-
-    elems.push(
-      <g key="hdr">
-        <text
-          x={PAGE_L}
-          y={HDR_H - 8}
-          fontFamily={FONT}
-          fontSize={13}
-          fontStyle="italic"
-          fill="#374151"
-        >
-          Doh is {score.key || "C"}
-        </text>
-        <text
-          x={PAGE_L + 88}
-          y={HDR_H - 8}
-          fontFamily={FONT}
-          fontSize={17}
-          fontWeight={700}
-          fill="#374151"
-        >
-          {topNum}/{botNum}
-        </text>
-      </g>,
-    );
-
-    lines.forEach((lineCols, lineIdx) => {
-      const numCols = lineCols.length;
-      const totalRaw = lineCols.reduce((s, c) => s + rawMWs[c], 0);
-      const isLast = lineIdx === lines.length - 1;
-      const sc2 =
-        !isLast && totalRaw < available && totalRaw > 0
-          ? available / totalRaw
-          : 1;
-
-      const colXs = [];
-      let cxPos = leftEdge;
-      lineCols.forEach((c) => {
-        colXs.push(cxPos);
-        cxPos += rawMWs[c] * sc2;
-      });
-
-      const lineTop = sysY - NOTE_SZ - 4;
-      const lineBottom = sysY + (parts.length - 1) * VOICE_H + LYRIC_H + 4;
-
-      elems.push(
-        <g key={`brk-${lineIdx}`}>
-          <line
-            x1={PAGE_L + 2}
-            y1={lineTop}
-            x2={PAGE_L + 2}
-            y2={lineBottom}
-            stroke={C.bracket}
-            strokeWidth={2.5}
-            strokeLinecap="round"
+  return (
+    <div>
+      {/* Playback tempo — always available, applies to the whole score */}
+      <div style={{ padding:'10px 12px', borderBottom:'1px solid #f0f0f0' }}>
+        <div style={{ fontSize:11, fontWeight:700, color:'#374151', marginBottom:6,
+          textTransform:'uppercase', letterSpacing:'0.05em' }}>Playback Tempo</div>
+        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <span style={{ fontSize:12, color:'#6b7280' }}>♩ =</span>
+          <input type="number" min={20} max={300} value={score.tempo || 80}
+            onChange={e => { const v = Number(e.target.value); if (v>=20 && v<=300) setTempo(v) }}
+            style={{ width:56, fontSize:12, border:'1px solid #d1d5db', borderRadius:5,
+              padding:'3px 6px', textAlign:'center', color:'#374151' }}
           />
-          <line
-            x1={PAGE_L + 2}
-            y1={lineTop}
-            x2={PAGE_L + BRAK_W + 2}
-            y2={lineTop}
-            stroke={C.bracket}
-            strokeWidth={2}
-            strokeLinecap="round"
-          />
-          <line
-            x1={PAGE_L + 2}
-            y1={lineBottom}
-            x2={PAGE_L + BRAK_W + 2}
-            y2={lineBottom}
-            stroke={C.bracket}
-            strokeWidth={2}
-            strokeLinecap="round"
-          />
-        </g>,
-      );
-      elems.push(
-        <line
-          key={`obar-${lineIdx}`}
-          x1={leftEdge}
-          y1={lineTop}
-          x2={leftEdge}
-          y2={lineBottom}
-          stroke={C.barline}
-          strokeWidth={1.5}
-        />,
-      );
-      elems.push(
-        <text
-          key={`mnum-${lineIdx}`}
-          data-sysmark="1"
-          data-sysy={lineTop}
-          x={leftEdge + 2}
-          y={lineTop - 2}
-          fontFamily={FONT}
-          fontSize={9}
-          fill="#9ca3af"
-        >
-          {lineCols[0] + 1}
-        </text>,
-      );
+        </div>
+      </div>
 
-      lineCols.forEach((col) => {
-        systemBoundsMap.current[col] = { top: lineTop, bottom: lineBottom };
-      });
+      {/* Status hint — tells the user what their click will target */}
+      <div style={{
+        padding:'8px 12px', fontSize:11, lineHeight:1.4,
+        background: hasSelection ? '#eff6ff' : '#fff7ed',
+        color: hasSelection ? '#1d4ed8' : '#9a5b13',
+        borderBottom:'1px solid #f0f0f0',
+      }}>
+        {!hasBarSelection && 'Select a bar for a time signature change, or a note for a key modulation / tempo / dynamics / text mark.'}
+        {hasBarSelection && !hasSelection && `Bar ${selectedMeasureIdx+1} selected — Time Signature will insert a change here, in effect until the next change. Select a note (not just a bar) to modulate the key there.`}
+        {hasSelection && `Applying to bar ${selectedMeasureIdx+1}, beat ${selectedBeatIdx+1}. Key Signature will modulate starting at this exact note; Time Signature will insert a change at bar ${selectedMeasureIdx+1}.`}
+      </div>
+      {filtered.map((p, i) => (
+        <PaletteSection key={p.title} title={p.title}>
+          {p.items.map(item => (
+            <PaletteItem key={item.label} {...item} />
+          ))}
+        </PaletteSection>
+      ))}
+    </div>
+  )
+}
 
-      parts.forEach((part, pIdx) => {
-        const rowY = sysY + pIdx * VOICE_H;
+// ── Parts tab ────────────────────────────────────────────────────────────────
+function PartsTab() {
+  const score          = useSolfaStore(s => s.score)
+  const selectedPartId = useSolfaStore(s => s.selectedPartId)
+  const setActivePart  = useSolfaStore(s => s.setActivePart)
+  const comboInfo = VOICE_COMBOS[score.voiceCombo] || VOICE_COMBOS.satb
 
-        elems.push(
-          <text
-            key={`lbl-${lineIdx}-${pIdx}`}
-            x={PAGE_L + BRAK_W + 2}
-            y={rowY}
-            fontFamily={FONT}
-            fontSize={12}
-            fontWeight={700}
-            fill={C.label}
-          >
-            {part.label}
-          </text>,
-        );
-
-        lineCols.forEach((col, ci) => {
-          const measure = migrateMeasure(part.measures[col]);
-          const mTs = measure.timeSignature || { beats: topNum, beatType: botNum };
-          const colSlashSet = slashPositions(mTs.beats, mTs.beatType);
-          const scaledMW = rawMWs[col] * sc2;
-          const rawW = measureWidth(measure, colSlashSet);
-          const sc3 = rawW > 0 ? scaledMW / rawW : 1;
-
-          // Mid-score meter change marker — drawn once, above the top part
-          // only, exactly at the bar where the time signature changes
-          // (bar 1's signature is covered by the page header, so col 0
-          // never needs this). Key changes are handled separately, below,
-          // at the exact NOTE where the modulation lands — not the bar.
-          if (pIdx === 0 && col > 0) {
-            const prevM = migrateMeasure(parts[0]?.measures[col - 1]);
-            const prevTs = prevM.timeSignature || { beats: topNum, beatType: botNum };
-            const tsChanged =
-              prevTs.beats !== mTs.beats || prevTs.beatType !== mTs.beatType;
-            if (tsChanged) {
-              // Nudge right when this bar also starts a new line, so we
-              // don't sit on top of the small bar-number label there.
-              const xOff = ci === 0 ? 16 : 3;
-              elems.push(
-                <text
-                  key={`tschange-${lineIdx}-${col}`}
-                  x={colXs[ci] + xOff}
-                  y={lineTop - 2}
-                  fontFamily={FONT}
-                  fontSize={11}
-                  fontWeight={700}
-                  fill={C.label}
-                >
-                  {mTs.beats}/{mTs.beatType}
-                </text>,
-              );
-            }
-          }
-
-          // Alternating measure background — covers note row + lyric row
-          if (col % 2 !== 0) {
-            elems.push(
-              <rect
-                key={`bg-${lineIdx}-${pIdx}-${ci}`}
-                x={colXs[ci]}
-                y={rowY - NOTE_SZ - 2}
-                width={scaledMW}
-                height={NOTE_SZ + 2 + 4 + LYRIC_H + 2}
-                fill={C.mBgAlt}
-              />,
-            );
-          }
-
-          let x = colXs[ci] + PAD * sc3;
-
-          measure.beats.forEach((beat, bi) => {
-            const events = beat?.events || [];
-
-            // Beat separator
-            if (bi > 0) {
-              const isSlash = colSlashSet.has(bi - 1);
-              const sw = SEP_W * sc3;
-              elems.push(
-                <text
-                  key={`sep-${lineIdx}-${pIdx}-${col}-${bi}`}
-                  x={x + sw / 2}
-                  y={rowY}
-                  textAnchor="middle"
-                  fontFamily={FONT}
-                  fontSize={NOTE_SZ}
-                  fill={isSlash ? C.slash : C.sep}
-                  opacity={isSlash ? 0.55 : 1}
-                  style={{ pointerEvents: "none" }}
-                >
-                  {isSlash ? "/" : ":"}
-                </text>,
-              );
-              x += sw;
-            }
-
-            beatPosMap.current[`${part.id}:${col}:${bi}`] = { x, rowY };
-
-            let offset = 0;
-            events.forEach((ev, ei) => {
-              const isNote = ev.type === "note";
-              const isHold = ev.type === "sustain";
-              const isRest = ev.type === "rest";
-              const isLastEv = ei === events.length - 1;
-              const isSel =
-                part.id === selectedPartId &&
-                col === selectedMeasureIdx &&
-                bi === selectedBeatIdx &&
-                ei === selectedEventIdx;
-
-              const pre = isRest ? "" : getPrefix(offset);
-              const suf = isRest
-                ? ""
-                : getSuffix(offset, ev.duration, isLastEv);
-              const preW = pre.length * SYM_W * sc3;
-              const bodyW = ev.duration * QW * sc3;
-              const sufW = suf.length * SYM_W * sc3;
-              const totalW = preW + bodyW + sufW;
-
-              const noteX = x + preW;
-              const noteCX = noteX + bodyW / 2;
-
-              // Record note center position for slur drawing
-              const posKey = `${part.id}:${col}:${bi}:${ei}`;
-              const noteBottomY = rowY + 6; // just below the note baseline, above lyrics
-              if (isNote) {
-                eventPosMap.current[posKey] = {
-                  cx: noteCX,
-                  bottomY: noteBottomY,
-                };
-              }
-
-              // Selection bg (note zone only — above baseline)
-              if (isSel) {
-                elems.push(
-                  <rect
-                    key={`sel-${ev.id}`}
-                    x={x}
-                    y={rowY - NOTE_SZ - 2}
-                    width={Math.max(totalW, 8 * sc3)}
-                    height={NOTE_HIT_H}
-                    fill={C.selBg}
-                    rx={2}
-                  />,
-                );
-              }
-
-              // Slur start highlight
-              const isSlurStart =
-                inputMode === "slur" &&
-                slurStart &&
-                slurStart.partId === part.id &&
-                slurStart.measureIdx === col &&
-                slurStart.beatIdx === bi &&
-                slurStart.eventIdx === ei;
-              if (isSlurStart) {
-                elems.push(
-                  <rect
-                    key={`slurhl-${ev.id}`}
-                    x={x}
-                    y={rowY - NOTE_SZ - 2}
-                    width={Math.max(totalW, 8 * sc3)}
-                    height={NOTE_HIT_H}
-                    fill="rgba(37,99,235,0.18)"
-                    rx={2}
-                    style={{ pointerEvents: "none" }}
-                  />,
-                );
-              }
-
-              // Note click target — covers ONLY above the note baseline, never into lyric zone
-              elems.push(
-                <rect
-                  key={`hit-${ev.id}`}
-                  x={x}
-                  y={rowY - NOTE_SZ - 2}
-                  width={Math.max(totalW, 8 * sc3)}
-                  height={NOTE_HIT_H}
-                  fill="transparent"
-                  style={{
-                    cursor:
-                      inputMode === "slur" && isNote ? "crosshair" : "pointer",
-                  }}
-                  onClick={() => {
-                    if (inputMode === "slur" && isNote) {
-                      if (!slurStart) {
-                        // First click — set slur start
-                        setSlurStart({
-                          partId: part.id,
-                          measureIdx: col,
-                          beatIdx: bi,
-                          eventIdx: ei,
-                        });
-                      } else if (
-                        slurStart.partId === part.id &&
-                        (col > slurStart.measureIdx ||
-                          (col === slurStart.measureIdx &&
-                            bi > slurStart.beatIdx) ||
-                          (col === slurStart.measureIdx &&
-                            bi === slurStart.beatIdx &&
-                            ei > slurStart.eventIdx))
-                      ) {
-                        // Second click — create slur (must be after start)
-                        addSlur(
-                          slurStart.partId,
-                          slurStart.measureIdx,
-                          slurStart.beatIdx,
-                          slurStart.eventIdx,
-                          col,
-                          bi,
-                          ei,
-                        );
-                        clearSlurStart();
-                      } else {
-                        // Clicked before start or same note — reset start
-                        setSlurStart({
-                          partId: part.id,
-                          measureIdx: col,
-                          beatIdx: bi,
-                          eventIdx: ei,
-                        });
-                      }
-                      return;
-                    }
-                    selectEvent(part.id, col, bi, ei);
-                    onSelectEvent?.(part.id, col, bi, ei);
-                    setLyricEdit(null);
-                  }}
-                />,
-              );
-
-              // Prefix characters
-              pre.split("").forEach((ch, chi) => {
-                elems.push(
-                  <text
-                    key={`pre-${ev.id}-${chi}`}
-                    x={x + chi * SYM_W * sc3 + (SYM_W * sc3) / 2}
-                    y={ch === "." ? rowY - 4 : rowY}
-                    textAnchor="middle"
-                    fontFamily={FONT}
-                    fontSize={SYM_SZ}
-                    fill={isSel ? C.sel : C.sym}
-                    fontWeight={600}
-                    style={{ pointerEvents: "none" }}
-                  >
-                    {ch}
-                  </text>,
-                );
-              });
-
-              // Note / sustain (rest = nothing)
-              if (isNote) {
-                elems.push(
-                  <text
-                    key={`n-${ev.id}`}
-                    x={noteCX}
-                    y={rowY}
-                    textAnchor="middle"
-                    fontFamily={FONT}
-                    fontSize={NOTE_SZ}
-                    fontWeight={isSel ? 700 : 400}
-                    fill={isSel ? C.sel : C.ink}
-                    style={{ pointerEvents: "none" }}
-                  >
-                    {ev.syllable || "?"}
-                  </text>,
-                );
-                if (ev.octave !== 0) {
-                  elems.push(
-                    <text
-                      key={`oct-${ev.id}`}
-                      x={noteX + bodyW}
-                      y={ev.octave > 0 ? rowY - NOTE_SZ + 2 : rowY + 3}
-                      textAnchor="start"
-                      fontFamily={FONT}
-                      fontSize={OCT_SZ}
-                      fontWeight={700}
-                      fill={isSel ? C.sel : C.ink}
-                      dominantBaseline={ev.octave > 0 ? "auto" : "hanging"}
-                      style={{ pointerEvents: "none" }}
-                    >
-                      {Math.abs(ev.octave)}
-                    </text>,
-                  );
-                }
-
-                // Modulation — anchored to THIS exact note, not the bar.
-                // The pivot syllable (small superscript before the main
-                // syllable) shows what this same pitch was called in the
-                // OLD key, e.g. a note read as "r" here in G shows a tiny
-                // "s" above it because that pitch was "s" back in D —
-                // proving the tonal bridge, same convention as the
-                // reference scores. Computed per-voice since each part
-                // sings a different pitch at the same moment.
-                const kc = keyChangeAt.get(`${col}-${bi}-${ei}`);
-                if (kc) {
-                  const oldKeyHere = resolveKeyBefore(score, col, bi, ei);
-                  const pivot = bridgeSyllable(ev.syllable, ev.octave || 0, kc.key, oldKeyHere);
-                  if (pivot) {
-                    elems.push(
-                      <text
-                        key={`pivot-${ev.id}`}
-                        x={noteCX - NOTE_SZ * 0.42}
-                        y={rowY - NOTE_SZ * 0.62}
-                        textAnchor="middle"
-                        fontFamily={FONT}
-                        fontSize={Math.max(6, NOTE_SZ * 0.42)}
-                        fontWeight={900}
-                        fill={isSel ? C.sel : C.label}
-                        style={{ pointerEvents: "none" }}
-                      >
-                        {pivot}
-                      </text>,
-                    );
-                  }
-                  // "Key X" label — shown once (top part only) directly
-                  // above the pivot syllable, stacked tight against it.
-                  if (pIdx === 0) {
-                    elems.push(
-                      <text
-                        key={`keychange-${ev.id}`}
-                        x={noteCX}
-                        y={rowY - NOTE_SZ * 0.62 - 9}
-                        textAnchor="middle"
-                        fontFamily={FONT}
-                        fontSize={10}
-                        fontWeight={700}
-                        fill={C.label}
-                      >
-                        Key {kc.key}
-                      </text>,
-                    );
-                  }
-                }
-              } else if (isHold) {
-                elems.push(
-                  <text
-                    key={`h-${ev.id}`}
-                    x={noteCX}
-                    y={rowY}
-                    textAnchor="middle"
-                    fontFamily={FONT}
-                    fontSize={NOTE_SZ}
-                    fill={isSel ? C.sel : C.hold}
-                    style={{ pointerEvents: "none" }}
-                  >
-                    –
-                  </text>,
-                );
-              }
-              // REST = blank, nothing rendered
-
-              // Suffix characters
-              if (suf) {
-                const sufStartX = noteX + bodyW;
-                suf.split("").forEach((ch, chi) => {
-                  elems.push(
-                    <text
-                      key={`suf-${ev.id}-${chi}`}
-                      x={sufStartX + chi * SYM_W * sc3 + (SYM_W * sc3) / 2}
-                      y={ch === "." ? rowY - 4 : rowY}
-                      textAnchor="middle"
-                      fontFamily={FONT}
-                      fontSize={SYM_SZ}
-                      fill={isSel ? C.sel : C.sym}
-                      fontWeight={600}
-                      style={{ pointerEvents: "none" }}
-                    >
-                      {ch}
-                    </text>,
-                  );
-                });
-              }
-
-              // Lyric zone — sits immediately below note baseline
-              // Top of lyric zone = rowY + 4 (small gap after note)
-              // This keeps it well above the next voice's note hit rect
-              const lyricZoneY = rowY + 4;
-              const lyricZoneH = LYRIC_H;
-              const lyricTextY = lyricZoneY + LYRIC_H * 0.7;
-              const lyricSlotW = Math.max(totalW, 8 * sc3);
-
-              // Lyric zone — only for notes, gated by layout/duplication/instrumental
-              if (
-                isNote &&
-                showLyricForPart(pIdx) &&
-                !instrumentalSet.has(col)
-              ) {
-                // Underline ruler — hidden by default. It's drawn in two
-                // cases: (1) "lyrics mode" is switched on globally, shown
-                // solid/full — for batch-entering lyrics across the piece;
-                // (2) the mouse is hovering this specific slot, shown
-                // faint/dashed — a discoverability hint so a first-time
-                // user learns "the space under a note is clickable"
-                // without the underline being visible all the time.
-                const isLyricHovered = hoveredLyricId === ev.id;
-                if (lyricsMode || isLyricHovered) {
-                  elems.push(
-                    <line
-                      key={`lu-${ev.id}`}
-                      x1={x}
-                      y1={lyricZoneY + lyricZoneH - 2}
-                      x2={x + lyricSlotW}
-                      y2={lyricZoneY + lyricZoneH - 2}
-                      stroke={C.lyricRul}
-                      strokeWidth={0.6}
-                      strokeDasharray={lyricsMode ? undefined : "2,2"}
-                      style={{
-                        pointerEvents: "none",
-                        opacity: lyricsMode ? 1 : 0.55,
-                      }}
-                    />,
-                  );
-                }
-                elems.push(
-                  <text
-                    key={`ly-${ev.id}`}
-                    x={x + lyricSlotW / 2}
-                    y={lyricTextY}
-                    textAnchor="middle"
-                    fontFamily={FONT}
-                    fontSize={LYR_SZ}
-                    fill={C.lyric}
-                    style={{ pointerEvents: "none", userSelect: "none" }}
-                  >
-                    {ev.lyric || ""}
-                  </text>,
-                );
-                elems.push(
-                  <rect
-                    key={`lhit-${ev.id}`}
-                    x={x}
-                    y={lyricZoneY}
-                    width={lyricSlotW}
-                    height={lyricZoneH}
-                    fill="transparent"
-                    style={{ cursor: "text" }}
-                    onMouseEnter={() => setHoveredLyricId(ev.id)}
-                    onMouseLeave={() =>
-                      setHoveredLyricId((cur) => (cur === ev.id ? null : cur))
-                    }
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setLyricEdit({
-                        partId: part.id,
-                        measureIdx: col,
-                        beatIdx: bi,
-                        eventIdx: ei,
-                        x,
-                        y: lyricZoneY + 1,
-                        w: lyricSlotW,
-                        current: ev.lyric || "",
-                      });
-                    }}
-                  />,
-                );
-              }
-
-              x += totalW;
-              offset += ev.duration;
-            });
-          });
-        });
-
-        // Voice separator — sits below lyric zone, above next voice's note area
-        if (pIdx < parts.length - 1) {
-          // rowY + 4 (lyricZoneY) + LYRIC_H + 3 = bottom of lyric + small gap
-          const sepY = rowY + 4 + LYRIC_H + 3;
-          elems.push(
-            <line
-              key={`vsep-${lineIdx}-${pIdx}`}
-              x1={leftEdge}
-              y1={sepY}
-              x2={leftEdge + lineCols.reduce((s, c) => s + rawMWs[c] * sc2, 0)}
-              y2={sepY}
-              stroke={C.voiceSep}
-              strokeWidth={0.6}
-            />,
-          );
-        }
-      });
-
-      lineCols.forEach((col, ci) => {
-        const bx = colXs[ci] + rawMWs[col] * sc2;
-        const last = ci === numCols - 1;
-        elems.push(
-          <line
-            key={`bline-${lineIdx}-${ci}`}
-            x1={bx}
-            y1={lineTop}
-            x2={bx}
-            y2={lineBottom}
-            stroke={C.barline}
-            strokeWidth={last ? 2.5 : 1.5}
-          />,
-        );
-        if (last)
-          elems.push(
-            <line
-              key={`bline2-${lineIdx}`}
-              x1={bx + 4}
-              y1={lineTop}
-              x2={bx + 4}
-              y2={lineBottom}
-              stroke={C.barline}
-              strokeWidth={1}
-            />,
-          );
-      });
-
-      // ── Navigation markers for this system ──────────────────────────────────
-      (score.navigationMarkers || []).forEach((mk) => {
-        const ci = lineCols.indexOf(mk.atMeasure);
-        if (ci === -1) return;
-        const mx = colXs[ci] + 4;
-        const isVerseTag = mk.type === "verse-label";
-        elems.push(
-          <text
-            key={`navmk-${mk.id}`}
-            x={mx}
-            y={isVerseTag ? lineTop - 3 : lineBottom + 13}
-            fontFamily={FONT}
-            fontSize={10.5}
-            fontWeight={700}
-            fontStyle={isVerseTag ? "normal" : "italic"}
-            fill={isVerseTag ? "#b45309" : "#1d4ed8"}
-            style={{ cursor: "pointer" }}
-            onClick={(e) => {
-              e.stopPropagation();
-              removeNavigationMarker(mk.id);
-            }}
-          >
-            {mk.label}
-          </text>,
-        );
-      });
-
-      sysY += systemH;
-    });
-
-    // NOTE: the playback cursor is intentionally NOT computed here — it's
-    // computed outside this useMemo (using the beatPosMap/systemBoundsMap refs
-    // populated above) so that a moving playhead never forces this expensive
-    // score layout to be rebuilt on every animation frame.
-
-    // ── Verse paragraph blocks (printed below the full score) ──────────────────
-    if (showVerseBlocks && versePrepared.length) {
-      let vy = sysY + 14;
-      versePrepared.forEach((v) => {
-        elems.push(
-          <text
-            key={`vhead-${v.number}`}
-            x={PAGE_L}
-            y={vy}
-            fontFamily={FONT}
-            fontSize={12}
-            fontWeight={700}
-            fill="#1e2433"
-          >
-            {v.label || `Verse ${v.number}`}
-          </text>,
-        );
-        vy += VERSE_HEAD_H;
-        v.lines.forEach((ln, li) => {
-          elems.push(
-            <text
-              key={`vline-${v.number}-${li}`}
-              x={PAGE_L + 10}
-              y={vy}
-              fontFamily={FONT}
-              fontSize={11}
-              fill="#374151"
-            >
-              {ln}
-            </text>,
-          );
-          vy += VERSE_LINE_H;
-        });
-        vy += 10;
-      });
-    }
-
-    // ── Render slurs ──────────────────────────────────────────────────────────
-    // Slurs are cubic bezier curves drawn below the lyric zone
-    const slurs = score.slurs || [];
-    slurs.forEach((sl) => {
-      const startKey = `${sl.partId}:${sl.startMeasure}:${sl.startBeat}:${sl.startEvent}`;
-      const endKey = `${sl.partId}:${sl.endMeasure}:${sl.endBeat}:${sl.endEvent}`;
-      const startPos = eventPosMap.current[startKey];
-      const endPos = eventPosMap.current[endKey];
-      if (!startPos || !endPos) return;
-
-      const x1 = startPos.cx;
-      const x2 = endPos.cx;
-      const y = Math.max(startPos.bottomY, endPos.bottomY);
-      const w = x2 - x1;
-      const bow = Math.min(Math.max(w * 0.12, 4), 10); // subtle bow, capped at 10px
-
-      // Cubic bezier: starts and ends at note centers, bows gently downward
-      const d = `M ${x1} ${y} C ${x1 + w * 0.25} ${y + bow}, ${x2 - w * 0.25} ${y + bow}, ${x2} ${y}`;
-      const isHovered = hoveredSlurId === sl.id;
-
-      elems.push(
-        <g key={`slur-${sl.id}`}>
-          {/* Wider invisible hit area for hover/click */}
-          <path
-            d={d}
-            fill="none"
-            stroke="transparent"
-            strokeWidth={8}
-            style={{ cursor: "pointer" }}
-            onMouseEnter={() => setHoveredSlurId(sl.id)}
-            onMouseLeave={() => setHoveredSlurId(null)}
-            onClick={(e) => {
-              e.stopPropagation();
-              removeSlur(sl.id);
-            }}
-          />
-          {/* Visible slur curve */}
-          <path
-            d={d}
-            fill="none"
-            stroke={isHovered ? C.slurHover : C.slur}
-            strokeWidth={isHovered ? 1.2 : 0.9}
-            strokeLinecap="round"
-            opacity={isHovered ? 1 : 0.65}
-            style={{ pointerEvents: "none" }}
-          />
-        </g>,
-      );
-    });
-
-    // ── Render marks (tempo text / dynamics / expression) ──────────────────────
-    const marks = score.marks || [];
-    marks.forEach((mk) => {
-      const pos =
-        beatPosMap.current[`${mk.partId}:${mk.measureIdx}:${mk.beatIdx}`];
-      if (!pos) return;
-      const isDynamic = mk.kind === "dynamic";
-      elems.push(
-        <text
-          key={`mark-${mk.id}`}
-          x={pos.x}
-          y={pos.rowY - NOTE_SZ - 6}
-          fontFamily={FONT}
-          fontSize={10.5}
-          fontWeight={700}
-          fontStyle={isDynamic ? "normal" : "italic"}
-          fill={isDynamic ? "#111827" : "#7c3aed"}
-          style={{ cursor: "pointer" }}
-          onClick={(e) => {
-            e.stopPropagation();
-            removeMark(mk.id);
+  return (
+    <div style={{ padding:'10px 12px' }}>
+      <div style={{ fontSize:11, fontWeight:700, color:'#374151', marginBottom:2, textTransform:'uppercase', letterSpacing:'0.05em' }}>
+        Voice Parts
+      </div>
+      <div style={{ fontSize:10.5, color:'#9ca3af', marginBottom:8 }}>{comboInfo.label} arrangement</div>
+      {(score.parts||[]).map((p) => (
+        <div key={p.id}
+          onClick={() => setActivePart(p.id)}
+          style={{
+            display:'flex', alignItems:'center', gap:6, padding:'6px 8px',
+            marginBottom:3, borderRadius:6, cursor:'pointer',
+            background: selectedPartId === p.id ? '#eff6ff' : 'white',
+            border: `1px solid ${selectedPartId === p.id ? '#93c5fd' : '#e5e7eb'}`,
+            transition:'all 0.1s',
           }}
         >
-          {mk.value}
-        </text>,
-      );
-    });
+          <span style={{
+            width:22, height:22, borderRadius:5, background:'#f3f4f6',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            fontSize:11, fontWeight:700, color:'#1e3a8a', flexShrink:0,
+          }}>
+            {p.label}
+          </span>
+          <span style={{ flex:1, fontSize:12.5, fontWeight:500, color:'#1e2433' }}>
+            {p.name}
+          </span>
+        </div>
+      ))}
+      <div style={{ marginTop:10, fontSize:11, color:'#9ca3af', lineHeight:1.5 }}>
+        Voice arrangement is set when the score is created. Click a part above to make it active for note entry.
+      </div>
+    </div>
+  )
+}
 
-    return { elems, totalH };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    score,
-    selectedPartId,
-    selectedMeasureIdx,
-    selectedBeatIdx,
-    selectedEventIdx,
-    inputMode,
-    slurStart,
-    hoveredSlurId,
-    hoveredLyricId,
-    svgW,
-    lyricsMode,
-  ]);
+// ── Layout tab ───────────────────────────────────────────────────────────────
+function LayoutTab({ zoom, setZoom }) {
+  return (
+    <div style={{ padding:'10px 12px' }}>
+      <div style={{ fontSize:11, fontWeight:700, color:'#374151', marginBottom:10, textTransform:'uppercase', letterSpacing:'0.05em' }}>
+        Layout Options
+      </div>
+      <div style={{ marginBottom:12 }}>
+        <div style={{ fontSize:11.5, color:'#374151', marginBottom:4, fontWeight:600 }}>Zoom</div>
+        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <button onClick={() => setZoom(Math.max(0.5, +(zoom - 0.1).toFixed(2)))}
+            style={{ width:24, height:24, border:'1px solid #e5e7eb', borderRadius:4,
+              background:'white', cursor:'pointer', fontSize:14, lineHeight:1 }}>−</button>
+          <span style={{ flex:1, textAlign:'center', fontSize:12, fontWeight:600, color:'#1e2433' }}>
+            {Math.round(zoom * 100)}%
+          </span>
+          <button onClick={() => setZoom(Math.min(2, +(zoom + 0.1).toFixed(2)))}
+            style={{ width:24, height:24, border:'1px solid #e5e7eb', borderRadius:4,
+              background:'white', cursor:'pointer', fontSize:14, lineHeight:1 }}>+</button>
+        </div>
+        <input type="range" min={50} max={200} value={Math.round(zoom*100)}
+          onChange={e => setZoom(Number(e.target.value)/100)}
+          style={{ width:'100%', marginTop:6, accentColor:'#2563eb' }}
+        />
+      </div>
+      <div style={{ fontSize:11, color:'#9ca3af', lineHeight:1.5 }}>
+        More layout options (margins, system spacing, page size) coming soon.
+      </div>
+    </div>
+  )
+}
 
-  // ── Playback cursor — red vertical line tracking beat position ─────────────
-  // Subscribes ONCE (deps=[onBeat], and onBeat is a stable reference) and
-  // then, on every tick, mutates the existing <g>/<line> DOM nodes directly
-  // via refs — it never calls setState and never goes through React's
-  // render/reconcile cycle. That's what makes this immune to however
-  // expensive (or not) the rest of the tree is.
-  //
-  // playbackBeat is a global quarter-note counter from song start (same
-  // units used by the staff ScoreRenderer). We walk the lead part's beats to
-  // find which measure/beat it falls in, then interpolate within that beat
-  // using the exact on-screen positions captured in beatPosMap during the
-  // last static layout pass (kept fresh in layoutMetaRef).
-  useEffect(() => {
-    if (!onBeat) return;
+// ── Properties tab ───────────────────────────────────────────────────────────
+function PropertiesTab() {
+  const score              = useSolfaStore(s => s.score)
+  const selectedPartId     = useSolfaStore(s => s.selectedPartId)
+  const selectedMeasureIdx = useSolfaStore(s => s.selectedMeasureIdx)
+  const selectedBeatIdx    = useSolfaStore(s => s.selectedBeatIdx)
+  const selectedEventIdx   = useSolfaStore(s => s.selectedEventIdx)
 
-    const update = (playbackBeat) => {
-      const g = cursorGroupRef.current;
-      if (!g) return;
-      if (playbackBeat === null || playbackBeat === undefined) {
-        g.style.display = "none";
-        lastScrollTopRef.current = null;
-        return;
-      }
-      const { parts, numM, topNum } = layoutMetaRef.current;
-      if (!parts.length) {
-        g.style.display = "none";
-        return;
-      }
+  const liveEvent = (() => {
+    if (selectedPartId===null || selectedMeasureIdx===null || selectedBeatIdx===null || selectedEventIdx===null) return null
+    const part = score.parts.find(p => p.id === selectedPartId)
+    const beat = migrateMeasure(part?.measures[selectedMeasureIdx])?.beats[selectedBeatIdx]
+    return beat?.events?.[selectedEventIdx] || null
+  })()
 
-      const leadPart = parts[0];
-      let cum = 0,
-        targetCol = null,
-        targetBi = 0,
-        fracInBeat = 0;
-      for (let col = 0; col < numM; col++) {
-        const m = migrateMeasure(leadPart.measures[col]);
-        // Match the audio scheduler's cumulative-beat source exactly (time
-        // signature, not the rendered beats array) so the cursor never
-        // drifts out of sync with the actual audio position measure-by-measure.
-        const nBeats = m?.timeSignature?.beats || topNum;
-        if (playbackBeat < cum + nBeats || col === numM - 1) {
-          const within = playbackBeat - cum;
-          const actualLen = m?.beats?.length || nBeats;
-          targetCol = col;
-          targetBi = Math.min(
-            Math.max(actualLen, 1) - 1,
-            Math.max(0, Math.floor(within)),
-          );
-          fracInBeat = Math.min(1, Math.max(0, within - Math.floor(within)));
-          break;
-        }
-        cum += nBeats;
-      }
+  if (!liveEvent) {
+    return (
+      <div style={{ padding:'20px 16px', textAlign:'center' }}>
+        <div style={{ fontSize:24, marginBottom:8, color:'#d1d5db' }}>d r m</div>
+        <div style={{ fontSize:12, color:'#9ca3af', lineHeight:1.5 }}>
+          Select a note to see<br/>its properties here
+        </div>
+      </div>
+    )
+  }
 
-      if (targetCol === null) {
-        g.style.display = "none";
-        return;
-      }
-      const pos = beatPosMap.current[`${leadPart.id}:${targetCol}:${targetBi}`];
-      if (!pos) {
-        g.style.display = "none";
-        return;
-      }
-
-      const m = migrateMeasure(leadPart.measures[targetCol]);
-      const actualLen = m?.beats?.length || topNum;
-      let nextKey = null;
-      if (targetBi + 1 < actualLen)
-        nextKey = `${leadPart.id}:${targetCol}:${targetBi + 1}`;
-      else if (targetCol + 1 < numM)
-        nextKey = `${leadPart.id}:${targetCol + 1}:0`;
-      const nextPos = nextKey ? beatPosMap.current[nextKey] : null;
-      const beatW =
-        nextPos && nextPos.rowY === pos.rowY
-          ? Math.max(4, nextPos.x - pos.x)
-          : QW * 4;
-      const cx = pos.x + fracInBeat * beatW;
-      const bounds = systemBoundsMap.current[targetCol] || {
-        top: pos.rowY - 30,
-        bottom: pos.rowY + 30,
-      };
-
-      g.style.display = "";
-      g.setAttribute("transform", `translate(${cx},0)`);
-      if (cursorGlowRef.current) {
-        cursorGlowRef.current.setAttribute("y1", bounds.top);
-        cursorGlowRef.current.setAttribute("y2", bounds.bottom);
-      }
-      if (cursorLineRef.current) {
-        cursorLineRef.current.setAttribute("y1", bounds.top);
-        cursorLineRef.current.setAttribute("y2", bounds.bottom);
-      }
-
-      // Follow playback — like MuseScore, the page scrolls to keep the
-      // cursor in view once it moves to a new system line, rather than
-      // fighting the user's scroll on every single animation frame.
-      if (bounds.top !== lastScrollTopRef.current) {
-        lastScrollTopRef.current = bounds.top;
-        cursorLineRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-          inline: "nearest",
-        });
-      }
-    };
-
-    update(null);
-    return onBeat(update);
-  }, [onBeat]);
-
-  const lyricEditElem = lyricEdit ? (
-    <InlineLyricEditor
-      key="lyric-ed"
-      x={lyricEdit.x}
-      y={lyricEdit.y}
-      w={lyricEdit.w}
-      value={lyricEdit.current}
-      onCommit={(val) => {
-        setLyric(
-          lyricEdit.partId,
-          lyricEdit.measureIdx,
-          lyricEdit.beatIdx,
-          lyricEdit.eventIdx,
-          val.trim(),
-        );
-        setLyricEdit(null);
-      }}
-      onCancel={() => setLyricEdit(null)}
-    />
-  ) : null;
+  const durLabel = { 4:'Whole beat', 3:'¾ beat', 2:'Half beat', 1:'Quarter beat' }[liveEvent.duration] || liveEvent.duration
 
   return (
-    <div ref={wrapRef} style={{ width: "100%", overflowX: "auto" }}>
-      <svg
-        ref={svgNodeRef}
-        width={svgW}
-        height={totalH}
-        viewBox={`0 0 ${svgW} ${totalH}`}
-        style={{ display: "block", fontFamily: FONT, userSelect: "none" }}
-      >
-        {elems}
-        <g
-          ref={cursorGroupRef}
-          style={{ display: "none", pointerEvents: "none" }}
-        >
-          <line
-            ref={cursorGlowRef}
-            x1={0}
-            y1={0}
-            x2={0}
-            y2={0}
-            stroke="#ef4444"
-            strokeWidth={7}
-            strokeLinecap="round"
-            opacity={0.16}
-          />
-          <line
-            ref={cursorLineRef}
-            x1={0}
-            y1={0}
-            x2={0}
-            y2={0}
-            stroke="#ef4444"
-            strokeWidth={2.2}
-            strokeLinecap="round"
-            opacity={0.9}
-          />
-        </g>
-        {lyricEditElem}
-      </svg>
+    <div style={{ padding:'10px 12px' }}>
+      <div style={{ fontSize:11, fontWeight:700, color:'#374151', marginBottom:10,
+        textTransform:'uppercase', letterSpacing:'0.05em' }}>Note Properties</div>
+      <div style={{ display:'flex', flexDirection:'column', gap:6, fontSize:12 }}>
+        <div style={{ display:'flex', justifyContent:'space-between' }}>
+          <span style={{ color:'#6b7280' }}>Type</span>
+          <span style={{ fontWeight:600 }}>
+            {liveEvent.type==='note' ? 'Note' : liveEvent.type==='sustain' ? 'Sustain' : 'Rest'}
+          </span>
+        </div>
+        {liveEvent.type==='note' && (
+          <div style={{ display:'flex', justifyContent:'space-between' }}>
+            <span style={{ color:'#6b7280' }}>Syllable</span>
+            <span style={{ fontWeight:600 }}>{liveEvent.syllable}</span>
+          </div>
+        )}
+        {liveEvent.type==='note' && liveEvent.octave !== 0 && (
+          <div style={{ display:'flex', justifyContent:'space-between' }}>
+            <span style={{ color:'#6b7280' }}>Octave</span>
+            <span style={{ fontWeight:600 }}>{liveEvent.octave > 0 ? `+${liveEvent.octave}` : liveEvent.octave}</span>
+          </div>
+        )}
+        <div style={{ display:'flex', justifyContent:'space-between' }}>
+          <span style={{ color:'#6b7280' }}>Duration</span>
+          <span style={{ fontWeight:600 }}>{durLabel}</span>
+        </div>
+        {liveEvent.lyric && (
+          <div style={{ display:'flex', justifyContent:'space-between' }}>
+            <span style={{ color:'#6b7280' }}>Lyric</span>
+            <span style={{ fontWeight:600 }}>{liveEvent.lyric}</span>
+          </div>
+        )}
+      </div>
     </div>
-  );
-});
+  )
+}
 
-export default SolfaRenderer;
+// ── Lyrics tab ───────────────────────────────────────────────────────────────
+const LYRIC_LAYOUTS = [
+  { id:'inline',                    label:'Inline',                 hint:'Every syllable sits under its own note.' },
+  { id:'verse1-inline-rest-below',  label:'Verse 1 inline, rest below', hint:'Verse 1 synced to notes; verses 2+ printed as text after the score.' },
+  { id:'below-score-only',         label:'Below score only',       hint:'No inline sync — all verses printed as text under the score.' },
+  { id:'between-alto-tenor',       label:'Between Alto & Tenor',   hint:'One shared lyric line, positioned under the Alto part.' },
+  { id:'per-voice',                label:'Per voice',              hint:'Each voice keeps its own independent lyric line (rounds/canons).' },
+  { id:'instrumental',             label:'Instrumental',           hint:'No lyrics anywhere in the score.' },
+]
+
+function LyricsTab() {
+  const score              = useSolfaStore(s => s.score)
+  const setLyricLayout      = useSolfaStore(s => s.setLyricLayout)
+  const setLyricDuplication = useSolfaStore(s => s.setLyricDuplication)
+  const addVerse             = useSolfaStore(s => s.addVerse)
+  const updateVerse           = useSolfaStore(s => s.updateVerse)
+  const removeVerse            = useSolfaStore(s => s.removeVerse)
+  const toggleInstrumentalMeasure = useSolfaStore(s => s.toggleInstrumentalMeasure)
+  const selectedMeasureIdx = useSolfaStore(s => s.selectedMeasureIdx)
+
+  const layout = score.lyricLayout || 'inline'
+  const duplication = score.lyricDuplication || 'per-voice-copy'
+  const verses = score.verses || []
+  const showDuplicationToggle = layout === 'inline' || layout === 'verse1-inline-rest-below'
+  const isInstrumental = selectedMeasureIdx !== null && (score.instrumentalMeasures||[]).includes(selectedMeasureIdx)
+
+  return (
+    <div style={{ padding:'10px 12px' }}>
+      <div style={{ fontSize:11, fontWeight:700, color:'#374151', marginBottom:6, textTransform:'uppercase', letterSpacing:'0.05em' }}>
+        Layout
+      </div>
+      <select value={layout} onChange={e => setLyricLayout(e.target.value)}
+        style={{ width:'100%', fontSize:12, border:'1px solid #d1d5db', borderRadius:6,
+          padding:'6px 8px', color:'#1e2433', marginBottom:6 }}>
+        {LYRIC_LAYOUTS.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
+      </select>
+      <div style={{ fontSize:10.5, color:'#9ca3af', lineHeight:1.4, marginBottom:12 }}>
+        {LYRIC_LAYOUTS.find(l => l.id===layout)?.hint}
+      </div>
+
+      {showDuplicationToggle && (
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:11.5, fontWeight:600, color:'#374151', marginBottom:5 }}>Duplication</div>
+          <div style={{ display:'flex', gap:6 }}>
+            {[
+              { id:'shared', label:'Shared line' },
+              { id:'per-voice-copy', label:'Per-voice copy' },
+            ].map(opt => (
+              <button key={opt.id} onClick={() => setLyricDuplication(opt.id)}
+                style={{
+                  flex:1, fontSize:10.5, padding:'6px 4px', borderRadius:6,
+                  border: duplication===opt.id ? '1px solid #2563eb' : '1px solid #e5e7eb',
+                  background: duplication===opt.id ? '#eff6ff' : 'white',
+                  color: duplication===opt.id ? '#1d4ed8' : '#6b7280',
+                  cursor:'pointer', fontWeight:600,
+                }}>{opt.label}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginBottom:12, padding:'8px 10px', background:'#f9fafb',
+        border:'1px solid #e5e7eb', borderRadius:6 }}>
+        <div style={{ fontSize:11.5, fontWeight:600, color:'#374151', marginBottom:4 }}>
+          Instrumental measure
+        </div>
+        <div style={{ fontSize:10.5, color:'#9ca3af', marginBottom:6, lineHeight:1.4 }}>
+          {selectedMeasureIdx !== null
+            ? `Bar ${selectedMeasureIdx+1} selected.`
+            : 'Select a bar on the score first.'}
+        </div>
+        <button
+          disabled={selectedMeasureIdx === null}
+          onClick={() => toggleInstrumentalMeasure(selectedMeasureIdx)}
+          style={{
+            width:'100%', fontSize:11, fontWeight:600, padding:'6px 0', borderRadius:6,
+            border: '1px solid ' + (isInstrumental ? '#dc2626' : '#e5e7eb'),
+            background: isInstrumental ? '#fef2f2' : 'white',
+            color: isInstrumental ? '#dc2626' : '#374151',
+            cursor: selectedMeasureIdx === null ? 'not-allowed' : 'pointer',
+            opacity: selectedMeasureIdx === null ? 0.55 : 1,
+          }}>
+          {isInstrumental ? 'Un-flag as instrumental' : 'Flag bar as instrumental'}
+        </button>
+      </div>
+
+      <div style={{ fontSize:11, fontWeight:700, color:'#374151', marginBottom:6, textTransform:'uppercase', letterSpacing:'0.05em' }}>
+        Verses
+      </div>
+      <div style={{ fontSize:10.5, color:'#9ca3af', marginBottom:8, lineHeight:1.4 }}>
+        {layout === 'below-score-only'
+          ? 'Type every verse here — none are synced to notes.'
+          : 'Verse 1 is edited directly on the score (click under a note). Add verses 2+ here to print them as text.'}
+      </div>
+
+      {verses.map(v => (
+        <div key={v.number} style={{ marginBottom:10, border:'1px solid #e5e7eb', borderRadius:6, overflow:'hidden' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:4, padding:'4px 6px', background:'#f9fafb' }}>
+            <input value={v.label} onChange={e => updateVerse(v.number, { label: e.target.value })}
+              style={{ flex:1, fontSize:11, fontWeight:600, border:'none', background:'none', color:'#1e2433', outline:'none' }}/>
+            <button onClick={() => removeVerse(v.number)}
+              title="Remove verse"
+              style={{ border:'none', background:'none', color:'#9ca3af', cursor:'pointer', fontSize:13 }}>×</button>
+          </div>
+          <textarea value={v.text} onChange={e => updateVerse(v.number, { text: e.target.value })}
+            placeholder="Type verse lyrics, one line per line…"
+            rows={4}
+            style={{ width:'100%', fontSize:11.5, border:'none', padding:'6px 8px',
+              boxSizing:'border-box', resize:'vertical', outline:'none', color:'#374151',
+              fontFamily:'inherit', lineHeight:1.45 }}/>
+        </div>
+      ))}
+
+      <button onClick={() => addVerse()}
+        style={{ width:'100%', fontSize:11.5, fontWeight:600, padding:'7px 0', borderRadius:6,
+          border:'1px dashed #93c5fd', background:'#eff6ff', color:'#1d4ed8', cursor:'pointer' }}>
+        + Add verse
+      </button>
+    </div>
+  )
+}
+
+// ── Markers (navigation) tab ─────────────────────────────────────────────────
+const MARKER_TYPES = [
+  { id:'verse-label',        label:'Verse tag (1. / 2. / REF)', needsLabel:true, placeholder:'1.' },
+  { id:'repeat-to-refrain',  label:'D.S. → Refrain',            needsLabel:false },
+  { id:'fine',               label:'Fine',                      needsLabel:false },
+  { id:'dc',                 label:'D.C.',                      needsLabel:false },
+]
+
+function MarkersTab() {
+  const score              = useSolfaStore(s => s.score)
+  const selectedMeasureIdx = useSolfaStore(s => s.selectedMeasureIdx)
+  const addNavigationMarker  = useSolfaStore(s => s.addNavigationMarker)
+  const removeNavigationMarker = useSolfaStore(s => s.removeNavigationMarker)
+  const [markerType, setMarkerType] = useState('verse-label')
+  const [labelText,  setLabelText ] = useState('1.')
+
+  const markers = score.navigationMarkers || []
+  const typeInfo = MARKER_TYPES.find(t => t.id===markerType)
+
+  const handleAdd = () => {
+    if (selectedMeasureIdx === null) return
+    const defaultLabels = { 'repeat-to-refrain':'D.S. → Refrain', fine:'Fine', dc:'D.C.' }
+    const label = typeInfo.needsLabel ? (labelText || '1.') : defaultLabels[markerType]
+    addNavigationMarker(markerType, selectedMeasureIdx, label)
+  }
+
+  return (
+    <div style={{ padding:'10px 12px' }}>
+      <div style={{ fontSize:11, fontWeight:700, color:'#374151', marginBottom:6, textTransform:'uppercase', letterSpacing:'0.05em' }}>
+        Add Marker
+      </div>
+      <div style={{ fontSize:10.5, color: selectedMeasureIdx===null ? '#9a5b13' : '#1d4ed8',
+        marginBottom:8, lineHeight:1.4 }}>
+        {selectedMeasureIdx === null ? 'Select a bar on the score first.' : `Will attach to bar ${selectedMeasureIdx+1}.`}
+      </div>
+      <select value={markerType} onChange={e => setMarkerType(e.target.value)}
+        style={{ width:'100%', fontSize:12, border:'1px solid #d1d5db', borderRadius:6,
+          padding:'6px 8px', color:'#1e2433', marginBottom:6 }}>
+        {MARKER_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+      </select>
+      {typeInfo?.needsLabel && (
+        <input value={labelText} onChange={e => setLabelText(e.target.value)}
+          placeholder={typeInfo.placeholder}
+          style={{ width:'100%', fontSize:12, border:'1px solid #d1d5db', borderRadius:6,
+            padding:'6px 8px', color:'#1e2433', marginBottom:6, boxSizing:'border-box' }}/>
+      )}
+      <button
+        disabled={selectedMeasureIdx === null}
+        onClick={handleAdd}
+        style={{
+          width:'100%', fontSize:11.5, fontWeight:600, padding:'7px 0', borderRadius:6,
+          border:'1px solid #2563eb', background: selectedMeasureIdx===null ? '#f3f4f6' : '#2563eb',
+          color: selectedMeasureIdx===null ? '#9ca3af' : 'white',
+          cursor: selectedMeasureIdx===null ? 'not-allowed' : 'pointer',
+        }}>
+        + Add marker
+      </button>
+
+      <div style={{ fontSize:11, fontWeight:700, color:'#374151', margin:'16px 0 6px', textTransform:'uppercase', letterSpacing:'0.05em' }}>
+        On this score
+      </div>
+      {markers.length === 0 && (
+        <div style={{ fontSize:11, color:'#9ca3af' }}>No markers yet.</div>
+      )}
+      {markers
+        .slice()
+        .sort((a,b) => a.atMeasure - b.atMeasure)
+        .map(mk => (
+        <div key={mk.id} style={{ display:'flex', alignItems:'center', gap:6,
+          padding:'5px 8px', marginBottom:4, borderRadius:6, background:'#f9fafb',
+          border:'1px solid #e5e7eb' }}>
+          <span style={{ fontSize:10, color:'#9ca3af', minWidth:34 }}>bar {mk.atMeasure+1}</span>
+          <span style={{ flex:1, fontSize:11.5, fontWeight:600, color:'#1e2433' }}>{mk.label}</span>
+          <button onClick={() => removeNavigationMarker(mk.id)}
+            style={{ border:'none', background:'none', color:'#9ca3af', cursor:'pointer', fontSize:13 }}>×</button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Main SolfaSidebar component ──────────────────────────────────────────────
+export default function SolfaSidebar({ collapsed, setCollapsed, zoom, setZoom }) {
+  const [activeTab, setActiveTab] = useState('palettes')
+  const [search,    setSearch   ] = useState('')
+
+  if (collapsed) {
+    return (
+      <div style={{
+        width:28, height:'100%', background:'#f9fafb',
+        borderRight:'1px solid #e5e7eb',
+        display:'flex', flexDirection:'column', alignItems:'center',
+        paddingTop:8,
+      }}>
+        <button onClick={() => setCollapsed(false)}
+          title="Expand sidebar"
+          style={{ border:'none', background:'none', cursor:'pointer',
+            color:'#9ca3af', fontSize:14 }}>›</button>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      width: 240,
+      height: '100%',
+      background: '#f9fafb',
+      borderRight: '1px solid #e5e7eb',
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      flexShrink: 0,
+    }}>
+      {/* Tab bar — fixed at top of sidebar */}
+      <div style={{
+        display:'flex', borderBottom:'1px solid #e5e7eb',
+        background:'white', flexShrink:0,
+      }}>
+        {TABS.map(tab => (
+          <button key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              flex:1, padding:'7px 0', fontSize:8.6, fontWeight:700,
+              border:'none', background:'none', cursor:'pointer',
+              borderBottom: activeTab===tab.id ? '2px solid #2563eb' : '2px solid transparent',
+              color: activeTab===tab.id ? '#2563eb' : '#6b7280',
+              letterSpacing:'0.01em',
+              transition:'color 0.12s',
+            }}
+          >{tab.label}</button>
+        ))}
+        <button onClick={() => setCollapsed(true)} title="Collapse sidebar"
+          style={{ width:24, border:'none', background:'none', cursor:'pointer',
+            color:'#9ca3af', fontSize:13, flexShrink:0, paddingBottom:2 }}>‹</button>
+      </div>
+
+      {/* Search bar — Palettes tab only */}
+      {activeTab === 'palettes' && (
+        <div style={{ padding:'6px 8px', background:'white',
+          borderBottom:'1px solid #e5e7eb', flexShrink:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:4,
+            background:'#f3f4f6', borderRadius:6, padding:'3px 8px',
+            border:'1px solid #e5e7eb' }}>
+            <Search size={12} strokeWidth={2} color="#9ca3af" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search palettes…"
+              style={{ background:'none', border:'none', outline:'none',
+                fontSize:11, color:'#374151', width:'100%' }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Scrollable content area */}
+      <div style={{ flex:1, overflowY:'auto', overflowX:'hidden' }}>
+        {activeTab==='palettes'   && <PalettesTab   search={search} />}
+        {activeTab==='parts'      && <PartsTab />}
+        {activeTab==='lyrics'     && <LyricsTab />}
+        {activeTab==='markers'    && <MarkersTab />}
+        {activeTab==='layout'     && <LayoutTab zoom={zoom} setZoom={setZoom} />}
+        {activeTab==='properties' && <PropertiesTab />}
+      </div>
+    </div>
+  )
+}
