@@ -207,7 +207,7 @@ function PalettesTab({ search }) {
         {hasSelection && `Applying to bar ${selectedMeasureIdx+1}, beat ${selectedBeatIdx+1}. Key Signature will modulate starting at this exact note; Time Signature will insert a change at bar ${selectedMeasureIdx+1}.`}
       </div>
       {filtered.map((p, i) => (
-        <PaletteSection key={p.title} title={p.title} defaultOpen={i < 2}>
+        <PaletteSection key={p.title} title={p.title}>
           {p.items.map(item => (
             <PaletteItem key={item.label} {...item} />
           ))}

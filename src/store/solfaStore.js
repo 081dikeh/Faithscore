@@ -99,7 +99,7 @@ export function buildEmptySolfaScore(voiceComboKey='satb',key='C',beats=4,numMea
     tempo:80, timeSignature:{beats,beatType:4},
     voiceCombo:voiceComboKey,
     parts:combo.voices.map(v=>makePart(v,numMeasures,beats)),
-    sections:[], slurs:[], marks:[], _savedAt:null, _cloudId:null,
+    sections:[], slurs:[], ties:[], marks:[], _savedAt:null, _cloudId:null,
     lyricLayout:'inline', lyricDuplication:'per-voice-copy',
     verses:[], navigationMarkers:[], instrumentalMeasures:[],
     // Modulations — a SPECIFIC NOTE's position where the key changes,
@@ -205,6 +205,7 @@ export function migrateScore(score) {
   return {
     ...score,
     slurs: score.slurs || [],
+    ties: score.ties || [],
     marks: score.marks || [],
     lyricLayout: score.lyricLayout || 'inline',
     lyricDuplication: score.lyricDuplication || 'per-voice-copy',
@@ -258,6 +259,10 @@ export const useSolfaStore = create((set,get) => ({
 
   // Slur placement state
   slurStart:          null,   // { partId, measureIdx, beatIdx, eventIdx } | null
+  // Tie placement state — same shape as slurStart, but a tie only connects
+  // two notes of the IDENTICAL pitch (that's what makes it a tie and not
+  // a slur), enforced in addTie() below.
+  tieStart:           null,
 
   setTitle:   t  => set(s=>({score:{...s.score,title:t}})),
   // DEPRECATED for mid-score use: rewrites the score's starting key only —
@@ -267,7 +272,7 @@ export const useSolfaStore = create((set,get) => ({
   setKey:     k  => set(s=>({score:{...s.score,key:k}})),
   setTempo:   t  => set(s=>({score:{...s.score,tempo:t}})),
   setCloudId: id => set(s=>({score:{...s.score,_cloudId:id}})),
-  setInputMode:       m => set({inputMode:m, slurStart: m !== 'slur' ? null : get().slurStart}),
+  setInputMode:       m => set({inputMode:m, slurStart: m !== 'slur' ? null : get().slurStart, tieStart: m !== 'tie' ? null : get().tieStart}),
   setSelectedDuration:d => set({selectedDuration:d}),
   setSelectedOctave:  o => set({selectedOctave:o}),
 
@@ -288,6 +293,34 @@ export const useSolfaStore = create((set,get) => ({
   removeSlur: (slurId) => {
     get()._snapshot()
     set(s => ({ score: { ...s.score, slurs: (s.score.slurs||[]).filter(sl => sl.id !== slurId) } }))
+  },
+
+  // ── Tie actions ──────────────────────────────────────────────────────────
+  // A tie looks like a slur (a curved connecting line) but means something
+  // different: it joins two notes of the SAME pitch to extend one sung
+  // duration across a beat or bar line, rather than phrasing across
+  // different pitches. addTie() enforces that — same syllable AND same
+  // octave — and refuses (returns false) otherwise, so a tie can never be
+  // planted between two different notes by mistake.
+  setTieStart: (ref) => set({ tieStart: ref }),
+  clearTieStart: () => set({ tieStart: null }),
+
+  addTie: (partId, startMeasure, startBeat, startEvent, endMeasure, endBeat, endEvent) => {
+    const s = get()
+    const part = s.score.parts.find(p => p.id === partId)
+    const startEv = part?.measures[startMeasure]?.beats[startBeat]?.events[startEvent]
+    const endEv = part?.measures[endMeasure]?.beats[endBeat]?.events[endEvent]
+    if (!startEv || !endEv || startEv.type !== 'note' || endEv.type !== 'note') return false
+    if (startEv.syllable !== endEv.syllable || (startEv.octave || 0) !== (endEv.octave || 0)) return false
+    get()._snapshot()
+    const tie = { id: uid(), partId, startMeasure, startBeat, startEvent, endMeasure, endBeat, endEvent }
+    set(st => ({ score: { ...st.score, ties: [...(st.score.ties||[]), tie] } }))
+    return true
+  },
+
+  removeTie: (tieId) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, ties: (s.score.ties||[]).filter(t => t.id !== tieId) } }))
   },
 
   // ── Active part (sidebar "Parts" tab) ─────────────────────────────────────

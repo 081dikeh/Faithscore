@@ -219,6 +219,8 @@ export default function SolfaApp({ user, onGoHome }) {
   const navigateEvent = useSolfaStore((s) => s.navigateEvent);
   const slurStart = useSolfaStore((s) => s.slurStart);
   const clearSlurStart = useSolfaStore((s) => s.clearSlurStart);
+  const tieStart = useSolfaStore((s) => s.tieStart);
+  const clearTieStart = useSolfaStore((s) => s.clearTieStart);
 
   const setOctave = useCallback((o) => {
     useSolfaStore.getState().setSelectedOctave(o);
@@ -438,6 +440,7 @@ export default function SolfaApp({ user, onGoHome }) {
       if (e.key === "Escape") {
         setInputMode("select");
         clearSlurStart();
+        clearTieStart();
         return;
       }
       if (e.key === "n" || e.key === "N") {
@@ -962,10 +965,29 @@ export default function SolfaApp({ user, onGoHome }) {
           >
             ⌒ Slur
           </button>
+          <button
+            style={abtn(inputMode === "tie", "#0d9488")}
+            onClick={() => {
+              if (inputMode === "tie") {
+                setInputMode("select");
+                clearTieStart();
+              } else {
+                setInputMode("tie");
+              }
+            }}
+            title="Tie two notes of the SAME pitch: click the first, then the second. Click a tie to delete."
+          >
+            ⌣ Tie
+          </button>
         </div>
         {inputMode === "slur" && (
           <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 600, fontStyle: "italic" }}>
             {slurStart ? "Click the ending note →" : "Click the starting note →"}
+          </span>
+        )}
+        {inputMode === "tie" && (
+          <span style={{ fontSize: 10, color: "#0d9488", fontWeight: 600, fontStyle: "italic" }}>
+            {tieStart ? "Click the SAME pitch to tie to →" : "Click the starting note →"}
           </span>
         )}
         <Sep />
