@@ -110,6 +110,40 @@ function keyNumToVexflow(num) {
 // music-theory module also used by chromatic note entry, so both agree on
 // exactly which letters a key signature alters.
 
+// ── Tie / slur curve geometry ────────────────────────────────────────────────
+// A longer tie or slur should get LONGER, not dramatically DEEPER — using
+// unbounded `distance * factor` produces absurdly tall arcs on wide gaps.
+// Depth is a small base amount plus a shallow slope on distance, clamped to
+// a sane min/max. Ties and slurs are tuned separately on purpose: a tie is
+// short/tight/closely bound to its two noteheads (same pitch, duration
+// glue), while a slur is a broader, more graceful phrase arc that can span
+// many notes — so it gets a taller base depth and ceiling.
+function clampVal(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+const TIE_BASE_DEPTH = 6;
+const TIE_DEPTH_FACTOR = 0.045;
+const TIE_MIN_DEPTH = 6;
+const TIE_MAX_DEPTH = 15;
+function tieCurveDepth(distancePx) {
+  return clampVal(
+    TIE_BASE_DEPTH + distancePx * TIE_DEPTH_FACTOR,
+    TIE_MIN_DEPTH,
+    TIE_MAX_DEPTH,
+  );
+}
+const SLUR_BASE_DEPTH = 14;
+const SLUR_DEPTH_FACTOR = 0.075;
+const SLUR_MIN_DEPTH = 14;
+const SLUR_MAX_DEPTH = 38;
+function slurCurveDepth(distancePx) {
+  return clampVal(
+    SLUR_BASE_DEPTH + distancePx * SLUR_DEPTH_FACTOR,
+    SLUR_MIN_DEPTH,
+    SLUR_MAX_DEPTH,
+  );
+}
+
 
 // ── Stem direction helper ────────────────────────────────────────────────────
 // Returns 1 (up) or -1 (down) based on note position relative to middle line.
@@ -1058,7 +1092,12 @@ export default function ScoreRenderer() {
             const drawTieCanvas = (x1, y1, x2, y2, stemUp) => {
               try {
                 ctx.save();
-                const bow = stemUp ? 12 : -12; // arc direction and height
+                // Depth scales gently with distance between the two
+                // noteheads (clamped) rather than a fixed 12px for every
+                // tie regardless of how far apart the notes are.
+                const dist = Math.abs(x2 - x1);
+                const depth = tieCurveDepth(dist);
+                const bow = stemUp ? depth : -depth; // arc direction and height
                 const INS = 3; // inset so arc starts near notehead center
                 const lx1 = x1 + INS;
                 const lx2 = x2 - INS;
@@ -1161,8 +1200,18 @@ export default function ScoreRenderer() {
               try {
                 stemUp = vfNotes[ni].getStemDirection() === 1;
               } catch (_) {}
-              // Slur bows OPPOSITE to stem: stem up → slur below; stem down → slur above
-              const cpY = stemUp ? 20 : -20;
+              // Slur bows OPPOSITE to stem: stem up → slur below; stem down → slur above.
+              // Depth scales gently with the distance between the two
+              // notes (clamped) — a slur spanning many notes gets wider,
+              // not dramatically taller.
+              let slurDist = 80; // sane fallback if position lookup fails
+              try {
+                slurDist = Math.abs(
+                  vfNotes[endIdx].getAbsoluteX() - vfNotes[ni].getAbsoluteX(),
+                );
+              } catch (_) {}
+              const slurDepth = slurCurveDepth(slurDist);
+              const cpY = stemUp ? slurDepth : -slurDepth;
 
               try {
                 new Curve(vfNotes[ni], vfNotes[endIdx], {
@@ -1192,9 +1241,11 @@ export default function ScoreRenderer() {
                 }
                 try {
                   ctx.save();
+                  const fallbackDist = Math.abs(sx2 - sx1);
+                  const fallbackDepth = slurCurveDepth(fallbackDist);
                   const ey = stemUp
-                    ? Math.max(sy1, sy2) + 16
-                    : Math.min(sy1, sy2) - 16;
+                    ? Math.max(sy1, sy2) + fallbackDepth
+                    : Math.min(sy1, sy2) - fallbackDepth;
                   ctx.beginPath();
                   ctx.moveTo(sx1, sy1);
                   ctx.bezierCurveTo(
