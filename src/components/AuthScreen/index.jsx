@@ -28,12 +28,11 @@ export default function AuthScreen({ onAuth }) {
         })
         if (error) throw error
         setMessage('Password reset link sent — check your email.')
-        setLoading(false)
         return
       }
       if (mode === 'signup') {
-        if (!name.trim()) { setError('Please enter your name.'); setLoading(false); return }
-        if (password.length < 6) { setError('Password must be at least 6 characters.'); setLoading(false); return }
+        if (!name.trim()) { setError('Please enter your name.'); return }
+        if (password.length < 6) { setError('Password must be at least 6 characters.'); return }
         const { data, error } = await supabase.auth.signUp({
           email, password,
           options: { data: { full_name: name.trim() } },
@@ -41,11 +40,12 @@ export default function AuthScreen({ onAuth }) {
         if (error) throw error
         if (data?.user?.identities?.length === 0) {
           setError('An account with this email already exists. Try logging in.')
-          setLoading(false); return
+          return
         }
         if (!data.session) {
           setMessage('Account created! Check your email to confirm, then log in.')
-          setMode('login'); setLoading(false); return
+          setMode('login')
+          return
         }
         onAuth(data.session.user)
         return
@@ -56,8 +56,13 @@ export default function AuthScreen({ onAuth }) {
       onAuth(data.user)
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.')
+    } finally {
+      // Always resets, no matter which branch ran or whether something
+      // threw — the button can never get stuck on "…" again, regardless
+      // of what happens upstream (e.g. how fast the parent unmounts this
+      // screen after a successful login/signup).
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const handleGoogle = async () => {
