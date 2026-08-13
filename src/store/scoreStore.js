@@ -1480,9 +1480,32 @@ export const useScoreStore = create((set, get) => ({
     )
   },
 
-  // Plain ↑↓ = chromatic half-step (same logic as shiftPitchHalfStep)
+  // Plain ↑↓ = move by ONE STAFF STEP (next letter name up/down), NOT a
+  // chromatic semitone. A semitone doesn't reliably move a line/space on
+  // the staff (C→C# is the same line, just with a sharp added), which is
+  // what made arrow-key movement look like it was "skipping" — some
+  // presses visibly moved a line, others silently just added an
+  // accidental in place. Moving by letter name is always exactly one
+  // staff position per press, and the accidental is taken straight from
+  // the active key signature so it's spelled correctly automatically
+  // (e.g. in G major, E→F lands on F#, not F natural).
   shiftPitchStep: (dir) => {
-    get().shiftPitchHalfStep(dir)
+    const LETTERS = ['C','D','E','F','G','A','B']
+    const { score, selectedNoteId, selectedPartId, selectedMeasureIndex } = get()
+    const measure = score.parts.find(p => p.id === selectedPartId)?.measures[selectedMeasureIndex]
+    const note = measure?.notes.find(n => n.id === selectedNoteId)
+    if (!note?.pitch) return
+    const { step, octave } = note.pitch
+    let idx = LETTERS.indexOf(step) + dir
+    let octaveDelta = 0
+    if (idx >= 7) { idx -= 7; octaveDelta = 1 }
+    if (idx < 0)  { idx += 7; octaveDelta = -1 }
+    const newLetter = LETTERS[idx]
+    const alteredLetters = keySignatureAccidentals(measure?.keySignature ?? 0)
+    const np = { step: newLetter, accidental: alteredLetters[newLetter] || null, octave: octave + octaveDelta }
+    get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) =>
+      notes.map(n => n.id === selectedNoteId ? { ...n, pitch: np } : n)
+    )
   },
 
   // Shift+↑↓ = octave jump
