@@ -361,6 +361,7 @@ export default function App() {
   const selectedMeasureRange   = useScoreStore(s => s.selectedMeasureRange)
   const extendMeasureRange     = useScoreStore(s => s.extendMeasureRange)
   const setMeasureRange        = useScoreStore(s => s.setMeasureRange)
+  const selectMeasure          = useScoreStore(s => s.selectMeasure)
   const transposeSelection     = useScoreStore(s => s.transposeSelection)
   const toggleTie              = useScoreStore(s => s.toggleTie)
   const insertTriplet          = useScoreStore(s => s.insertTriplet)
@@ -887,9 +888,23 @@ export default function App() {
               onClick={() => { if(selectedNoteId) deleteNote(selectedPartId, selectedMeasureIndex, selectedNoteId)
                 else if(selectedMeasureIndex!==null) clearMeasureColumn(selectedMeasureIndex) }} />
             <Sep />
-            <Item icon=""  label="Select all"         shortcut="Ctrl+A"   disabled />
+            <Item icon=""  label="Select all"         shortcut="Ctrl+A"
+              onClick={() => {
+                const lastIdx = (score.parts[0]?.measures.length || 1) - 1
+                if (!selectedPartId && score.parts[0]) selectMeasure(score.parts[0].id, 0)
+                setMeasureRange(0, lastIdx)
+              }} />
             <Item icon=""  label="Select section"                          disabled />
-            <Item icon=""  label="Find / Go to"       shortcut="Ctrl+F"   disabled />
+            <Item icon=""  label="Find / Go to"       shortcut="Ctrl+F"
+              onClick={() => {
+                const lastIdx = (score.parts[0]?.measures.length || 1) - 1
+                const raw = window.prompt(`Go to bar (1–${lastIdx + 1}):`)
+                if (!raw) return
+                const n = parseInt(raw, 10)
+                if (!Number.isFinite(n) || n < 1 || n > lastIdx + 1) return
+                const partId = selectedPartId || score.parts[0]?.id
+                if (partId) selectMeasure(partId, n - 1)
+              }} />
             <Sep />
             <Item icon={<Settings size={14} strokeWidth={2} />} label="Preferences…"                          disabled />
           </>
@@ -942,7 +957,14 @@ export default function App() {
             <Item icon=""   label="Insert measures…"                      disabled />
             <Item icon=""   label="Append measure"    shortcut="Ctrl+B"
               onClick={addMeasure} />
-            <Item icon=""   label="Append measures…"                      disabled />
+            <Item icon=""   label="Append measures…"
+              onClick={() => {
+                const raw = window.prompt('How many measures to append?', '4')
+                if (!raw) return
+                const n = parseInt(raw, 10)
+                if (!Number.isFinite(n) || n < 1 || n > 200) return
+                for (let i = 0; i < n; i++) addMeasure()
+              }} />
             <Sep />
             <Item icon=""   label="Frames"            arrow               disabled />
             <Item icon=""   label="Text"              arrow               disabled />
