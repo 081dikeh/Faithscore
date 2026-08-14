@@ -774,9 +774,15 @@ export default function App() {
             </div>
           )
 
-          // Menu item — with optional icon, shortcut, arrow for sub-menus, danger styling
-          const Item = ({ icon, label, shortcut, onClick, disabled, danger, arrow }) => (
+          // Menu item — with optional icon, shortcut, arrow for sub-menus, danger styling.
+          // `soon`: for items that are unconditionally disabled because the
+          // feature just isn't built yet (vs. `disabled` alone, which also
+          // covers normal contextual states like "Undo with nothing to
+          // undo"). Shows a small pill instead of leaving a dead-looking
+          // button, so an unfinished menu reads as a roadmap, not a bug.
+          const Item = ({ icon, label, shortcut, onClick, disabled, danger, arrow, soon }) => (
             <button disabled={disabled}
+              title={soon ? 'Not yet implemented' : undefined}
               onClick={() => { if (!disabled) { closeAll(); onClick?.() } }}
               style={{ display:'flex', alignItems:'center', gap:8, width:'100%',
                 textAlign:'left', padding:'5px 14px 5px 10px',
@@ -788,6 +794,9 @@ export default function App() {
               <span style={{ width:18, flexShrink:0, fontSize:13, textAlign:'center',
                 color: disabled ? '#b0b8c8' : '#5a6478' }}>{icon || ''}</span>
               <span style={{ flex:1 }}>{label}</span>
+              {soon && <span style={{ fontSize:9, fontWeight:600, color:'#9ca3af',
+                background:'#f1f5f9', border:'1px solid #e2e8f0', borderRadius:9,
+                padding:'1px 6px', marginLeft:8, letterSpacing:0.3 }}>SOON</span>}
               {shortcut && <span style={{ fontSize:10.5, color:'#9ca3af', whiteSpace:'nowrap',
                 marginLeft:16 }}>{shortcut}</span>}
               {arrow && <span style={{ fontSize:10, color:'#9ca3af', marginLeft:4 }}>▶</span>}
@@ -857,12 +866,12 @@ export default function App() {
               onClick={() => exportMusicXML(score)} />
             <Item icon=""   label="Export MIDI"        shortcut="Ctrl+Shift+M"
               onClick={() => exportMIDI(score)} />
-            <Item icon=""   label="Export…"           arrow               disabled />
+            <Item icon=""   label="Export…"           arrow               disabled soon />
             <Sep />
             <Item icon={<Printer size={14} strokeWidth={2} />} label="Print…"            shortcut="Ctrl+P"
               onClick={() => { printScore(score) }} />
             <Sep />
-            <Item icon=""   label="Score properties…"                     disabled />
+            <Item icon=""   label="Score properties…"                     disabled soon />
             <Item icon={<Power size={14} strokeWidth={2} />} label="Quit"              shortcut="Ctrl+Q"   danger
               onClick={() => window.close()} />
           </>
@@ -873,16 +882,16 @@ export default function App() {
               onClick={undo} disabled={_undoStack.length === 0} />
             <Item icon={<Redo2 size={14} strokeWidth={2} />} label="Redo"               shortcut="Ctrl+Y"
               onClick={redo} />
-            <Item icon=""  label="History"                                 disabled />
+            <Item icon=""  label="History"                                 disabled soon />
             <Sep />
-            <Item icon={<Scissors size={14} strokeWidth={2} />} label="Cut"               shortcut="Ctrl+X"   disabled />
+            <Item icon={<Scissors size={14} strokeWidth={2} />} label="Cut"               shortcut="Ctrl+X"   disabled soon />
             <Item icon={<Copy size={14} strokeWidth={2} />} label="Copy"              shortcut="Ctrl+C"
               onClick={() => { if(selectedMeasureIndex!==null) copyMeasure(selectedPartId, selectedMeasureIndex) }} />
             <Item icon={<Clipboard size={14} strokeWidth={2} />} label="Paste"             shortcut="Ctrl+V"
               onClick={() => { if(selectedMeasureIndex!==null) pasteMeasure(selectedPartId, selectedMeasureIndex) }} />
-            <Item icon=""  label="Paste half duration" shortcut="Ctrl+Shift+Q" disabled />
-            <Item icon=""  label="Paste double duration" shortcut="Ctrl+Shift+W" disabled />
-            <Item icon=""  label="Swap with clipboard" shortcut="Ctrl+Shift+X" disabled />
+            <Item icon=""  label="Paste half duration" shortcut="Ctrl+Shift+Q" disabled soon />
+            <Item icon=""  label="Paste double duration" shortcut="Ctrl+Shift+W" disabled soon />
+            <Item icon=""  label="Swap with clipboard" shortcut="Ctrl+Shift+X" disabled soon />
             <Sep />
             <Item icon={<Trash2 size={14} strokeWidth={2} />} label="Delete"            shortcut="Del"
               onClick={() => { if(selectedNoteId) deleteNote(selectedPartId, selectedMeasureIndex, selectedNoteId)
@@ -894,7 +903,7 @@ export default function App() {
                 if (!selectedPartId && score.parts[0]) selectMeasure(score.parts[0].id, 0)
                 setMeasureRange(0, lastIdx)
               }} />
-            <Item icon=""  label="Select section"                          disabled />
+            <Item icon=""  label="Select section"                          disabled soon />
             <Item icon=""  label="Find / Go to"       shortcut="Ctrl+F"
               onClick={() => {
                 const lastIdx = (score.parts[0]?.measures.length || 1) - 1
@@ -906,7 +915,7 @@ export default function App() {
                 if (partId) selectMeasure(partId, n - 1)
               }} />
             <Sep />
-            <Item icon={<Settings size={14} strokeWidth={2} />} label="Preferences…"                          disabled />
+            <Item icon={<Settings size={14} strokeWidth={2} />} label="Preferences…"                          disabled soon />
           </>
 
           // ── VIEW ───────────────────────────────────────────────────────────
@@ -920,17 +929,17 @@ export default function App() {
             <CheckItem checked={false} label="Master palette" shortcut="Shift+F9" onClick={() => {}} />
             <CheckItem checked label="Layout"         shortcut="F7"       onClick={() => {}} />
             <CheckItem checked label="Properties"     shortcut="F8"       onClick={() => {}} />
-            <Item icon=""  label="Selection filter"                        disabled />
-            <Item icon=""  label="History"                                 disabled />
-            <Item icon=""  label="Navigator"                               disabled />
+            <Item icon=""  label="Selection filter"                        disabled soon />
+            <Item icon=""  label="History"                                 disabled soon />
+            <Item icon=""  label="Navigator"                               disabled soon />
             <Sep />
             <Item icon={<PianoIcon size={14} strokeWidth={2} />} label="Piano keyboard"   shortcut="P"
               onClick={() => setShowPiano(v => !v)} />
-            <Item icon=""  label="Mixer"              shortcut="F10"      disabled />
-            <Item icon=""  label="Playback setup"                         disabled />
+            <Item icon=""  label="Mixer"              shortcut="F10"      disabled soon />
+            <Item icon=""  label="Playback setup"                         disabled soon />
             <Sep />
-            <Item icon=""  label="Toolbars"           arrow               disabled />
-            <Item icon=""  label="Workspaces"         arrow               disabled />
+            <Item icon=""  label="Toolbars"           arrow               disabled soon />
+            <Item icon=""  label="Workspaces"         arrow               disabled soon />
             <Sep />
             <CheckItem checked={darkMode} label="Dark mode"
               onClick={() => { const n=!darkMode; setDarkMode(n); localStorage.setItem('faithscore_dark',n?'1':'0') }} />
@@ -945,16 +954,16 @@ export default function App() {
 
           // ── ADD ────────────────────────────────────────────────────────────
           const addMenu = <>
-            <Item icon="♩"  label="Notes"             arrow               disabled />
-            <Item icon=""   label="Intervals"         arrow               disabled />
-            <Item icon=""   label="Tuplets"           arrow               disabled />
+            <Item icon="♩"  label="Notes"             arrow               disabled soon />
+            <Item icon=""   label="Intervals"         arrow               disabled soon />
+            <Item icon=""   label="Tuplets"           arrow               disabled soon />
             <Sep />
             <Item icon=""   label="Measures"          arrow>
             </Item>
             <Label text="Measures" />
             <Item icon=""   label="Insert measure"    shortcut="Ins"
               onClick={addMeasure} />
-            <Item icon=""   label="Insert measures…"                      disabled />
+            <Item icon=""   label="Insert measures…"                      disabled soon />
             <Item icon=""   label="Append measure"    shortcut="Ctrl+B"
               onClick={addMeasure} />
             <Item icon=""   label="Append measures…"
@@ -966,8 +975,8 @@ export default function App() {
                 for (let i = 0; i < n; i++) addMeasure()
               }} />
             <Sep />
-            <Item icon=""   label="Frames"            arrow               disabled />
-            <Item icon=""   label="Text"              arrow               disabled />
+            <Item icon=""   label="Frames"            arrow               disabled soon />
+            <Item icon=""   label="Text"              arrow               disabled soon />
             <Sep />
             <Label text="Lines & markings" />
             <Item icon="⌢"  label="Tie"              shortcut="T"
@@ -984,12 +993,12 @@ export default function App() {
                 const letter = prompt('Rehearsal mark letter:', 'A')
                 if (letter) useScoreStore.getState().addRehearsalMark(idx, letter.trim().slice(0,3))
               }} />
-            <Item icon=""   label="Chords and fretboard diagrams" arrow   disabled />
+            <Item icon=""   label="Chords and fretboard diagrams" arrow   disabled soon />
           </>
 
           // ── FORMAT ─────────────────────────────────────────────────────────
           const formatMenu = <>
-            <Item icon=""  label="Style…"                                  disabled />
+            <Item icon=""  label="Style…"                                  disabled soon />
             <Item icon=""  label="Page settings…"
               onClick={() => setShowPageSettings(true)} />
             <CheckItem label="Automatic layout (fit to width)"
@@ -1004,7 +1013,7 @@ export default function App() {
                   useScoreStore.getState().setAutoLayout(false)
                 }
               }} />
-            <Item icon=""  label="Stretch"            arrow               disabled />
+            <Item icon=""  label="Stretch"            arrow               disabled soon />
             <Sep />
             <Item icon=""  label="Transpose up ½ step"  shortcut="Ctrl+↑"
               onClick={() => transposeSelection(1)} />
@@ -1016,16 +1025,16 @@ export default function App() {
               onClick={() => transposeSelection(-12)} />
             <Sep />
             <Item icon=""  label="Reset text style overrides"
-              onClick={() => {}} disabled />
+              onClick={() => {}} disabled soon />
             <Item icon=""  label="Reset beams"
-              onClick={() => {}} disabled />
+              onClick={() => {}} disabled soon />
             <Item icon=""  label="Reset shapes and positions" shortcut="Ctrl+R"
-              onClick={() => {}} disabled />
+              onClick={() => {}} disabled soon />
             <Item icon=""  label="Reset entire score to default layout"
-              onClick={() => {}} disabled />
+              onClick={() => {}} disabled soon />
             <Sep />
-            <Item icon=""  label="Load style…"                            disabled />
-            <Item icon=""  label="Save style…"                            disabled />
+            <Item icon=""  label="Load style…"                            disabled soon />
+            <Item icon=""  label="Save style…"                            disabled soon />
           </>
 
           // ── TOOLS ──────────────────────────────────────────────────────────
@@ -1036,24 +1045,24 @@ export default function App() {
                 const n = parseInt(s)
                 if (!isNaN(n) && n !== 0) transposeSelection(n)
               }} />
-            <Item icon=""  label="Explode"                                disabled />
-            <Item icon=""  label="Implode"                                disabled />
-            <Item icon=""  label="Realize chord symbols"                  disabled />
-            <Item icon=""  label="Voices"             arrow               disabled />
-            <Item icon=""  label="Measures"           arrow               disabled />
+            <Item icon=""  label="Explode"                                disabled soon />
+            <Item icon=""  label="Implode"                                disabled soon />
+            <Item icon=""  label="Realize chord symbols"                  disabled soon />
+            <Item icon=""  label="Voices"             arrow               disabled soon />
+            <Item icon=""  label="Measures"           arrow               disabled soon />
             <Sep />
             <Item icon={<Trash2 size={14} strokeWidth={2} />} label="Remove selected range" shortcut="Ctrl+Del"
               onClick={() => { if(selectedMeasureIndex!==null) deleteMeasureColumn(selectedMeasureIndex) }} />
-            <Item icon=""  label="Fill with slashes"                      disabled />
-            <Item icon=""  label="Toggle rhythmic slash notation"         disabled />
+            <Item icon=""  label="Fill with slashes"                      disabled soon />
+            <Item icon=""  label="Toggle rhythmic slash notation"         disabled soon />
             <Sep />
-            <Item icon=""  label="Change enharmonic spelling"  shortcut="J" disabled />
-            <Item icon=""  label="Optimize enharmonic spelling"           disabled />
-            <Item icon=""  label="Regroup rhythms"                        disabled />
-            <Item icon=""  label="Resequence rehearsal marks"             disabled />
+            <Item icon=""  label="Change enharmonic spelling"  shortcut="J" disabled soon />
+            <Item icon=""  label="Optimize enharmonic spelling"           disabled soon />
+            <Item icon=""  label="Regroup rhythms"                        disabled soon />
+            <Item icon=""  label="Resequence rehearsal marks"             disabled soon />
             <Sep />
             <Item icon=""  label="Remove empty trailing measures"
-              onClick={() => {}} disabled />
+              onClick={() => {}} disabled soon />
             <Sep />
             <Label text="AI Features" />
             <Item icon={<Sparkles size={14} strokeWidth={2} />} label="AI: Generate melody…"
