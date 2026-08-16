@@ -612,7 +612,7 @@ export default function App() {
       if (e.key === 'm' || e.key === 'M') { addMeasure(); return }
       if (e.key === 'p' || e.key === 'P') { setShowPiano(v => !v); return }
       // T3 or just '3' in note mode = insert triplet of current duration
-      if ((e.key === '3') && inputMode === 'note') { e.preventDefault(); insertTriplet(st().selectedDuration); return }
+      if ((e.key === '3') && inputMode === 'note') { e.preventDefault(); insertTriplet(); return }
 
       // Undo / Redo
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return }
@@ -984,7 +984,7 @@ export default function App() {
             <Item icon="⌣"  label="Slur"             shortcut="S"
               onClick={toggleSlurStart} />
             <Item icon="³"  label="Triplet"
-              onClick={() => insertTriplet(selectedDuration)} />
+              onClick={() => insertTriplet()} />
             <Sep />
             <Item icon=""   label="Add rehearsal mark"
               onClick={() => {

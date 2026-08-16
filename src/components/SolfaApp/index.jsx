@@ -219,6 +219,7 @@ export default function SolfaApp({ user, onGoHome }) {
   const navigateEvent = useSolfaStore((s) => s.navigateEvent);
   const slurStart = useSolfaStore((s) => s.slurStart);
   const clearSlurStart = useSolfaStore((s) => s.clearSlurStart);
+  const insertTriplet = useSolfaStore((s) => s.insertTriplet);
   const tieStart = useSolfaStore((s) => s.tieStart);
   const clearTieStart = useSolfaStore((s) => s.clearTieStart);
 
@@ -978,6 +979,18 @@ export default function SolfaApp({ user, onGoHome }) {
             title="Tie two notes of the SAME pitch: click the first, then the second. Click a tie to delete."
           >
             ⌣ Tie
+          </button>
+          <button
+            style={abtn(false, "#b45309")}
+            disabled={selectedBeatIdx === null}
+            onClick={() => {
+              if (selectedPartId != null && selectedMeasureIdx != null && selectedBeatIdx != null) {
+                insertTriplet(selectedPartId, selectedMeasureIdx, selectedBeatIdx);
+              }
+            }}
+            title="Triplet: select a beat, then click to split it into 3 equal parts (d'r'm)"
+          >
+            ³ Triplet
           </button>
         </div>
         {inputMode === "slur" && (

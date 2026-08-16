@@ -1550,35 +1550,51 @@ export const useScoreStore = create((set, get) => ({
   // Inserts 3 notes of duration `baseDuration` as a triplet (each = 2/3 of base)
   // into the selected measure at the current cursor position.
   // e.g. baseDuration='q' → 3 quarter-note triplets filling 2 beats
-  insertTriplet: (baseDuration) => {
-    const { selectedPartId, selectedMeasureIndex } = get()
-    if (selectedMeasureIndex === null) return
-    get()._snapshot()
+  // Divides the CURRENTLY SELECTED note/rest into 3 equal triplet parts —
+  // e.g. select a quarter-note-long rest (one beat in 4/4), click Triplet,
+  // and it becomes 3 eighth-note-triplet rests filling that same beat,
+  // ready for pitches to be typed into each. This does NOT use the
+  // toolbar's globally-selected duration preset — it reads the actual
+  // selected note/rest's own duration, since that's the "beat" the user
+  // is pointing at.
+  insertTriplet: () => {
+    const { selectedPartId, selectedMeasureIndex, selectedNoteId } = get()
+    if (selectedMeasureIndex === null || !selectedNoteId) return
 
     const part    = get().score.parts.find(p => p.id === selectedPartId)
     const measure = part?.measures[selectedMeasureIndex]
     if (!measure) return
 
-    // Each triplet note = 2/3 of the base duration
-    const key = baseDuration + 't'
-    const tripletBeats = DURATION_BEATS[key] || (DURATION_BEATS[baseDuration] * 2/3)
-    const totalBeats   = tripletBeats * 3  // = 2 × base
-
-    // Find a rest slot big enough to fit the triplet group
     const nonChord = measure.notes.filter(n => !n.chordWith)
-    let targetRest = null
-    for (const n of nonChord) {
-      if (n.isRest && noteDuration(n) >= totalBeats - 0.001) {
-        targetRest = n; break
-      }
+    const target = nonChord.find(n => n.id === selectedNoteId)
+    if (!target) return
+
+    const targetBeats = noteDuration(target)
+
+    // The triplet's base note value is whichever standard duration's beat
+    // length is closest to HALF the selected note's duration — e.g.
+    // selecting a quarter (1 beat) picks '8' (eighth, 0.5 beats), since
+    // 3 eighth-triplets (each 1/3 beat) fill exactly 1 beat = 2 eighths'
+    // worth. This generalizes to any selected duration, not just quarters.
+    const CANDIDATES = ['w', 'h', 'q', '8', '16', '32', '64']
+    let baseDuration = 'q'
+    let bestDiff = Infinity
+    for (const c of CANDIDATES) {
+      const diff = Math.abs(DURATION_BEATS[c] - targetBeats / 2)
+      if (diff < bestDiff) { bestDiff = diff; baseDuration = c }
     }
-    if (!targetRest) return  // no space
 
-    const restBeats  = noteDuration(targetRest)
-    const leftover   = restBeats - totalBeats
-    const groupId    = crypto.randomUUID()  // shared ID links the 3 notes as a triplet
+    const key = baseDuration + 't'
+    const tripletBeats = DURATION_BEATS[key] || (DURATION_BEATS[baseDuration] * 2 / 3)
+    const totalBeats   = tripletBeats * 3
 
-    const tripletNotes = [0,1,2].map(i => ({
+    // Only proceed if the triplet actually fits the selected note's exact
+    // duration — otherwise silently bail rather than corrupt the measure.
+    if (Math.abs(totalBeats - targetBeats) > 0.01) return
+
+    get()._snapshot()
+    const groupId = crypto.randomUUID()
+    const tripletNotes = [0, 1, 2].map(i => ({
       id: crypto.randomUUID(),
       isRest: true,
       pitch: null,
@@ -1593,14 +1609,14 @@ export const useScoreStore = create((set, get) => ({
     }))
 
     get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) => {
-      const idx      = notes.findIndex(n => n.id === targetRest.id)
-      const before   = notes.slice(0, idx)
-      const after    = notes.slice(idx + 1).filter(n => !n.isRest)
-      const leftovers = leftover > 0.001 ? makeRests(leftover, `trip_after`) : []
-      return [...before, ...tripletNotes, ...leftovers, ...after]
+      const idx    = notes.findIndex(n => n.id === target.id)
+      const before = notes.slice(0, idx)
+      const after  = notes.slice(idx + 1)
+      return [...before, ...tripletNotes, ...after]
     })
 
-    // Select the first triplet note
+    // Select the first triplet slot so the user can start typing pitches
+    // straight into it.
     set({ selectedNoteId: tripletNotes[0].id })
     saveToStorage(get().score)
   },

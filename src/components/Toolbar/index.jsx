@@ -117,7 +117,7 @@ export default function Toolbar() {
       </Btn>
 
       {/* Triplet */}
-      <Btn active={false} onClick={()=>insertTriplet(selectedDuration)} title="Triplet">
+      <Btn active={false} onClick={()=>insertTriplet()} title="Triplet: select a note/rest, then click to split it into 3 equal parts">
         <span style={{fontSize:11, fontWeight:900, fontFamily:'monospace'}}>³</span>
       </Btn>
 

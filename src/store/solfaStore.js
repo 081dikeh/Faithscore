@@ -493,6 +493,43 @@ export const useSolfaStore = create((set,get) => ({
     })
   },
 
+  // ── Triplet (tonic sol-fa: three equal parts of one beat, e.g. d'r'm) ──────
+  // Replaces the ENTIRE selected beat with 3 empty rest slots that share a
+  // tuplet tag — the renderer separates them with an apostrophe (') instead
+  // of the normal comma/dot subdivision marks, matching standard tonic
+  // sol-fa triplet notation. Each slot's `duration` is 4/3 (three equal
+  // thirds of a beat's 4 quarter-units) — deliberately non-integer, but the
+  // three always sum to exactly one beat's capacity, so nothing downstream
+  // that already sums event durations needs to change.
+  insertTriplet: (partId, measureIdx, beatIdx) => {
+    get()._snapshot()
+    const groupId = uid()
+    set(s => {
+      const parts = s.score.parts.map(p => {
+        if (p.id !== partId) return p
+        const measures = p.measures.map((m, mi) => {
+          if (mi !== measureIdx) return m
+          const beats = m.beats.map((b, bi) => {
+            if (bi !== beatIdx) return b
+            const events = [0, 1, 2].map(i => ({
+              ...makeEvent('rest', 4 / 3, null, 0, null),
+              tuplet: { num: 3, den: 2, groupId },
+              tripletIndex: i,
+              tripletOf: 3,
+            }))
+            return { ...b, events }
+          })
+          return { ...m, beats }
+        })
+        return { ...p, measures }
+      })
+      return { score: { ...s.score, parts } }
+    })
+    // Select the first triplet slot so the user can start typing pitches
+    // straight into it.
+    set({ selectedPartId: partId, selectedMeasureIdx: measureIdx, selectedBeatIdx: beatIdx, selectedEventIdx: 0 })
+  },
+
   // Place a sustain/hold into the beat at beatOffset
   placeSustain: (partId,measureIdx,beatIdx,beatOffset,duration) => {
     const st=get()

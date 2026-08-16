@@ -21,6 +21,7 @@ import {
   DURATION_BEATS,
   noteDuration,
   measureCapacity,
+  keySignatureAccidentals,
 } from "../../store/scoreStore";
 
 const MEASURES_PER_LINE = 5;
@@ -105,6 +106,44 @@ function keyNumToVexflow(num) {
   return map[String(num)] ?? "C";
 }
 
+// keySignatureAccidentals() is imported from scoreStore.js — the shared
+// music-theory module also used by chromatic note entry, so both agree on
+// exactly which letters a key signature alters.
+
+// ── Tie / slur curve geometry ────────────────────────────────────────────────
+// A longer tie or slur should get LONGER, not dramatically DEEPER — using
+// unbounded `distance * factor` produces absurdly tall arcs on wide gaps.
+// Depth is a small base amount plus a shallow slope on distance, clamped to
+// a sane min/max. Ties and slurs are tuned separately on purpose: a tie is
+// short/tight/closely bound to its two noteheads (same pitch, duration
+// glue), while a slur is a broader, more graceful phrase arc that can span
+// many notes — so it gets a taller base depth and ceiling.
+function clampVal(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+const TIE_BASE_DEPTH = 6;
+const TIE_DEPTH_FACTOR = 0.045;
+const TIE_MIN_DEPTH = 6;
+const TIE_MAX_DEPTH = 15;
+function tieCurveDepth(distancePx) {
+  return clampVal(
+    TIE_BASE_DEPTH + distancePx * TIE_DEPTH_FACTOR,
+    TIE_MIN_DEPTH,
+    TIE_MAX_DEPTH,
+  );
+}
+const SLUR_BASE_DEPTH = 14;
+const SLUR_DEPTH_FACTOR = 0.075;
+const SLUR_MIN_DEPTH = 14;
+const SLUR_MAX_DEPTH = 38;
+function slurCurveDepth(distancePx) {
+  return clampVal(
+    SLUR_BASE_DEPTH + distancePx * SLUR_DEPTH_FACTOR,
+    SLUR_MIN_DEPTH,
+    SLUR_MAX_DEPTH,
+  );
+}
+
 // ── Stem direction helper ────────────────────────────────────────────────────
 // Returns 1 (up) or -1 (down) based on note position relative to middle line.
 // Standard engraving rule:
@@ -156,7 +195,7 @@ function stemDir(note, chordExtras, clef) {
   return 1;
 }
 
-function buildVfNote(n, clef, isSelected, chordExtras = []) {
+function buildVfNote(n, clef, isSelected, chordExtras = [], keySigAccidentals = {}, accidentalState = {}) {
   const restKeyMap = REST_KEYS[clef] || REST_KEYS.treble;
   const restKey = restKeyMap[n.duration] || restKeyMap["8"]; // per-duration position
   const clefOpt = clef === "bass" ? { clef: "bass" } : {};
@@ -201,8 +240,23 @@ function buildVfNote(n, clef, isSelected, chordExtras = []) {
     sn.setStyle({ fillStyle: "#0d9488", strokeStyle: "#0d9488" });
 
   allNotes.forEach((nn, ki) => {
-    if (nn.pitch?.accidental)
-      sn.addModifier(new Accidental(nn.pitch.accidental), ki);
+    if (!nn.pitch) return;
+    const letter = nn.pitch.step;
+    const octave = nn.pitch.octave;
+    const stateKey = `${letter}${octave}`;
+    const actual = nn.pitch.accidental || null; // '#' | 'b' | null (natural)
+    // What's already "in effect" for this exact letter+octave: an earlier
+    // accidental on the SAME pitch this bar (accidentals only carry within
+    // one bar and don't cross octaves), or — if nothing's overridden it
+    // yet — whatever the key signature itself implies for that letter.
+    const implied = Object.prototype.hasOwnProperty.call(accidentalState, stateKey)
+      ? accidentalState[stateKey]
+      : keySigAccidentals[letter] || null;
+    if (actual !== implied) {
+      // VexFlow's accidental code for "natural" (cancel a sharp/flat) is 'n'.
+      sn.addModifier(new Accidental(actual || "n"), ki);
+    }
+    accidentalState[stateKey] = actual;
   });
 
   if (n.lyric) {
@@ -340,9 +394,27 @@ export default function ScoreRenderer() {
 
     // First-measure overhead: clef + key sig + time sig
     function getGlyphOverhead(colIdx, isFirstInLine) {
-      if (!isFirstInLine) return SP * 1.2;
-      const keySig = score.parts[0]?.measures[colIdx]?.keySignature ?? 0;
-      return SP * 2.2 + Math.abs(keySig) * SP * 0.7 + SP * 1.6 + SP * 0.6;
+      if (isFirstInLine) {
+        const keySig = score.parts[0]?.measures[colIdx]?.keySignature ?? 0;
+        return SP * 2.2 + Math.abs(keySig) * SP * 0.7 + SP * 1.6 + SP * 0.6;
+      }
+      // Mid-line meter/key change: reserve room for whichever glyphs
+      // actually land on this bar, even though it isn't first in its line.
+      const prevTs = score.parts[0]?.measures[colIdx - 1]?.timeSignature;
+      const thisTs = score.parts[0]?.measures[colIdx]?.timeSignature;
+      const tsChanged =
+        prevTs && thisTs &&
+        (prevTs.beats !== thisTs.beats || prevTs.beatType !== thisTs.beatType);
+      const prevKs = score.parts[0]?.measures[colIdx - 1]?.keySignature ?? 0;
+      const thisKs = score.parts[0]?.measures[colIdx]?.keySignature ?? 0;
+      const keyChanged = prevKs !== thisKs;
+
+      let overhead = SP * 1.2;
+      if (keyChanged) {
+        overhead += (Math.abs(thisKs) + Math.abs(prevKs)) * SP * 0.7 + SP * 0.4;
+      }
+      if (tsChanged) overhead += SP * 1.6 + SP * 0.4;
+      return overhead;
     }
 
     // ── Dynamic line breaking (MuseScore-style) ───────────────────────────────
@@ -500,10 +572,45 @@ export default function ScoreRenderer() {
           const stave = new Stave(x, partY, width);
           if (isFirst) {
             stave.addClef(clef);
-            stave.addKeySignature(keyNumToVexflow(measure.keySignature ?? 0));
+            // Courtesy cancellation: if this line's opening key differs
+            // from whatever was active in the immediately preceding bar
+            // (i.e. we're picking up mid-modulation, not just restating
+            // the same key at a new system), show natural signs for the
+            // old key's accidentals before the new key signature.
+            const prevKeyAtLineStart = part.measures[col - 1]?.keySignature;
+            const openingKeyChanged =
+              prevKeyAtLineStart !== undefined &&
+              prevKeyAtLineStart !== (measure.keySignature ?? 0);
+            stave.addKeySignature(
+              keyNumToVexflow(measure.keySignature ?? 0),
+              openingKeyChanged ? keyNumToVexflow(prevKeyAtLineStart) : undefined,
+            );
             stave.addTimeSignature(
               `${measure.timeSignature.beats}/${measure.timeSignature.beatType}`,
             );
+          } else {
+            // Mid-line meter/key change — VexFlow only auto-shows clef/key/
+            // time at a line's first measure, so a change landing further
+            // along the same system needs its glyph added explicitly here.
+            const prevKs = part.measures[col - 1]?.keySignature ?? 0;
+            const thisKs = measure.keySignature ?? 0;
+            const keyChanged = prevKs !== thisKs;
+            if (keyChanged) {
+              stave.addKeySignature(
+                keyNumToVexflow(thisKs),
+                keyNumToVexflow(prevKs),
+              );
+            }
+            const prevTs = part.measures[col - 1]?.timeSignature;
+            const tsChanged =
+              prevTs &&
+              (prevTs.beats !== measure.timeSignature.beats ||
+                prevTs.beatType !== measure.timeSignature.beatType);
+            if (tsChanged) {
+              stave.addTimeSignature(
+                `${measure.timeSignature.beats}/${measure.timeSignature.beatType}`,
+              );
+            }
           }
 
           // ── Custom barline (applies to every part's stave in this column,
@@ -581,12 +688,19 @@ export default function ScoreRenderer() {
           }
 
           try {
+            // Fresh per-measure accidental tracking — an accidental only
+            // stays "in effect" for the rest of THIS bar, so this must
+            // reset every measure, not persist across the piece.
+            const keySigAccidentals = keySignatureAccidentals(measure.keySignature ?? 0);
+            const accidentalState = {};
             const vfNotes = renderSeq.map((n) =>
               buildVfNote(
                 n,
                 clef,
                 n.id === selectedNoteId,
                 chordMap[n.id] || [],
+                keySigAccidentals,
+                accidentalState,
               ),
             );
 
@@ -975,7 +1089,12 @@ export default function ScoreRenderer() {
             const drawTieCanvas = (x1, y1, x2, y2, stemUp) => {
               try {
                 ctx.save();
-                const bow = stemUp ? 12 : -12; // arc direction and height
+                // Depth scales gently with distance between the two
+                // noteheads (clamped) rather than a fixed 12px for every
+                // tie regardless of how far apart the notes are.
+                const dist = Math.abs(x2 - x1);
+                const depth = tieCurveDepth(dist);
+                const bow = stemUp ? depth : -depth; // arc direction and height
                 const INS = 3; // inset so arc starts near notehead center
                 const lx1 = x1 + INS;
                 const lx2 = x2 - INS;
@@ -1078,8 +1197,18 @@ export default function ScoreRenderer() {
               try {
                 stemUp = vfNotes[ni].getStemDirection() === 1;
               } catch (_) {}
-              // Slur bows OPPOSITE to stem: stem up → slur below; stem down → slur above
-              const cpY = stemUp ? 20 : -20;
+              // Slur bows OPPOSITE to stem: stem up → slur below; stem down → slur above.
+              // Depth scales gently with the distance between the two
+              // notes (clamped) — a slur spanning many notes gets wider,
+              // not dramatically taller.
+              let slurDist = 80; // sane fallback if position lookup fails
+              try {
+                slurDist = Math.abs(
+                  vfNotes[endIdx].getAbsoluteX() - vfNotes[ni].getAbsoluteX(),
+                );
+              } catch (_) {}
+              const slurDepth = slurCurveDepth(slurDist);
+              const cpY = stemUp ? slurDepth : -slurDepth;
 
               try {
                 new Curve(vfNotes[ni], vfNotes[endIdx], {
@@ -1109,9 +1238,11 @@ export default function ScoreRenderer() {
                 }
                 try {
                   ctx.save();
+                  const fallbackDist = Math.abs(sx2 - sx1);
+                  const fallbackDepth = slurCurveDepth(fallbackDist);
                   const ey = stemUp
-                    ? Math.max(sy1, sy2) + 16
-                    : Math.min(sy1, sy2) - 16;
+                    ? Math.max(sy1, sy2) + fallbackDepth
+                    : Math.min(sy1, sy2) - fallbackDepth;
                   ctx.beginPath();
                   ctx.moveTo(sx1, sy1);
                   ctx.bezierCurveTo(

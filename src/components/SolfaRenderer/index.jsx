@@ -100,6 +100,19 @@ function getSuffix(offset, duration, isLast) {
   return "";
 }
 
+// Triplet-aware wrapper: a triplet member (3 equal parts of one beat,
+// tagged via ev.tuplet) is separated from its siblings with an inverted
+// comma/apostrophe (') instead of the normal comma/dot subdivision marks —
+// standard tonic sol-fa triplet notation, e.g. "d'r'm". Falls through to
+// the ordinary getSuffix() for everything else.
+function getEventSuffix(ev, offset, duration, isLast) {
+  if (ev?.tuplet) {
+    const end = offset + duration;
+    return end >= 4 - 0.01 || isLast ? "" : "'";
+  }
+  return getSuffix(offset, duration, isLast);
+}
+
 function measureWidth(measure, slashSet) {
   if (!measure?.beats?.length) return PAD * 2 + QW * 4 * 4 + SEP_W * 3;
   const nb = measure.beats.length;
@@ -113,7 +126,7 @@ function measureWidth(measure, slashSet) {
       const isRest = ev.type === "rest";
       const isLast = ei === events.length - 1;
       const pre = isRest ? "" : getPrefix(offset);
-      const suf = isRest ? "" : getSuffix(offset, ev.duration, isLast);
+      const suf = isRest ? "" : getEventSuffix(ev, offset, ev.duration, isLast);
       beatW += pre.length * SYM_W + ev.duration * QW + suf.length * SYM_W;
       offset += ev.duration;
     });
@@ -577,7 +590,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
               const pre = isRest ? "" : getPrefix(offset);
               const suf = isRest
                 ? ""
-                : getSuffix(offset, ev.duration, isLastEv);
+                : getEventSuffix(ev, offset, ev.duration, isLastEv);
               const preW = pre.length * SYM_W * sc3;
               const bodyW = ev.duration * QW * sc3;
               const sufW = suf.length * SYM_W * sc3;
