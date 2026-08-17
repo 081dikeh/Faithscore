@@ -429,6 +429,38 @@ export const useSolfaStore = create((set,get) => ({
   //   But the simplest correct model:
   //   - placeEvent inserts at beatOffset (quarter-unit offset within beat).
   //   - It removes any events that overlap, then fills the rest with rests.
+  // Directly sets ONE event by index — preserves that event's existing
+  // duration/tuplet tags untouched. placeEvent() (below) rebuilds the whole
+  // beat around a beatOffset+duration from the toolbar's global duration
+  // preset, which works for normal input but is WRONG for a triplet slot:
+  // it would overwrite the slot's 4/3 duration with the preset's value and
+  // silently drop the tuplet tag from neighbouring slots during its gap-
+  // filling pass. Used specifically when the selected event is a triplet
+  // member (see doInsert/doRest/doSustain in SolfaApp).
+  setEventInPlace: (partId, measureIdx, beatIdx, eventIdx, type, syllable, octave) => {
+    get()._snapshot()
+    set(s => {
+      const parts = s.score.parts.map(p => {
+        if (p.id !== partId) return p
+        const measures = p.measures.map((m, mi) => {
+          if (mi !== measureIdx) return m
+          const beats = m.beats.map((b, bi) => {
+            if (bi !== beatIdx) return b
+            const events = (b.events || []).map((ev, ei) =>
+              ei === eventIdx
+                ? { ...ev, type, syllable: syllable || null, octave: octave || 0 }
+                : ev,
+            )
+            return { ...b, events }
+          })
+          return { ...m, beats }
+        })
+        return { ...p, measures }
+      })
+      return { score: { ...s.score, parts } }
+    })
+  },
+
   placeEvent: (partId,measureIdx,beatIdx,beatOffset,syllable,duration) => {
     get()._snapshot()
     const st=get()

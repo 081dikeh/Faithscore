@@ -209,6 +209,7 @@ export default function SolfaApp({ user, onGoHome }) {
   const setTitle    = useSolfaStore((s) => s.setTitle);
   const setComposer = useSolfaStore((s) => s.setComposer);
   const placeEvent = useSolfaStore((s) => s.placeEvent);
+  const setEventInPlace = useSolfaStore((s) => s.setEventInPlace);
   const placeSustain = useSolfaStore((s) => s.placeSustain);
   const changeEventDuration = useSolfaStore((s) => s.changeEventDuration);
   const addMeasure = useSolfaStore((s) => s.addMeasure);
@@ -352,6 +353,17 @@ export default function SolfaApp({ user, onGoHome }) {
   const dispDur = selectedEvent ? selectedEvent.duration : selDuration;
 
   // ── Insert note at current cursor ──────────────────────────────────────────
+  // Is the currently selected event a triplet member? If so, its duration
+  // (4/3) and tuplet tag must be preserved — placeEvent()'s offset/duration
+  // rebuild logic doesn't know about triplets and would corrupt the group.
+  function getSelectedEvent() {
+    if (selectedPartId === null || selectedMeasureIdx === null || selectedBeatIdx === null || selectedEventIdx === null)
+      return null;
+    const part = score.parts.find((p) => p.id === selectedPartId);
+    const beat = part?.measures[selectedMeasureIdx]?.beats[selectedBeatIdx];
+    return beat?.events?.[selectedEventIdx] || null;
+  }
+
   function doInsert(syllable) {
     if (
       selectedPartId === null ||
@@ -359,6 +371,13 @@ export default function SolfaApp({ user, onGoHome }) {
       selectedBeatIdx === null
     )
       return;
+    const selEv = getSelectedEvent();
+    if (selEv?.tuplet) {
+      const st = useSolfaStore.getState();
+      setEventInPlace(selectedPartId, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx, 'note', syllable, st.selectedOctave);
+      setTimeout(() => navigateEvent("right"), 0);
+      return;
+    }
     const offset = getCursorOffset();
     const st = useSolfaStore.getState();
     placeEvent(
@@ -380,6 +399,12 @@ export default function SolfaApp({ user, onGoHome }) {
       selectedBeatIdx === null
     )
       return;
+    const selEv = getSelectedEvent();
+    if (selEv?.tuplet) {
+      setEventInPlace(selectedPartId, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx, 'rest', null, 0);
+      setTimeout(() => navigateEvent("right"), 0);
+      return;
+    }
     const offset = getCursorOffset();
     const st = useSolfaStore.getState();
     // Place a rest event (type='rest', no syllable)
@@ -401,6 +426,12 @@ export default function SolfaApp({ user, onGoHome }) {
       selectedBeatIdx === null
     )
       return;
+    const selEv = getSelectedEvent();
+    if (selEv?.tuplet) {
+      setEventInPlace(selectedPartId, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx, 'sustain', null, 0);
+      setTimeout(() => navigateEvent("right"), 0);
+      return;
+    }
     const offset = getCursorOffset();
     const st = useSolfaStore.getState();
     placeSustain(

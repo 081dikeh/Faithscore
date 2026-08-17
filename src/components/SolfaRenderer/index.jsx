@@ -576,6 +576,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
             beatPosMap.current[`${part.id}:${col}:${bi}`] = { x, rowY };
 
             let offset = 0;
+            let tripletBracketStartX = null; // tracks span of a triplet group for its "3" bracket
             events.forEach((ev, ei) => {
               const isNote = ev.type === "note";
               const isHold = ev.type === "sustain";
@@ -598,6 +599,51 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
 
               const noteX = x + preW;
               const noteCX = noteX + bodyW / 2;
+
+              // Triplet "3" bracket — spans from the first to the last
+              // member of the group, drawn once the group is complete.
+              // Matches standard engraving: a shallow curved bracket with
+              // the number centered above it.
+              if (ev.tuplet) {
+                if (ev.tripletIndex === 0) {
+                  tripletBracketStartX = noteCX;
+                }
+                if (
+                  ev.tripletIndex === (ev.tripletOf || 3) - 1 &&
+                  tripletBracketStartX !== null
+                ) {
+                  const bx1 = tripletBracketStartX;
+                  const bx2 = noteCX;
+                  const by = rowY - NOTE_SZ - 6;
+                  const midX = (bx1 + bx2) / 2;
+                  elems.push(
+                    <path
+                      key={`tripbracket-${ev.id}`}
+                      d={`M ${bx1} ${by} Q ${midX} ${by - 6} ${bx2} ${by}`}
+                      fill="none"
+                      stroke={C.label}
+                      strokeWidth={0.8}
+                      style={{ pointerEvents: "none" }}
+                    />,
+                  );
+                  elems.push(
+                    <text
+                      key={`tripnum-${ev.id}`}
+                      x={midX}
+                      y={by - 8}
+                      textAnchor="middle"
+                      fontFamily={FONT}
+                      fontSize={10}
+                      fontWeight={700}
+                      fill={C.label}
+                      style={{ pointerEvents: "none" }}
+                    >
+                      3
+                    </text>,
+                  );
+                  tripletBracketStartX = null;
+                }
+              }
 
               // Record note center position for slur drawing
               const posKey = `${part.id}:${col}:${bi}:${ei}`;
