@@ -37,7 +37,19 @@ import { useSolfaStore, solfaToMidi, migrateMeasure, resolveKeyAt } from '../sto
 // Using gleitz/midi-js-soundfonts hosted on GitHub (free, no CORS issues).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SF_BASE = 'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM'
+// MusyngKite instead of FluidR3_GM — same free/CORS-friendly soundfont
+// family, but MusyngKite's samples are recorded/looped with noticeably more
+// body and warmth. FluidR3_GM is the thin, synthetic-sounding one that was
+// the main source of "quality" complaints; this is a same-shape swap (same
+// note-naming convention, same folder layout) so nothing else has to change.
+//
+// IMPORTANT: serve from gleitz.github.io (GitHub Pages / Fastly CDN), NOT
+// raw.githubusercontent.com — raw.githubusercontent.com aggressively rate-
+// limits repeated requests and returned 503s for a full SATB score's worth
+// of sample loads, which broke playback entirely and desynced the cursor
+// from the (mostly silent/erroring) audio. GitHub Pages is a real CDN and
+// is what this soundfont is actually meant to be served from.
+const SF_BASE = 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite'
 
 const VOICE_PROGRAM = {
   soprano: 'choir_aahs',
@@ -286,15 +298,21 @@ function buildEQChain(vtype) {
 // not a pure tone) and goes Synth → Distortion (gentle, for harmonic
 // presence on small speakers) → Lowpass (tame the added harmonics) → Panner.
 // ─────────────────────────────────────────────────────────────────────────────
-function buildVoiceChannel(vtype, panPos, outputNode, onLoad) {
-  const program = VOICE_PROGRAM[vtype] || VOICE_PROGRAM.default
-  const notes   = SAMPLE_NOTES[vtype]  || SAMPLE_NOTES.default
+function buildVoiceChannel(vtype, panPos, outputNode, onLoad, presetId) {
+  // "Piano Solo" means piano — every part plays through real piano samples,
+  // not whatever choir voicing its label implies. Previously the preset only
+  // changed the reverb/volume params and left every SATB part on choir_aahs,
+  // so picking "Piano Solo" didn't actually change the instrument.
+  const soundType = presetId === 'piano' ? 'piano' : vtype
+
+  const program = VOICE_PROGRAM[soundType] || VOICE_PROGRAM.default
+  const notes   = SAMPLE_NOTES[soundType]  || SAMPLE_NOTES.default
   const urls    = buildSampleUrls(program, notes)
 
   const panner = new Tone.Panner(panPos).connect(outputNode)
-  const eq     = buildEQChain(vtype)
+  const eq     = buildEQChain(soundType)
 
-  const chorusSettings = VOICE_CHORUS[vtype]
+  const chorusSettings = VOICE_CHORUS[soundType]
   let chorus = null
   if (chorusSettings) {
     chorus = new Tone.Chorus(chorusSettings).start()
@@ -306,14 +324,21 @@ function buildVoiceChannel(vtype, panPos, outputNode, onLoad) {
 
   const sampler = new Tone.Sampler({
     urls,
-    attack:  VOICE_ATTACK[vtype]  ?? 0.06,
-    release: VOICE_RELEASE[vtype] ?? 0.5,
+    attack:  VOICE_ATTACK[soundType]  ?? 0.06,
+    release: VOICE_RELEASE[soundType] ?? 0.5,
     onload:  onLoad,
+    // If a sample 503s / fails to fetch, still count this voice as "loaded"
+    // rather than letting ensureGraph() sit at its load-gate for the full
+    // timeout — a missing top note on one voice shouldn't stall or desync
+    // the whole ensemble's playback.
+    onerror: onLoad,
   }).connect(eq.input)
 
-  // ── Sub-bass reinforcement layer (bass voice only) ──────────────────────
+  // ── Sub-bass reinforcement layer (bass voice only, and only for choir
+  // presets — the piano preset shouldn't get a synthesized sub-bass layer
+  // glued under it, a piano's low end is exactly what the samples give it) ──
   let subSynth = null, subDist = null, subLpf = null
-  if (vtype === 'bass') {
+  if (soundType === 'bass') {
     subSynth = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: 'fatsine', count: 3, spread: 12 },
       envelope:   { attack: 0.09, decay: 0.25, sustain: 0.85, release: 0.5 },
@@ -444,7 +469,7 @@ export function useSolfaPlayback() {
       const voice = buildVoiceChannel(vtype, panPos, partVol, () => {
         loadCount++
         if (loadCount >= totalParts) samplesLoadedRef.current = true
-      })
+      }, presetId)
       voicesRef.current[part.id] = voice
     }
 

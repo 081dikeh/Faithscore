@@ -522,17 +522,22 @@ export default function App() {
         if (!selNote?.isRest) {
           if (e.shiftKey && e.key === 'ArrowUp')   { e.preventDefault(); shiftPitchOctave(1);   return }
           if (e.shiftKey && e.key === 'ArrowDown')  { e.preventDefault(); shiftPitchOctave(-1);  return }
-          // Plain arrow = chromatic (semitone) — matches standard notation
-          // software (MuseScore etc.) and reaches every pitch, not just the
-          // 7 diatonic scale tones. Uses shiftPitchHalfStep, which spells
-          // the result correctly for the active key (via spellPitch), so
-          // it's never just a raw "always sharp" step. Alt+Arrow instead
-          // moves by one staff line/space (diatonic) for people who want
-          // to stay strictly inside the current key.
-          if (!e.shiftKey && !e.altKey && e.key === 'ArrowUp')   { e.preventDefault(); shiftPitchHalfStep(1);  return }
-          if (!e.shiftKey && !e.altKey && e.key === 'ArrowDown') { e.preventDefault(); shiftPitchHalfStep(-1); return }
-          if (e.altKey && e.key === 'ArrowUp')     { e.preventDefault(); shiftPitchStep(1);  return }
-          if (e.altKey && e.key === 'ArrowDown')   { e.preventDefault(); shiftPitchStep(-1); return }
+          // Plain arrow = diatonic (one staff line/space per press, using
+          // shiftPitchStep). This is the default because it's what everyday
+          // stepwise editing needs — moving a note from G down to D should
+          // feel like exactly 3 predictable presses, not 5 semitone presses
+          // interleaved with accidentals that make it look like the note is
+          // "jumping around" even though the underlying math is correct.
+          // Alt+Arrow = chromatic (semitone, via shiftPitchHalfStep) for
+          // reaching pitches outside the current key's 7 scale tones.
+          // (This binding was flipped once already — see FaithScore session
+          // notes. If chromatic access via Alt+Arrow ever feels buried,
+          // the real fix is a visible mode toggle, not swapping the
+          // default again.)
+          if (!e.shiftKey && !e.altKey && e.key === 'ArrowUp')   { e.preventDefault(); shiftPitchStep(1);  return }
+          if (!e.shiftKey && !e.altKey && e.key === 'ArrowDown') { e.preventDefault(); shiftPitchStep(-1); return }
+          if (e.altKey && e.key === 'ArrowUp')     { e.preventDefault(); shiftPitchHalfStep(1);  return }
+          if (e.altKey && e.key === 'ArrowDown')   { e.preventDefault(); shiftPitchHalfStep(-1); return }
         }
 
         if (e.key === 'ArrowLeft')  { e.preventDefault(); navigateNote(-1); return }
