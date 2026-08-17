@@ -356,10 +356,17 @@ export default function SolfaApp({ user, onGoHome }) {
   // Is the currently selected event a triplet member? If so, its duration
   // (4/3) and tuplet tag must be preserved — placeEvent()'s offset/duration
   // rebuild logic doesn't know about triplets and would corrupt the group.
+  // Reads score FRESH from the store rather than the component closure:
+  // this is called from the keydown listener, whose effect doesn't list
+  // `score` as a dependency, so its closure can go stale right after an
+  // action like insertTriplet() changes score without also changing
+  // selectedEventIdx (e.g. it's already 0) — which was silently causing
+  // the very first triplet slot to miss its tuplet tag entirely.
   function getSelectedEvent() {
     if (selectedPartId === null || selectedMeasureIdx === null || selectedBeatIdx === null || selectedEventIdx === null)
       return null;
-    const part = score.parts.find((p) => p.id === selectedPartId);
+    const freshScore = useSolfaStore.getState().score;
+    const part = freshScore.parts.find((p) => p.id === selectedPartId);
     const beat = part?.measures[selectedMeasureIdx]?.beats[selectedBeatIdx];
     return beat?.events?.[selectedEventIdx] || null;
   }

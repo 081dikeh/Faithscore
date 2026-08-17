@@ -522,16 +522,17 @@ export default function App() {
         if (!selNote?.isRest) {
           if (e.shiftKey && e.key === 'ArrowUp')   { e.preventDefault(); shiftPitchOctave(1);   return }
           if (e.shiftKey && e.key === 'ArrowDown')  { e.preventDefault(); shiftPitchOctave(-1);  return }
-          // Alt+Arrow = chromatic (semitone) fine adjustment — reaches
-          // notes outside the current key's diatonic scale. Plain arrow
-          // stays diatonic (one staff line/space per press, correctly
-          // spelled for the key) — that's what fixed the "notes skipping
-          // around" bug; this restores the ability to reach chromatic
-          // notes without reintroducing that bug for normal use.
-          if (e.altKey && e.key === 'ArrowUp')     { e.preventDefault(); shiftPitchHalfStep(1);  return }
-          if (e.altKey && e.key === 'ArrowDown')   { e.preventDefault(); shiftPitchHalfStep(-1); return }
-          if (!e.shiftKey && !e.altKey && e.key === 'ArrowUp')   { e.preventDefault(); shiftPitchStep(1);  return }
-          if (!e.shiftKey && !e.altKey && e.key === 'ArrowDown') { e.preventDefault(); shiftPitchStep(-1); return }
+          // Plain arrow = chromatic (semitone) — matches standard notation
+          // software (MuseScore etc.) and reaches every pitch, not just the
+          // 7 diatonic scale tones. Uses shiftPitchHalfStep, which spells
+          // the result correctly for the active key (via spellPitch), so
+          // it's never just a raw "always sharp" step. Alt+Arrow instead
+          // moves by one staff line/space (diatonic) for people who want
+          // to stay strictly inside the current key.
+          if (!e.shiftKey && !e.altKey && e.key === 'ArrowUp')   { e.preventDefault(); shiftPitchHalfStep(1);  return }
+          if (!e.shiftKey && !e.altKey && e.key === 'ArrowDown') { e.preventDefault(); shiftPitchHalfStep(-1); return }
+          if (e.altKey && e.key === 'ArrowUp')     { e.preventDefault(); shiftPitchStep(1);  return }
+          if (e.altKey && e.key === 'ArrowDown')   { e.preventDefault(); shiftPitchStep(-1); return }
         }
 
         if (e.key === 'ArrowLeft')  { e.preventDefault(); navigateNote(-1); return }
@@ -1294,7 +1295,7 @@ export default function App() {
         {[
           ['N','Note mode'], ['S','Select'], ['A–G','Natural note'],
           ['Enter','Chromatic'], ['1–6','Duration'], ['.','Dot'],
-          ['⇧+A–G','Chord'], ['J','Chord mode'], ['T','Tie'], ['↑↓','Diatonic step'], ['⌥↑↓','Chromatic'], ['⇧↑↓','Octave'],
+          ['⇧+A–G','Chord'], ['J','Chord mode'], ['T','Tie'], ['↑↓','Chromatic'], ['⌥↑↓','Diatonic step'], ['⇧↑↓','Octave'],
           ['←→','Navigate'], ['Del','Delete'], ['M','Add bar'],
           ['Ctrl+Z','Undo'], ['Ctrl+Y','Redo'], ['Ctrl+C','Copy bar'], ['Ctrl+V','Paste'],
           ['Ctrl+↑↓','Transpose ½'], ['Ctrl+←→','Transpose 8ve'],

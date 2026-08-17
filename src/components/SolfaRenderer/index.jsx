@@ -101,14 +101,14 @@ function getSuffix(offset, duration, isLast) {
 }
 
 // Triplet-aware wrapper: a triplet member (3 equal parts of one beat,
-// tagged via ev.tuplet) is separated from its siblings with an inverted
-// comma/apostrophe (') instead of the normal comma/dot subdivision marks —
-// standard tonic sol-fa triplet notation, e.g. "d'r'm". Falls through to
-// the ordinary getSuffix() for everything else.
+// tagged via ev.tuplet) is separated from its siblings with the same
+// comma used for a normal quarter-beat subdivision — not a special
+// character. The "3" bracket above the group is what marks it as a
+// triplet, not the separator itself.
 function getEventSuffix(ev, offset, duration, isLast) {
   if (ev?.tuplet) {
     const end = offset + duration;
-    return end >= 4 - 0.01 || isLast ? "" : "'";
+    return end >= 4 - 0.01 || isLast ? "" : ",";
   }
   return getSuffix(offset, duration, isLast);
 }
