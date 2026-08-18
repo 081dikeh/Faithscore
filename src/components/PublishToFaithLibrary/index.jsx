@@ -5,7 +5,7 @@
 // exportScorePdfBlob, same as Print already does).
 import { useEffect, useRef, useState } from 'react'
 import { X, Eye, EyeOff, UploadCloud, CheckCircle2, ExternalLink } from 'lucide-react'
-import { faithlibrary, getFaithLibrarySession, FAITHLIBRARY_UPLOAD_URL } from '../../lib/faithlibrary'
+import { faithlibrary, getFaithLibrarySession } from '../../lib/faithlibrary'
 import { exportScorePdfBlob } from '../../utils/exportScore'
 import { exportSolfaPdfBlob } from '../../utils/exportSolfa'
 
@@ -116,28 +116,45 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
         ? await exportSolfaPdfBlob(score, getSvgElement?.())
         : await exportScorePdfBlob(score)
 
-      const metadata = {
-        title: title.trim() || 'Untitled Score',
-        description: description.trim() || null,
-        category: 'score',
-        tags: [],
-        is_public: isPublic,
-        license_status: license,
-      }
+      const cleanTitle = title.trim() || 'Untitled Score'
 
-      const formData = new FormData()
-      formData.append('file', pdfBlob, `${metadata.title}.pdf`)
-      formData.append('metadata', JSON.stringify(metadata))
+      // Upload straight to FaithLibrary's Supabase Storage and insert the
+      // files row directly — same as FaithLibrary's own UploadForm does —
+      // rather than relaying the PDF through a Vercel serverless function.
+      // Vercel functions cap request bodies at 4.5MB, which a multi-page
+      // score PDF can easily exceed; going straight to Supabase Storage
+      // has no such limit and sidesteps CORS entirely, since we're calling
+      // Supabase's own API (which already handles it) instead of a
+      // same-origin-only Next.js route.
+      const storagePath = `${fresh.user.id}/${Date.now()}.pdf`
 
-      const res = await fetch(FAITHLIBRARY_UPLOAD_URL, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${fresh.access_token}` },
-        body: formData,
-      })
-      const body = await res.json()
-      if (!res.ok) throw new Error(body.error || `Publish failed (${res.status})`)
+      const { error: storageError } = await faithlibrary.storage
+        .from('faithlibrary-files')
+        .upload(storagePath, pdfBlob, { contentType: 'application/pdf', upsert: false })
+      if (storageError) throw new Error(storageError.message)
 
-      setPublished(body.file)
+      const { data: { publicUrl } } = faithlibrary.storage
+        .from('faithlibrary-files')
+        .getPublicUrl(storagePath)
+
+      const { data: fileRecord, error: dbError } = await faithlibrary
+        .from('files')
+        .insert({
+          user_id: fresh.user.id,
+          title: cleanTitle,
+          description: description.trim() || null,
+          category: 'score',
+          tags: [],
+          is_public: isPublic,
+          license_status: license,
+          file_url: publicUrl,
+          source: 'notation_app',
+        })
+        .select()
+        .single()
+      if (dbError) throw new Error(dbError.message)
+
+      setPublished(fileRecord)
     } catch (err) {
       setPublishError(err.message || 'Something went wrong publishing this score.')
     } finally {

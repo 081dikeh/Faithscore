@@ -21,7 +21,13 @@ export async function buildPdfFromSvgPages({
   if (!pages.length) throw new Error('Nothing to export yet — add some notes first.')
 
   const usableWmm = pageWmm - marginSide * 2
-  const pdf = new jsPDF({ unit: 'mm', format: [pageWmm, pageHmm] })
+  // compress: true enables jsPDF's internal deflate compression of content
+  // streams. It defaults to OFF, which is the main reason these PDFs were
+  // coming out tens of MB instead of a few hundred KB — every path command
+  // for every notehead/stem/beam gets written as verbose, uncompressed
+  // ASCII PDF operators otherwise. Vector notation content compresses
+  // extremely well since so many of those path commands repeat.
+  const pdf = new jsPDF({ unit: 'mm', format: [pageWmm, pageHmm], compress: true })
 
   for (let i = 0; i < pages.length; i++) {
     if (i > 0) pdf.addPage([pageWmm, pageHmm])
