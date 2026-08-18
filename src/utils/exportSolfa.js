@@ -395,6 +395,47 @@ export function exportSolfaPDF(score, svgElement) {
   }))
 }
 
+// ── Publish: PDF Blob (no print dialog) ─────────────────────────────────────
+// Same slicing math as exportSolfaPDF() above, but produces an in-memory PDF
+// Blob instead of a browser print job.
+export async function exportSolfaPdfBlob(score, svgElement) {
+  const title = score?.title || 'Untitled'
+  const key   = score?.key   || 'C'
+  const tempo = score?.tempo || 80
+  const ts    = score?.timeSignature
+
+  if (!svgElement) throw new Error('Nothing to publish yet — add some notes first.')
+
+  const vb = svgElement.viewBox && svgElement.viewBox.baseVal
+  const totalW = (vb && vb.width)  || svgElement.width.baseVal.value  || svgElement.getBoundingClientRect().width
+  const totalH = (vb && vb.height) || svgElement.height.baseVal.value || svgElement.getBoundingClientRect().height
+
+  const scaleUnitsPerMm  = totalW / SF_USABLE_W_MM
+  const usableFirstUnits = (SF_USABLE_H_MM - SF_HEADER_H_MM_EST) * scaleUnitsPerMm
+  const usableRestUnits  = SF_USABLE_H_MM * scaleUnitsPerMm
+
+  const sysTops = findSolfaSystemTops(svgElement)
+  const slices = sysTops
+    ? paginateSolfaSystems(sysTops, totalH, Math.max(usableFirstUnits, 1), Math.max(usableRestUnits, 1))
+    : [{ y: 0, height: totalH }]
+
+  const pages = slices.map(slice => ({
+    svgElement: cropSolfaSvg(svgElement, totalW, slice.y, slice.height),
+    totalW,
+    sliceHeight: slice.height,
+  }))
+
+  const subtitle = `Doh = ${key} · ${ts ? `${ts.beats}/${ts.beatType}` : '4/4'} · ♩ = ${tempo}`
+
+  const { buildPdfFromSvgPages } = await import('./pdfExport')
+  return buildPdfFromSvgPages({
+    pages,
+    pageWmm: SF_PAGE_W_MM, pageHmm: SF_PAGE_H_MM, marginTop: SF_MARGIN_TOP, marginSide: SF_MARGIN_SIDE,
+    title, subtitle,
+    headerHeightMm: SF_HEADER_H_MM_EST,
+  })
+}
+
 // ── Public: Export Audio (WAV) ───────────────────────────────────────────────
 // opts: { tempo, onProgress(0-1), onStatus(str) }
 export async function exportSolfaAudio(score, opts = {}) {

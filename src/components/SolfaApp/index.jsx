@@ -30,8 +30,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import * as Tone from "tone";
 import {
   Download, Cloud, Mic, Music, Repeat, Metronome, SlidersHorizontal,
-  FileText, Ruler, ListMusic, PenLine, Volume2, Zap,
+  FileText, Ruler, ListMusic, PenLine, Volume2, Zap, UploadCloud,
 } from "lucide-react";
+import PublishToFaithLibrary from "../PublishToFaithLibrary";
 import SolfaRenderer from "../SolfaRenderer";
 import SolfaSidebar from "../SolfaSidebar";
 import {
@@ -304,6 +305,7 @@ export default function SolfaApp({ user, onGoHome }) {
   // Export state
   const rendererRef   = useRef(null);
   const [showExport,  setShowExport]  = useState(false);
+  const [showPublish, setShowPublish] = useState(false);
   const [exportTab,   setExportTab]   = useState("pdf"); // "pdf" | "audio"
   const [exportBpm,   setExportBpm]   = useState(score.tempo || 80);
   const [exportBusy,  setExportBusy]  = useState(false);
@@ -897,6 +899,28 @@ export default function SolfaApp({ user, onGoHome }) {
             {saveMsg}
           </span>
         )}
+
+        {/* Publish button */}
+        <button
+          onClick={() => setShowPublish(true)}
+          title="Publish to FaithLibrary"
+          style={{
+            padding: "4px 12px",
+            fontSize: 12,
+            fontWeight: 600,
+            background: "#2563eb",
+            color: "white",
+            border: "none",
+            borderRadius: 6,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+          }}
+        >
+          <UploadCloud size={13} strokeWidth={2} />
+          Publish
+        </button>
 
         {/* Export button */}
         <button
@@ -1890,6 +1914,15 @@ export default function SolfaApp({ user, onGoHome }) {
             </div>
           </div>
         </div>
+      )}
+
+      {showPublish && (
+        <PublishToFaithLibrary
+          score={score}
+          mode="solfa"
+          getSvgElement={() => rendererRef.current?.getSvgElement()}
+          onClose={() => setShowPublish(false)}
+        />
       )}
     </div>
   );

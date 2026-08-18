@@ -768,6 +768,62 @@ export function printScore(score) {
   }))
 }
 
+// ── Publish: PDF Blob (no print dialog) ─────────────────────────────────────
+// Same system-detection/pagination math as printScore() above, but produces
+// an in-memory PDF Blob instead of a browser print job. Reads the currently
+// rendered `.score-page svg` elements from the live DOM, same as printScore.
+export async function exportScorePdfBlob(score) {
+  const title    = score?.title    || 'Untitled Score'
+  const composer = score?.composer || ''
+
+  const ps = score?.pageSettings || {}
+  const sizeMm = PAGE_SIZES_MM[ps.size] || PAGE_SIZES_MM.A4
+  const PAGE_W_MM   = sizeMm.w
+  const PAGE_H_MM   = sizeMm.h
+  const MARGIN_TOP  = ps.marginTop    ?? DEFAULT_MARGIN_TOP
+  const MARGIN_BOT  = ps.marginBottom ?? DEFAULT_MARGIN_BOT
+  const MARGIN_SIDE = ps.marginSide   ?? DEFAULT_MARGIN_SIDE
+  const USABLE_W_MM = PAGE_W_MM - MARGIN_SIDE * 2
+  const USABLE_H_MM = PAGE_H_MM - MARGIN_TOP - MARGIN_BOT
+
+  const pageEls = document.querySelectorAll('.score-page')
+  if (!pageEls.length) throw new Error('Nothing to publish yet — add some notes first.')
+
+  const svgElements = []
+  pageEls.forEach(page => {
+    page.querySelectorAll('svg').forEach(svg => svgElements.push(svg))
+  })
+  if (!svgElements.length) throw new Error('No score SVG found.')
+
+  const pages = []
+  svgElements.forEach(svg => {
+    const vb = svg.viewBox && svg.viewBox.baseVal
+    const totalW = (vb && vb.width)  || svg.width.baseVal.value  || svg.getBoundingClientRect().width
+    const totalH = (vb && vb.height) || svg.height.baseVal.value || svg.getBoundingClientRect().height
+
+    const scaleUnitsPerMm  = totalW / USABLE_W_MM
+    const usableFirstUnits = (USABLE_H_MM - HEADER_H_MM_EST) * scaleUnitsPerMm
+    const usableRestUnits  = USABLE_H_MM * scaleUnitsPerMm
+
+    const sysTops = findSystemTops(svg)
+    const slices = sysTops
+      ? paginateSystems(sysTops, totalH, Math.max(usableFirstUnits, 1), Math.max(usableRestUnits, 1))
+      : [{ y: 0, height: totalH }]
+
+    slices.forEach(slice => {
+      pages.push({ svgElement: cropSvg(svg, totalW, slice.y, slice.height), totalW, sliceHeight: slice.height })
+    })
+  })
+
+  const { buildPdfFromSvgPages } = await import('./pdfExport')
+  return buildPdfFromSvgPages({
+    pages,
+    pageWmm: PAGE_W_MM, pageHmm: PAGE_H_MM, marginTop: MARGIN_TOP, marginSide: MARGIN_SIDE,
+    title, subtitle: composer,
+    headerHeightMm: HEADER_H_MM_EST,
+  })
+}
+
 // ── Download helpers ──────────────────────────────────────────────────────────
 function download(text, filename, mimeType) {
   const blob = new Blob([text], { type: mimeType })

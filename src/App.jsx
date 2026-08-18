@@ -4,7 +4,7 @@ import {
   SkipBack, Play, Pause, Square, Repeat, Metronome, Piano as PianoIcon,
   Sun, Moon, Minus, Plus, LogOut, Undo2, Redo2,
   FilePlus, FolderOpen, Save, Printer, Power, Scissors, Copy, Clipboard,
-  Trash2, Settings, Sparkles, Eraser, ChevronUp, ChevronDown,
+  Trash2, Settings, Sparkles, Eraser, ChevronUp, ChevronDown, UploadCloud,
 } from 'lucide-react'
 import Toolbar from './components/Toolbar'
 import ScoreRenderer from './components/ScoreRenderer'
@@ -15,6 +15,7 @@ import HomeScreen from './components/HomeScreen'
 import AuthScreen from './components/AuthScreen'
 import Sidebar from './components/Sidebar'
 import { exportMusicXML, exportMIDI, printScore, importMusicXML } from './utils/exportScore'
+import PublishToFaithLibrary from './components/PublishToFaithLibrary'
 import { usePlayback } from './hooks/usePlayback'
 import PianoKeyboard from './components/PianoKeyboard'
 import { supabase } from './lib/supabase'
@@ -419,6 +420,7 @@ export default function App() {
   const [showViewMenu, setShowViewMenu]       = useState(false)
   const [showToolsMenu, setShowToolsMenu]     = useState(false)
   const [showPiano, setShowPiano]             = useState(false)
+  const [showPublish, setShowPublish]         = useState(false)
   const [seekValue, setSeekValue]             = useState(0)     // 0-100 for seek bar
   const [tempoOverride, setTempoOverride]     = useState(null)  // null = score tempo
   const [contextMenu, setContextMenu]         = useState(null)
@@ -884,6 +886,8 @@ export default function App() {
             <Sep />
             <Item icon={<Printer size={14} strokeWidth={2} />} label="Print…"            shortcut="Ctrl+P"
               onClick={() => { printScore(score) }} />
+            <Item icon={<UploadCloud size={14} strokeWidth={2} />} label="Publish to FaithLibrary…"
+              onClick={() => setShowPublish(true)} />
             <Sep />
             <Item icon=""   label="Score properties…"                     disabled soon />
             <Item icon={<Power size={14} strokeWidth={2} />} label="Quit"              shortcut="Ctrl+Q"   danger
@@ -1386,6 +1390,14 @@ export default function App() {
         }}>
           <PianoKeyboard />
         </div>
+      )}
+
+      {showPublish && (
+        <PublishToFaithLibrary
+          score={score}
+          mode="staff"
+          onClose={() => setShowPublish(false)}
+        />
       )}
 
       {/* ── Bottom bar — fixed at bottom of viewport ── */}
