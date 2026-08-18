@@ -3,7 +3,7 @@
 // Works for both staff scores and solfa scores — pass `mode` and, for
 // solfa, `getSvgElement` (staff reads its SVG straight from the DOM via
 // exportScorePdfBlob, same as Print already does).
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X, Eye, EyeOff, UploadCloud, CheckCircle2, ExternalLink } from 'lucide-react'
 import { faithlibrary, getFaithLibrarySession, FAITHLIBRARY_UPLOAD_URL } from '../../lib/faithlibrary'
 import { exportScorePdfBlob } from '../../utils/exportScore'
@@ -41,6 +41,55 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
     getFaithLibrarySession().then(setSession)
   }, [])
 
+  // Popup-based connect: the main editor tab (and whatever unsaved score
+  // is open in it) never navigates away. See src/main.jsx for the popup
+  // side of this handshake.
+  const popupRef = useRef(null)
+  useEffect(() => {
+    const handleMessage = (e) => {
+      if (e.origin !== window.location.origin) return
+      if (e.data?.type === 'faithlibrary-connected') {
+        getFaithLibrarySession().then(s => { setSession(s); setConnecting(false) })
+      }
+    }
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [])
+
+  const connectGoogle = async () => {
+    setAuthError('')
+    setConnecting(true)
+
+    const popup = window.open('', 'faithlibrary-connect', 'width=480,height=640')
+    if (!popup) {
+      setAuthError('Please allow popups for this site, then try again.')
+      setConnecting(false)
+      return
+    }
+    popupRef.current = popup
+
+    const { data, error } = await faithlibrary.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin, skipBrowserRedirect: true },
+    })
+    if (error || !data?.url) {
+      setAuthError(error?.message || 'Could not start Google sign-in.')
+      setConnecting(false)
+      popup.close()
+      return
+    }
+    popup.location.href = data.url
+
+    // If the person just closes the popup instead of completing sign-in,
+    // stop spinning instead of waiting forever for a message that'll never come.
+    const watchClosed = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(watchClosed)
+        setConnecting(false)
+      }
+    }, 500)
+  }
+
   const connectEmail = async (e) => {
     e.preventDefault()
     setAuthError('')
@@ -54,17 +103,6 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
     } finally {
       setConnecting(false)
     }
-  }
-
-  const connectGoogle = async () => {
-    setAuthError('')
-    setConnecting(true)
-    const { error } = await faithlibrary.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.origin },
-    })
-    if (error) { setAuthError(error.message); setConnecting(false) }
-    // On success the page redirects away and back — session picks up on reload.
   }
 
   const publish = async () => {
@@ -247,7 +285,7 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
               <CheckCircle2 size={36} color="#16a34a" style={{ marginBottom: 10 }} />
               <p style={{ fontSize: 14, fontWeight: 600, color: '#111', marginBottom: 4 }}>Published!</p>
               <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 18 }}>Your score is now live on FaithLibrary.</p>
-              <a href={`https://th-library.vercel.app/view/${published.id}`} target="_blank" rel="noreferrer"
+              <a href={`https://faith-library.vercel.app/view/${published.id}`} target="_blank" rel="noreferrer"
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600,
                   color: '#2563eb', textDecoration: 'none',

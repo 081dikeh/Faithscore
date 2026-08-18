@@ -14,7 +14,7 @@ import { createClient } from '@supabase/supabase-js'
 const FAITHLIBRARY_URL  = 'https://uyxbdyvnirxcunlfteje.supabase.co'
 const FAITHLIBRARY_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV5eGJkeXZuaXJ4Y3VubGZ0ZWplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwNDg3NjYsImV4cCI6MjA5MjYyNDc2Nn0.zjFL1-I9ppfkxCv2BhzVJp1gkk2JfMxVRbah2YSeVJE'
 
-export const FAITHLIBRARY_UPLOAD_URL = 'https://th-library.vercel.app/api/external-upload'
+export const FAITHLIBRARY_UPLOAD_URL = 'https://faith-library.vercel.app/api/external-upload'
 
 // A distinct storageKey keeps this session in its own localStorage slot,
 // completely separate from FaithScore's own session (src/lib/supabase.js).
