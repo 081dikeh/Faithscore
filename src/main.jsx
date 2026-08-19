@@ -3,22 +3,35 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 
-// If this window was opened via window.open() (see connectGoogle in
-// PublishToFaithLibrary), it exists only to complete the FaithLibrary
-// OAuth handshake — the actual FaithLibrary Supabase client (imported
-// below) picks the session up from the URL automatically on load and
-// writes it to localStorage, which the opener tab shares. We just wait
-// for that, tell the opener, and close — the real editor never mounts
-// here, and more importantly never *reloads* in the opener tab either.
-if (window.opener && window.opener !== window) {
+// If this window was opened specifically to complete the FaithLibrary
+// OAuth connect flow (see connectGoogle in PublishToFaithLibrary), it
+// exists only to finish that handshake and close itself.
+//
+// We detect that via a URL marker (?faithlibrary_popup=1), NOT
+// window.opener. Google's own sign-in page sends a strict
+// Cross-Origin-Opener-Policy header, which severs window.opener the
+// moment this window navigates to accounts.google.com — permanently,
+// even after it navigates back here. On localhost Chrome is looser about
+// this, which is why this used to appear to work in dev and fail once
+// deployed. The URL marker survives navigation regardless, and
+// BroadcastChannel (below) doesn't need a window reference at all, so
+// neither depends on window.opener still being intact.
+const isFaithLibraryPopup = new URLSearchParams(window.location.search).has('faithlibrary_popup')
+
+if (isFaithLibraryPopup) {
   document.getElementById('root').innerHTML =
     '<div style="font-family:system-ui,sans-serif;padding:48px 24px;text-align:center;color:#374151;font-size:14px">Connecting to FaithLibrary…</div>'
 
   import('./lib/faithlibrary').then(({ getFaithLibrarySession }) => {
+    const channel = new BroadcastChannel('faithlibrary-connect')
+
     const tryNotify = async (attemptsLeft = 20) => {
       const session = await getFaithLibrarySession()
       if (session) {
-        window.opener.postMessage({ type: 'faithlibrary-connected' }, window.location.origin)
+        channel.postMessage({ type: 'faithlibrary-connected' })
+        channel.close()
+        // A script-opened window can always close itself — this does NOT
+        // require window.opener and isn't affected by COOP.
         window.close()
       } else if (attemptsLeft > 0) {
         setTimeout(() => tryNotify(attemptsLeft - 1), 300)

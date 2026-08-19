@@ -44,16 +44,23 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
   // Popup-based connect: the main editor tab (and whatever unsaved score
   // is open in it) never navigates away. See src/main.jsx for the popup
   // side of this handshake.
-  const popupRef = useRef(null)
+  //
+  // This listens via BroadcastChannel, not window.postMessage/window.opener
+  // — Google's sign-in page sends a strict Cross-Origin-Opener-Policy
+  // header that severs window.opener the moment the popup navigates to
+  // accounts.google.com, permanently, even after it comes back to our own
+  // origin. BroadcastChannel is same-origin messaging that doesn't need a
+  // window reference at all, so it isn't affected by that.
+  const connectTimeoutRef = useRef(null)
   useEffect(() => {
-    const handleMessage = (e) => {
-      if (e.origin !== window.location.origin) return
+    const channel = new BroadcastChannel('faithlibrary-connect')
+    channel.onmessage = (e) => {
       if (e.data?.type === 'faithlibrary-connected') {
+        clearTimeout(connectTimeoutRef.current)
         getFaithLibrarySession().then(s => { setSession(s); setConnecting(false) })
       }
     }
-    window.addEventListener('message', handleMessage)
-    return () => window.removeEventListener('message', handleMessage)
+    return () => channel.close()
   }, [])
 
   const connectGoogle = async () => {
@@ -66,11 +73,15 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
       setConnecting(false)
       return
     }
-    popupRef.current = popup
+
+    // The ?faithlibrary_popup=1 marker is how src/main.jsx recognizes this
+    // window as the connect popup — see the comment there for why that
+    // can't rely on window.opener either.
+    const redirectTo = `${window.location.origin}${window.location.pathname}?faithlibrary_popup=1`
 
     const { data, error } = await faithlibrary.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin, skipBrowserRedirect: true },
+      options: { redirectTo, skipBrowserRedirect: true },
     })
     if (error || !data?.url) {
       setAuthError(error?.message || 'Could not start Google sign-in.')
@@ -80,14 +91,15 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
     }
     popup.location.href = data.url
 
-    // If the person just closes the popup instead of completing sign-in,
-    // stop spinning instead of waiting forever for a message that'll never come.
-    const watchClosed = setInterval(() => {
-      if (popup.closed) {
-        clearInterval(watchClosed)
-        setConnecting(false)
-      }
-    }, 500)
+    // We can't reliably poll popup.closed (COOP blocks that too, once the
+    // popup has navigated to Google). If the person closes it manually
+    // instead of completing sign-in, this timeout stops the spinner
+    // instead of waiting forever for a message that'll never come.
+    clearTimeout(connectTimeoutRef.current)
+    connectTimeoutRef.current = setTimeout(() => {
+      setConnecting(false)
+      setAuthError(prev => prev || 'Sign-in window closed before finishing. Please try again.')
+    }, 90_000)
   }
 
   const connectEmail = async (e) => {
