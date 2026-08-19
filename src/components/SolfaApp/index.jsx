@@ -1748,6 +1748,19 @@ export default function SolfaApp({ user, onGoHome }) {
                 >
                   {score.title || "Untitled Score"}
                 </div>
+                {score.composer && (
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: "#555",
+                      textAlign: "right",
+                      fontFamily: '"Times New Roman",serif',
+                      margin: "4px 0 0",
+                    }}
+                  >
+                    {score.composer}
+                  </div>
+                )}
               </div>
 
               <SolfaRenderer

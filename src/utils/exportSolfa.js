@@ -268,6 +268,20 @@ function paginateSolfaSystems(sysTops, totalH, usableFirstUnits, usableRestUnits
     }
   }
   slices.push({ y: sysTops[pageStart], height: bottoms[n - 1] - sysTops[pageStart] })
+
+  // The very first page's crop should start at y=0, not at the first
+  // system's y. SolfaRenderer draws the real "Doh is X" / time-signature
+  // caption just above the first system (see HDR_H in SolfaRenderer) — that
+  // text is genuinely part of the SVG, already correctly styled and
+  // positioned. Starting the crop exactly at the first system's top was
+  // silently slicing that caption out of every export, which is why a
+  // separate, differently-worded, differently-styled caption had to be
+  // synthesized to compensate instead of just including the real one.
+  if (slices.length > 0) {
+    const firstBottom = slices[0].y + slices[0].height
+    slices[0] = { y: 0, height: firstBottom }
+  }
+
   return slices
 }
 
@@ -286,9 +300,6 @@ function cropSolfaSvg(svg, totalW, y, height) {
 
 export function exportSolfaPDF(score, svgElement) {
   const title = score?.title || 'Untitled'
-  const key   = score?.key   || 'C'
-  const tempo = score?.tempo || 80
-  const ts    = score?.timeSignature
 
   if (!svgElement) {
     alert('Nothing to print yet — add some notes first.')
@@ -315,8 +326,8 @@ export function exportSolfaPDF(score, svgElement) {
   header.innerHTML = `
     <h1>${escapeHtml(title)}</h1>
     <div class="sf-print-meta">
-      <span>Doh = ${escapeHtml(key)} &nbsp;·&nbsp; ${ts ? `${ts.beats}/${ts.beatType}` : '4/4'} &nbsp;·&nbsp; ♩ = ${tempo}</span>
       <span>${partsInfo}</span>
+      <span>${score?.composer ? escapeHtml(score.composer) : ''}</span>
     </div>`
   pageEl.appendChild(header)
 
@@ -400,9 +411,6 @@ export function exportSolfaPDF(score, svgElement) {
 // Blob instead of a browser print job.
 export async function exportSolfaPdfBlob(score, svgElement) {
   const title = score?.title || 'Untitled'
-  const key   = score?.key   || 'C'
-  const tempo = score?.tempo || 80
-  const ts    = score?.timeSignature
 
   if (!svgElement) throw new Error('Nothing to publish yet — add some notes first.')
 
@@ -425,13 +433,16 @@ export async function exportSolfaPdfBlob(score, svgElement) {
     sliceHeight: slice.height,
   }))
 
-  const subtitle = `Doh = ${key} · ${ts ? `${ts.beats}/${ts.beatType}` : '4/4'} · ♩ = ${tempo}`
-
+  // The real "Doh is X" / time-signature caption is already part of the
+  // cropped SVG content now (see paginateSolfaSystems), so the subtitle
+  // slot here is free to carry what it actually means everywhere else in
+  // the app: the composer's name — matching exactly how the staff/Score
+  // app's export uses this same slot.
   const { buildPdfFromSvgPages } = await import('./pdfExport')
   return buildPdfFromSvgPages({
     pages,
     pageWmm: SF_PAGE_W_MM, pageHmm: SF_PAGE_H_MM, marginTop: SF_MARGIN_TOP, marginSide: SF_MARGIN_SIDE,
-    title, subtitle,
+    title, subtitle: score?.composer || '',
     headerHeightMm: SF_HEADER_H_MM_EST,
   })
 }

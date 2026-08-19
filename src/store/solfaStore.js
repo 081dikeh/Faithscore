@@ -265,6 +265,11 @@ export const useSolfaStore = create((set,get) => ({
   tieStart:           null,
 
   setTitle:   t  => set(s=>({score:{...s.score,title:t}})),
+  // The toolbar's composer input already called this action before it
+  // existed here — score.composer never had a matching setter defined in
+  // this store, so every edit silently failed (or threw, depending on
+  // React's error boundaries) instead of actually saving anything.
+  setComposer: c => set(s=>({score:{...s.score,composer:c}})),
   // DEPRECATED for mid-score use: rewrites the score's starting key only —
   // it does NOT touch any measure's key. Kept for score creation (Wizard)
   // where there's nothing to modulate from yet. For modulating partway
