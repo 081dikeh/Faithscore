@@ -63,38 +63,37 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
     return () => channel.close()
   }, [])
 
-  const connectGoogle = async () => {
+  const connectGoogle = () => {
     setAuthError('')
     setConnecting(true)
 
-    const popup = window.open('', 'faithlibrary-connect', 'width=480,height=640')
+    // Opens directly at our own origin with a "pending=google" marker,
+    // rather than opening blank and then setting popup.location.href to
+    // the Google URL from here. That distinction is what actually matters
+    // under COOP: a window navigating *itself* is always allowed, on any
+    // origin, regardless of COOP policy — the thing that reliably breaks
+    // is the *opener* reaching into a popup from outside and touching its
+    // .location (or .closed), which is exactly what setting
+    // popup.location.href here used to do, and exactly what "Cross-Origin-
+    // Opener-Policy policy would block the window.location call" means.
+    // See src/main.jsx — it's the popup itself that now calls
+    // signInWithOAuth and self-navigates to Google, once it's loaded and
+    // running in its own same-origin context.
+    const popup = window.open(
+      `${window.location.origin}${window.location.pathname}?faithlibrary_popup=1&pending=google`,
+      'faithlibrary-connect',
+      'width=480,height=640',
+    )
     if (!popup) {
       setAuthError('Please allow popups for this site, then try again.')
       setConnecting(false)
       return
     }
 
-    // The ?faithlibrary_popup=1 marker is how src/main.jsx recognizes this
-    // window as the connect popup — see the comment there for why that
-    // can't rely on window.opener either.
-    const redirectTo = `${window.location.origin}${window.location.pathname}?faithlibrary_popup=1`
-
-    const { data, error } = await faithlibrary.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo, skipBrowserRedirect: true },
-    })
-    if (error || !data?.url) {
-      setAuthError(error?.message || 'Could not start Google sign-in.')
-      setConnecting(false)
-      popup.close()
-      return
-    }
-    popup.location.href = data.url
-
-    // We can't reliably poll popup.closed (COOP blocks that too, once the
-    // popup has navigated to Google). If the person closes it manually
-    // instead of completing sign-in, this timeout stops the spinner
-    // instead of waiting forever for a message that'll never come.
+    // We still can't reliably poll popup.closed (COOP blocks that too,
+    // once the popup has navigated to Google). If the person closes it
+    // manually instead of completing sign-in, this timeout stops the
+    // spinner instead of waiting forever for a message that'll never come.
     clearTimeout(connectTimeoutRef.current)
     connectTimeoutRef.current = setTimeout(() => {
       setConnecting(false)

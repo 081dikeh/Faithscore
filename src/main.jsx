@@ -16,13 +16,47 @@ import App from './App.jsx'
 // deployed. The URL marker survives navigation regardless, and
 // BroadcastChannel (below) doesn't need a window reference at all, so
 // neither depends on window.opener still being intact.
-const isFaithLibraryPopup = new URLSearchParams(window.location.search).has('faithlibrary_popup')
+const params = new URLSearchParams(window.location.search)
+const isFaithLibraryPopup = params.has('faithlibrary_popup')
+// 'google' the first time this window loads (opened directly here by
+// connectGoogle) — it still needs to kick off the OAuth redirect itself.
+// Absent on the second load, after Google redirects back here — at that
+// point it just needs to wait for the session and notify the opener.
+const pending = params.get('pending')
 
 if (isFaithLibraryPopup) {
   document.getElementById('root').innerHTML =
     '<div style="font-family:system-ui,sans-serif;padding:48px 24px;text-align:center;color:#374151;font-size:14px">Connecting to FaithLibrary…</div>'
 
-  import('./lib/faithlibrary').then(({ getFaithLibrarySession }) => {
+  import('./lib/faithlibrary').then(async ({ faithlibrary, getFaithLibrarySession }) => {
+    if (pending === 'google') {
+      // Kicking off signInWithOAuth and navigating to Google from *inside*
+      // this window (a window navigating itself) rather than from the
+      // opener (the opener reaching into this window from outside) is the
+      // actual fix here — COOP only restricts the latter. See the comment
+      // in connectGoogle for the full story.
+      const { data, error } = await faithlibrary.auth.signInWithOAuth({
+        provider: 'google',
+        // No pending param this time — when Google redirects back here,
+        // we want the branch below (wait for session, notify opener), not
+        // another round of kicking off sign-in.
+        options: {
+          redirectTo: `${window.location.origin}${window.location.pathname}?faithlibrary_popup=1`,
+          skipBrowserRedirect: true,
+        },
+      })
+      if (error || !data?.url) {
+        document.getElementById('root').innerHTML =
+          `<div style="font-family:system-ui,sans-serif;padding:48px 24px;text-align:center;color:#dc2626;font-size:14px">Could not start Google sign-in${error?.message ? `: ${error.message}` : ''}. You can close this window and try again.</div>`
+        return
+      }
+      // Self-navigation — always allowed under any COOP policy, on any
+      // origin. This is the one thing the old code got backwards: it had
+      // the *opener* set popup.location.href to this same URL instead.
+      window.location.href = data.url
+      return
+    }
+
     const channel = new BroadcastChannel('faithlibrary-connect')
 
     const tryNotify = async (attemptsLeft = 20) => {
