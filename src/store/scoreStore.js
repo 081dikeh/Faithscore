@@ -28,7 +28,7 @@ export function clearSavedScore() { localStorage.removeItem(AUTOSAVE_KEY) }
 // keyed by keySignature number (-7..7, sharps positive/flats negative).
 // Each key uses every letter A–G exactly once, matching real notation
 // (e.g. F# major has E#, not F — never two notes sharing a letter).
-const MAJOR_SCALES = {
+export const MAJOR_SCALES = {
   0: ['C', 'D', 'E', 'F', 'G', 'A', 'B'],
   1: ['G', 'A', 'B', 'C', 'D', 'E', 'F#'],
   2: ['D', 'E', 'F#', 'G', 'A', 'B', 'C#'],

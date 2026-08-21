@@ -4,7 +4,7 @@ import {
   SkipBack, Play, Pause, Square, Repeat, Metronome, Piano as PianoIcon,
   Sun, Moon, Minus, Plus, LogOut, Undo2, Redo2,
   FilePlus, FolderOpen, Save, Printer, Power, Scissors, Copy, Clipboard,
-  Trash2, Settings, Sparkles, Eraser, ChevronUp, ChevronDown, UploadCloud,
+  Trash2, Settings, Sparkles, Eraser, ChevronUp, ChevronDown, UploadCloud, Music4,
 } from 'lucide-react'
 import Toolbar from './components/Toolbar'
 import ScoreRenderer from './components/ScoreRenderer'
@@ -15,6 +15,7 @@ import HomeScreen from './components/HomeScreen'
 import AuthScreen from './components/AuthScreen'
 import Sidebar from './components/Sidebar'
 import { exportMusicXML, exportMIDI, printScore, importMusicXML } from './utils/exportScore'
+import { convertStaffScoreToSolfa } from './utils/staffToSolfa'
 import PublishToFaithLibrary from './components/PublishToFaithLibrary'
 import { usePlayback } from './hooks/usePlayback'
 import PianoKeyboard from './components/PianoKeyboard'
@@ -301,6 +302,26 @@ export default function App() {
     }
   }
 
+
+  // Converts the current Score into a Solfa score and switches to the Solfa
+  // editor with it loaded. v1 scope: pitch + basic rhythm only — no ties,
+  // slurs, chords, or mid-score modulation carried over yet. See
+  // staffToSolfa.js for the full reasoning. This does NOT touch or replace
+  // the Score version — it's a one-way conversion into a brand new Solfa
+  // score, same as opening a MusicXML file creates a new score rather than
+  // modifying anything in place.
+  const handleConvertToSolfa = () => {
+    if (!score.parts.some(p => p.measures.some(m => m.notes.some(n => !n.isRest)))) {
+      alert('This score is empty — add some notes first.')
+      return
+    }
+    const { score: converted, warnings } = convertStaffScoreToSolfa(score)
+    useSolfaStore.getState().loadScore(converted)
+    setAppView('solfa-editor')
+    if (warnings.length) {
+      alert('Converted to sol-fa. A few things to know:\n\n' + warnings.join('\n\n'))
+    }
+  }
 
   const openFileInputRef = useRef(null)
   const handleOpenClick = () => {
@@ -882,6 +903,8 @@ export default function App() {
               onClick={() => exportMusicXML(score)} />
             <Item icon=""   label="Export MIDI"        shortcut="Ctrl+Shift+M"
               onClick={() => exportMIDI(score)} />
+            <Item icon={<Music4 size={14} strokeWidth={2} />} label="Convert to Sol-fa…"
+              onClick={handleConvertToSolfa} />
             <Item icon=""   label="Export…"           arrow               disabled soon />
             <Sep />
             <Item icon={<Printer size={14} strokeWidth={2} />} label="Print…"            shortcut="Ctrl+P"
