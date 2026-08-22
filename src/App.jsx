@@ -1327,7 +1327,7 @@ export default function App() {
         {[
           ['N','Note mode'], ['S','Select'], ['A–G','Natural note'],
           ['Enter','Chromatic'], ['1–6','Duration'], ['.','Dot'],
-          ['⇧+A–G','Chord'], ['J','Chord mode'], ['T','Tie'], ['↑↓','Chromatic'], ['⌥↑↓','Diatonic step'], ['⇧↑↓','Octave'],
+          ['⇧+A–G','Chord'], ['J','Chord mode'], ['T','Tie'], ['↑↓','Diatonic step'], ['⌥↑↓','Chromatic'], ['⇧↑↓','Octave'],
           ['←→','Navigate'], ['Del','Delete'], ['M','Add bar'],
           ['Ctrl+Z','Undo'], ['Ctrl+Y','Redo'], ['Ctrl+C','Copy bar'], ['Ctrl+V','Paste'],
           ['Ctrl+↑↓','Transpose ½'], ['Ctrl+←→','Transpose 8ve'],
