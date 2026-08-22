@@ -45,6 +45,22 @@
 import { create } from 'zustand'
 
 export const SOLFA_SEMITONES = {d:0,de:1,r:2,ri:3,m:4,f:5,fe:6,s:7,se:8,l:9,ta:10,t:11}
+// Full 12-semitone chromatic cycle, derived from SOLFA_SEMITONES itself
+// (rather than a separately-hardcoded parallel list) so it can never drift
+// out of sync with it: d, de, r, ri, m, f, fe, s, se, l, ta, t.
+const CHROMATIC_ORDER = Object.entries(SOLFA_SEMITONES).sort((a, b) => a[1] - b[1]).map(([syl]) => syl)
+// Shifts a syllable+octave by `dir` semitones (±1) through the full
+// chromatic cycle above — not just the 7 diatonic scale degrees — rolling
+// into the adjacent octave when crossing the t/d boundary.
+export function shiftSolfaChromatic(syllable, octave, dir) {
+  const idx = CHROMATIC_ORDER.indexOf(syllable)
+  if (idx === -1) return { syllable, octave }
+  let newIdx = idx + dir
+  let newOctave = octave
+  if (newIdx >= CHROMATIC_ORDER.length) { newIdx -= CHROMATIC_ORDER.length; newOctave += 1 }
+  if (newIdx < 0)                       { newIdx += CHROMATIC_ORDER.length; newOctave -= 1 }
+  return { syllable: CHROMATIC_ORDER[newIdx], octave: newOctave }
+}
 export const KEY_ROOTS = {
   C:60,'C#':61,Db:61,D:62,'D#':63,Eb:63,E:64,F:65,'F#':66,Gb:66,
   G:67,'G#':68,Ab:68,A:69,'A#':70,Bb:70,B:71,
@@ -464,6 +480,27 @@ export const useSolfaStore = create((set,get) => ({
       })
       return { score: { ...s.score, parts } }
     })
+  },
+
+  // Shifts the currently selected event's pitch through the full 12-
+  // semitone chromatic cycle (d, de, r, ri, m, f, fe, s, se, l, ta, t), not
+  // just the 7 diatonic scale degrees — dir is +1 or -1.
+  //
+  // Only acts on 'note' events. A 'sustain' event has no pitch of its own
+  // (it inherits whatever the 'note' event it continues from was singing —
+  // see the CORE MODEL comment at the top of this file), so shifting one
+  // in isolation would just detach it from the note it's supposed to be
+  // continuing; that needs walking back to the originating note instead,
+  // which isn't handled yet. Rests have no pitch to shift at all.
+  shiftSelectedEventChromatic: (dir) => {
+    const { score, selectedPartId, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx } = get()
+    if (selectedPartId == null || selectedMeasureIdx == null || selectedBeatIdx == null || selectedEventIdx == null) return
+    const part = score.parts.find(p => p.id === selectedPartId)
+    const meas = migrateMeasure(part?.measures?.[selectedMeasureIdx])
+    const ev = meas?.beats?.[selectedBeatIdx]?.events?.[selectedEventIdx]
+    if (!ev || ev.type !== 'note' || !ev.syllable) return
+    const { syllable, octave } = shiftSolfaChromatic(ev.syllable, ev.octave || 0, dir)
+    get().setEventInPlace(selectedPartId, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx, 'note', syllable, octave)
   },
 
   placeEvent: (partId,measureIdx,beatIdx,beatOffset,syllable,duration) => {

@@ -219,6 +219,7 @@ export default function SolfaApp({ user, onGoHome }) {
   const undo = useSolfaStore((s) => s.undo);
   const selectEvent = useSolfaStore((s) => s.selectEvent);
   const navigateEvent = useSolfaStore((s) => s.navigateEvent);
+  const shiftSelectedEventChromatic = useSolfaStore((s) => s.shiftSelectedEventChromatic);
   const slurStart = useSolfaStore((s) => s.slurStart);
   const clearSlurStart = useSolfaStore((s) => s.clearSlurStart);
   const insertTriplet = useSolfaStore((s) => s.insertTriplet);
@@ -594,6 +595,20 @@ export default function SolfaApp({ user, onGoHome }) {
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         navigateEvent("left");
+        return;
+      }
+      // Alt+Up/Down shifts the selected note's pitch through the full
+      // chromatic scale (d, de, r, ri, m, f, fe, s, se, l, ta, t) — checked
+      // before the plain ArrowUp/Down below, which instead moves the
+      // selection to the part above/below and is unchanged.
+      if (e.altKey && e.key === "ArrowUp") {
+        e.preventDefault();
+        shiftSelectedEventChromatic(1);
+        return;
+      }
+      if (e.altKey && e.key === "ArrowDown") {
+        e.preventDefault();
+        shiftSelectedEventChromatic(-1);
         return;
       }
       if (e.key === "ArrowDown") {

@@ -55,6 +55,9 @@ export default function Toolbar() {
   const chordMode          = useScoreStore(s => s.chordMode)
   const getSelectedNote    = useScoreStore(s => s.getSelectedNote)
   const selectedPartId     = useScoreStore(s => s.selectedPartId)
+  const selectedNoteId     = useScoreStore(s => s.selectedNoteId)
+  const selectedMeasureIndex = useScoreStore(s => s.selectedMeasureIndex)
+  const _applyToMeasure    = useScoreStore(s => s._applyToMeasure)
   const score              = useScoreStore(s => s.score)
 
   const setInputMode           = useScoreStore(s => s.setInputMode)
@@ -78,6 +81,17 @@ export default function Toolbar() {
   function handleDuration(val) {
     if (liveNote) changeSelectedDuration(val, liveNote.dots || 0)
     else setDuration(val)
+  }
+
+  function handleAccidental(acc) {
+    // Mirrors NoteEditor's setProp pattern exactly — these buttons apply
+    // directly to the currently selected note's pitch. Previously this was
+    // onClick={()=>{}}, a literal no-op, which is why nothing happened when
+    // clicking any of them.
+    if (!liveNote || liveNote.isRest) return
+    _applyToMeasure(selectedPartId, selectedMeasureIndex, notes =>
+      notes.map(n => n.id === selectedNoteId ? { ...n, pitch: { ...n.pitch, accidental: acc } } : n)
+    )
   }
 
   return (
@@ -125,7 +139,8 @@ export default function Toolbar() {
 
       {/* ── Accidentals ── */}
       {ACCIDENTALS.map(a => (
-        <Btn key={a.short} active={false} onClick={()=>{}} title={a.label}>
+        <Btn key={a.short} active={!!liveNote && !liveNote.isRest && (liveNote.pitch?.accidental ?? null) === a.acc}
+          onClick={()=>handleAccidental(a.acc)} title={a.label}>
           <span style={{fontSize:15}}>{a.short}</span>
         </Btn>
       ))}
