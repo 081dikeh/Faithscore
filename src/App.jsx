@@ -16,6 +16,7 @@ import AuthScreen from './components/AuthScreen'
 import Sidebar from './components/Sidebar'
 import { exportMusicXML, exportMIDI, printScore, importMusicXML } from './utils/exportScore'
 import { convertStaffScoreToSolfa } from './utils/staffToSolfa'
+import { convertSolfaScoreToStaff } from './utils/solfaToStaff'
 import PublishToFaithLibrary from './components/PublishToFaithLibrary'
 import { usePlayback } from './hooks/usePlayback'
 import PianoKeyboard from './components/PianoKeyboard'
@@ -320,6 +321,29 @@ export default function App() {
     setAppView('solfa-editor')
     if (warnings.length) {
       alert('Converted to sol-fa. A few things to know:\n\n' + warnings.join('\n\n'))
+    }
+  }
+
+  // Converts the current Solfa score into a Score (staff notation) score
+  // and switches to the Score editor with it loaded — the reverse of
+  // handleConvertToSolfa above, completing the round trip. Same v1 scope:
+  // pitch + rhythm only (ties ARE produced, but only where merging a
+  // note+sustain chain back together structurally requires one — not
+  // independently-authored slurs, lyrics, chords, or mid-score
+  // modulation). See solfaToStaff.js for the full reasoning.
+  const handleConvertToStaff = (solfaScore) => {
+    const hasNotes = solfaScore.parts.some(p =>
+      p.measures.some(m => (m.beats || []).some(b => (b.events || []).some(e => e.type === 'note')))
+    )
+    if (!hasNotes) {
+      alert('This score is empty — add some notes first.')
+      return
+    }
+    const { score: converted, warnings } = convertSolfaScoreToStaff(solfaScore)
+    useScoreStore.getState().loadScore(converted)
+    setAppView('editor')
+    if (warnings.length) {
+      alert('Converted to staff notation. A few things to know:\n\n' + warnings.join('\n\n'))
     }
   }
 
@@ -744,7 +768,7 @@ export default function App() {
 
   // ── Solfa editor — completely standalone, separate from staff ──────────────
   if (appView === 'solfa-editor') {
-    return <SolfaApp user={user} onGoHome={goHome} />
+    return <SolfaApp user={user} onGoHome={goHome} onConvertToStaff={handleConvertToStaff} />
   }
 
 

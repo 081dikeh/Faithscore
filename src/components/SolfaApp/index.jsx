@@ -30,7 +30,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import * as Tone from "tone";
 import {
   Download, Cloud, Mic, Music, Repeat, Metronome, SlidersHorizontal,
-  FileText, Ruler, ListMusic, PenLine, Volume2, Zap, UploadCloud,
+  FileText, Ruler, ListMusic, PenLine, Volume2, Zap, UploadCloud, Music4,
 } from "lucide-react";
 import PublishToFaithLibrary from "../PublishToFaithLibrary";
 import SolfaRenderer from "../SolfaRenderer";
@@ -195,7 +195,7 @@ function PlaybackBeatReadout({ onBeat }) {
   );
 }
 
-export default function SolfaApp({ user, onGoHome }) {
+export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
   const score = useSolfaStore((s) => s.score);
   const inputMode = useSolfaStore((s) => s.inputMode);
   const selDuration = useSolfaStore((s) => s.selectedDuration);
@@ -957,6 +957,29 @@ export default function SolfaApp({ user, onGoHome }) {
         >
           <Download size={13} strokeWidth={2} /> Export
         </button>
+
+        {/* Convert to Staff button */}
+        {onConvertToStaff && (
+          <button
+            onClick={() => onConvertToStaff(score)}
+            title="Convert this sol-fa score to standard staff notation"
+            style={{
+              padding: "4px 12px",
+              fontSize: 12,
+              fontWeight: 600,
+              background: "white",
+              color: "#374151",
+              border: "1px solid #d1d5db",
+              borderRadius: 6,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <Music4 size={13} strokeWidth={2} /> Convert to Staff
+          </button>
+        )}
 
         <button
           onClick={saveToCloud}
