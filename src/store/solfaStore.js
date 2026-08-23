@@ -345,7 +345,47 @@ export const useSolfaStore = create((set,get) => ({
   },
 
   // ── Active part (sidebar "Parts" tab) ─────────────────────────────────────
-  setActivePart: (partId) => set({ selectedPartId: partId }),
+  setActivePart: (partId) => set(s => {
+    const part = s.score.parts.find(p => p.id === partId)
+    // Nudge the default entry octave down when switching to Bass — typing
+    // notes into Bass right after an upper voice, without manually
+    // shifting the octave control first, is exactly what produces a bass
+    // line that's an octave too high (selectedOctave was previously a
+    // single global default shared by every voice, with nothing here to
+    // stop that). Every other voice conventionally sits fine at octave 0.
+    const suggestedOctave = part?.id === 'b' ? -1 : 0
+    return { selectedPartId: partId, selectedOctave: suggestedOctave }
+  }),
+
+  // Shifts every 'note' event in one part by a full octave (dir = +1 or
+  // -1). Sustain/rest events carry no pitch of their own so there's
+  // nothing on them to shift — they just continue whatever the
+  // (now-shifted) preceding note is. Meant for exactly the case above:
+  // fixing a part that got entered at the wrong default octave, in one
+  // action instead of hand-editing every note.
+  transposePartOctave: (partId, dir) => {
+    get()._snapshot()
+    set(s => ({
+      score: {
+        ...s.score,
+        parts: s.score.parts.map(p => {
+          if (p.id !== partId) return p
+          return {
+            ...p,
+            measures: p.measures.map(m => ({
+              ...m,
+              beats: (m.beats || []).map(b => ({
+                ...b,
+                events: (b.events || []).map(ev =>
+                  ev.type === 'note' ? { ...ev, octave: (ev.octave || 0) + dir } : ev
+                ),
+              })),
+            })),
+          }
+        }),
+      },
+    }))
+  },
 
   // ── Marks: tempo text / dynamics / expression text pinned above a beat ────
   addMark: (partId, measureIdx, beatIdx, value, kind='text') => {

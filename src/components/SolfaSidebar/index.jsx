@@ -222,6 +222,7 @@ function PartsTab() {
   const score          = useSolfaStore(s => s.score)
   const selectedPartId = useSolfaStore(s => s.selectedPartId)
   const setActivePart  = useSolfaStore(s => s.setActivePart)
+  const transposePartOctave = useSolfaStore(s => s.transposePartOctave)
   const comboInfo = VOICE_COMBOS[score.voiceCombo] || VOICE_COMBOS.satb
 
   return (
@@ -232,29 +233,48 @@ function PartsTab() {
       <div style={{ fontSize:10.5, color:'#9ca3af', marginBottom:8 }}>{comboInfo.label} arrangement</div>
       {(score.parts||[]).map((p) => (
         <div key={p.id}
-          onClick={() => setActivePart(p.id)}
           style={{
             display:'flex', alignItems:'center', gap:6, padding:'6px 8px',
-            marginBottom:3, borderRadius:6, cursor:'pointer',
+            marginBottom:3, borderRadius:6,
             background: selectedPartId === p.id ? '#eff6ff' : 'white',
             border: `1px solid ${selectedPartId === p.id ? '#93c5fd' : '#e5e7eb'}`,
             transition:'all 0.1s',
           }}
         >
-          <span style={{
+          <span onClick={() => setActivePart(p.id)} style={{
             width:22, height:22, borderRadius:5, background:'#f3f4f6',
             display:'flex', alignItems:'center', justifyContent:'center',
-            fontSize:11, fontWeight:700, color:'#1e3a8a', flexShrink:0,
+            fontSize:11, fontWeight:700, color:'#1e3a8a', flexShrink:0, cursor:'pointer',
           }}>
             {p.label}
           </span>
-          <span style={{ flex:1, fontSize:12.5, fontWeight:500, color:'#1e2433' }}>
+          <span onClick={() => setActivePart(p.id)} style={{ flex:1, fontSize:12.5, fontWeight:500, color:'#1e2433', cursor:'pointer' }}>
             {p.name}
           </span>
+          <button
+            onClick={(e) => { e.stopPropagation(); transposePartOctave(p.id, -1) }}
+            title={`Shift every note in ${p.name} down one octave`}
+            style={{
+              width:20, height:20, borderRadius:4, border:'1px solid #e5e7eb', background:'white',
+              color:'#6b7280', fontSize:12, lineHeight:1, cursor:'pointer', flexShrink:0,
+              display:'flex', alignItems:'center', justifyContent:'center',
+            }}
+          >↓8</button>
+          <button
+            onClick={(e) => { e.stopPropagation(); transposePartOctave(p.id, 1) }}
+            title={`Shift every note in ${p.name} up one octave`}
+            style={{
+              width:20, height:20, borderRadius:4, border:'1px solid #e5e7eb', background:'white',
+              color:'#6b7280', fontSize:12, lineHeight:1, cursor:'pointer', flexShrink:0,
+              display:'flex', alignItems:'center', justifyContent:'center',
+            }}
+          >↑8</button>
         </div>
       ))}
       <div style={{ marginTop:10, fontSize:11, color:'#9ca3af', lineHeight:1.5 }}>
         Voice arrangement is set when the score is created. Click a part above to make it active for note entry.
+        The ↑8/↓8 buttons shift every note already entered in that part by a full octave — useful if a part (bass in
+        particular) got entered at the wrong default octave.
       </div>
     </div>
   )
