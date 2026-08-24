@@ -30,7 +30,7 @@
 
 import { useEffect, useRef, useCallback } from 'react'
 import * as Tone from 'tone'
-import { useSolfaStore, solfaToMidi, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
+import { useSolfaStore, solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SAMPLE MAPS
@@ -107,8 +107,8 @@ const VOICE_EQ = {
   ],
   bass: [
     { type: 'lowshelf', frequency: 130,  gain: 5 },
-    { type: 'peaking',  frequency: 500,  Q: 1.0, gain: -3 },
-    { type: 'highshelf', frequency: 3500, gain: -5 },
+    { type: 'peaking',  frequency: 500,  Q: 1.0, gain: -1.5 },
+    { type: 'highshelf', frequency: 3500, gain: -2 },
   ],
   piano: [],
   solo: [
@@ -137,7 +137,11 @@ const VOICE_TIMING_LEAN = { soprano: -0.003, alto: 0, tenor: 0.003, bass: 0.008,
 
 // Small per-voice loudness compensation — low fundamentals read as quieter
 // than they measure (equal-loudness contours), especially on phone speakers.
-const VOICE_GAIN_TRIM = { soprano: -1, alto: 0, tenor: 0.5, bass: 1.5, piano: 0, solo: 0, default: 0 }
+// Bass needed a bigger bump here after VOICE_OCTAVE_OFFSET (solfaStore.js)
+// started applying Bass's correct real-world octave — a genuinely lower
+// note is genuinely quieter to the ear than the higher one this trim was
+// originally tuned against, so the old +1.5dB wasn't enough anymore.
+const VOICE_GAIN_TRIM = { soprano: -1, alto: 0, tenor: 0.5, bass: 4, piano: 0, solo: 0, default: 0 }
 
 // Humanization constants
 const HUMAN_TIMING_MAX = 0.016   // random micro-timing jitter, seconds
@@ -229,7 +233,7 @@ function buildSchedule(score, tempo, partMutes) {
           const timingOffset = rand(HUMAN_TIMING_MAX) + lean
           const pitchOffsetCents = rand(HUMAN_PITCH_MAX)
 
-          const midi        = solfaToMidi(ev.syllable, ev.octave || 0, resolveKeyAt(score, mIdx, ev.beatIdx, ev.eventIdx))
+          const midi        = solfaToMidiForVoice(ev.syllable, ev.octave || 0, resolveKeyAt(score, mIdx, ev.beatIdx, ev.eventIdx), part.id)
           const pitchedMidi = midi + pitchOffsetCents / 100
           const hz          = midiToHz(pitchedMidi)
 

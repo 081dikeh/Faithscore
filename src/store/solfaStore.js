@@ -69,6 +69,24 @@ export function solfaToMidi(syllable,octave=0,key='C') {
   return (KEY_ROOTS[key]??60)+(SOLFA_SEMITONES[syllable?.toLowerCase()]??0)+octave*12
 }
 
+// Real tonic sol-fa practice: Bass conventionally sounds a full octave
+// lower than its written syllable, without every single note needing an
+// explicit octave marker to say so — the reader/singer just understands
+// Bass sits in its own naturally lower register. Every other voice's
+// octave markers are already correct as literally written. This is a
+// PERMANENT, automatic correction applied wherever a voice's notes get
+// turned into an actual pitch (playback, staff-notation conversion) — not
+// a one-off data fix — so it's retroactive for every existing note in a
+// Bass part and requires nothing to be re-entered or manually shifted.
+export const VOICE_OCTAVE_OFFSET = { b: -1 }
+
+// Same as solfaToMidi, but also applies the voice's implicit octave
+// offset above. Use this (not solfaToMidi directly) anywhere an event's
+// actual sounding pitch is being computed and the voice/part id is known.
+export function solfaToMidiForVoice(syllable, octave, key, voiceId) {
+  return solfaToMidi(syllable, (octave || 0) + (VOICE_OCTAVE_OFFSET[voiceId] || 0), key)
+}
+
 export const VOICE_COMBOS = {
   solo:       {label:'Solo',        voices:[{id:'solo',name:'Voice',  label:'V'}]},
   sa:         {label:'SA',          voices:[{id:'s',name:'Soprano',label:'S'},{id:'a',name:'Alto',label:'A'}]},
@@ -345,17 +363,7 @@ export const useSolfaStore = create((set,get) => ({
   },
 
   // ── Active part (sidebar "Parts" tab) ─────────────────────────────────────
-  setActivePart: (partId) => set(s => {
-    const part = s.score.parts.find(p => p.id === partId)
-    // Nudge the default entry octave down when switching to Bass — typing
-    // notes into Bass right after an upper voice, without manually
-    // shifting the octave control first, is exactly what produces a bass
-    // line that's an octave too high (selectedOctave was previously a
-    // single global default shared by every voice, with nothing here to
-    // stop that). Every other voice conventionally sits fine at octave 0.
-    const suggestedOctave = part?.id === 'b' ? -1 : 0
-    return { selectedPartId: partId, selectedOctave: suggestedOctave }
-  }),
+  setActivePart: (partId) => set({ selectedPartId: partId }),
 
   // Shifts every 'note' event in one part by a full octave (dir = +1 or
   // -1). Sustain/rest events carry no pitch of their own so there's

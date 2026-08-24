@@ -29,7 +29,7 @@
 // algorithm normalizeMeasure() already uses when a note needs to be split
 // across a measure boundary.
 
-import { solfaToMidi, migrateMeasure } from '../store/solfaStore'
+import { solfaToMidiForVoice, migrateMeasure } from '../store/solfaStore'
 import { spellPitch, MAJOR_SCALES, beatsToRest, DURATION_BEATS, EMPTY_SCORE } from '../store/scoreStore'
 
 // ─── Pitch ──────────────────────────────────────────────────────────────────
@@ -64,8 +64,14 @@ export function solfaKeyToKeySignature(key) {
 // formula, NOT the +12-off formula Score uses for its own internal
 // shiftPitchStep/HalfStep math (see staffToSolfa.js's comment on
 // scorePitchToMidi for why those two are deliberately different).
-export function solfaToScorePitch(syllable, octave, key) {
-  const midi = solfaToMidi(syllable, octave, key)
+//
+// voiceId, if given, applies the same implicit per-voice octave offset
+// playback uses (solfaStore's VOICE_OCTAVE_OFFSET) — Bass sounds a full
+// octave lower than its written syllable by convention, so a converted
+// Staff score needs that applied too, or it would show/sound a different
+// pitch than the Solfa score it came from.
+export function solfaToScorePitch(syllable, octave, key, voiceId) {
+  const midi = solfaToMidiForVoice(syllable, octave, key, voiceId)
   const pc = ((midi % 12) + 12) % 12
   const scoreOctave = Math.floor(midi / 12) - 1
   const keySig = solfaKeyToKeySignature(key)
@@ -104,7 +110,7 @@ function notesFromSpan(qb, pitch, warnings) {
 }
 
 // Converts one Solfa measure's beats[] into a flat Score notes[] list.
-export function convertSolfaBeatsToNotes(beats, timeSignature, key, warnings) {
+export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, warnings) {
   const ts = timeSignature || { beats: 4, beatType: 4 }
   const qbPerSolfaBeat = 4 / ts.beatType
   const qbPerQuarterUnit = qbPerSolfaBeat / QUARTER_UNITS_PER_BEAT
@@ -143,7 +149,7 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, warnings) {
       events.forEach(ev => {
         let pitch = null
         if (ev.type === 'note' && ev.syllable) {
-          pitch = solfaToScorePitch(ev.syllable, ev.octave || 0, key)
+          pitch = solfaToScorePitch(ev.syllable, ev.octave || 0, key, voiceId)
           lastPitch = pitch
         } else if (ev.type === 'sustain') {
           // Continues whatever pitch the preceding 'note' in this triplet
@@ -166,7 +172,7 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, warnings) {
     for (const ev of events) {
       if (ev.type === 'note' && ev.syllable) {
         flush()
-        open = { pitch: solfaToScorePitch(ev.syllable, ev.octave || 0, key), qu: ev.duration }
+        open = { pitch: solfaToScorePitch(ev.syllable, ev.octave || 0, key, voiceId), qu: ev.duration }
       } else if (ev.type === 'sustain') {
         if (open && open.pitch) {
           open.qu += ev.duration
@@ -230,7 +236,7 @@ export function convertSolfaScoreToStaff(solfaScore) {
     const measures = (voicePart.measures || []).map(measure => {
       const migrated = migrateMeasure(measure)
       const ts = migrated.timeSignature || startTs
-      const notes = convertSolfaBeatsToNotes(migrated.beats, ts, startKey, warnings)
+      const notes = convertSolfaBeatsToNotes(migrated.beats, ts, startKey, voicePart.id, warnings)
       return { id: crypto.randomUUID(), timeSignature: ts, keySignature: startKeySig, notes }
     })
 

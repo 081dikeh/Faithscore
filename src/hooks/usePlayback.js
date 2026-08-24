@@ -158,6 +158,7 @@ function buildSchedule(score, tempo) {
               dur:          Math.max(0.06, fullDurSec * gate * (holdMult > 1 ? 1 : 0.88)),
               notes:        toneNotes,
               velocity,
+              partId:       part.id,
               beatPosition: globalSec / secPerBeat + beatCursor,  // absolute beat
               measureIndex: mIdx,
             })
@@ -193,6 +194,14 @@ export function usePlayback() {
   const metronomeOnRef = useRef(false)
   const loopRef        = useRef(false)
   const userTempoRef   = useRef(null) // null = use score tempo
+  // Per-part mixer — mirrors useSolfaPlayback's shape exactly, but applied
+  // as a velocity scale at trigger time rather than a dedicated Gain node
+  // per part, since every part here shares one instrument instance (unlike
+  // Solfa's separate sampler chain per voice) — this gets the same
+  // practical effect (louder/quieter/muted per part) without needing to
+  // load a separate instrument per part.
+  const partVolsRef    = useRef({}) // partId -> 0..100, default 100
+  const partMutesRef   = useRef({}) // partId -> boolean
 
   // ── Effects chain ─────────────────────────────────────────────────────────
   function getEffectsChain() {
@@ -309,10 +318,13 @@ export function usePlayback() {
     // Only schedule events at or after startSec
     schedule.events
       .filter(ev => ev.time >= startSec - 0.001)
+      .filter(ev => !partMutesRef.current[ev.partId])
       .forEach(ev => {
         const relTime = ev.time - startSec + LEAD
+        const partScale = Math.max(0, Math.min(1, (partVolsRef.current[ev.partId] ?? 100) / 100))
+        const scaledVelocity = Math.max(0, Math.min(1, ev.velocity * partScale))
         Tone.getTransport().schedule((audioTime) => {
-          instrument.triggerAttackRelease(ev.notes, ev.dur, audioTime, ev.velocity)
+          instrument.triggerAttackRelease(ev.notes, ev.dur, audioTime, scaledVelocity)
         }, relTime)
       })
 
@@ -416,6 +428,32 @@ export function usePlayback() {
     }
   }, [score])
 
+  // Per-part mixer. Volume/mute are baked into each note's velocity at
+  // schedule time (see scheduleAndPlay above), not a live-automatable Gain
+  // node like useSolfaPlayback's per-voice channels — so a change made
+  // mid-playback needs a quick reschedule from the current position to
+  // actually take effect, same as setTempo just above.
+  const setPartVolume = useCallback((partId, pct) => {
+    partVolsRef.current[partId] = pct
+    if (isPlayingRef.current) {
+      const elapsed = Tone.now() - transportStart.current
+      const currentSec = seekOffsetRef.current + elapsed
+      scheduleAndPlay(currentSec)
+    }
+  }, [score])
+
+  const setPartMute = useCallback((partId, muted) => {
+    partMutesRef.current[partId] = muted
+    if (isPlayingRef.current) {
+      const elapsed = Tone.now() - transportStart.current
+      const currentSec = seekOffsetRef.current + elapsed
+      scheduleAndPlay(currentSec)
+    }
+  }, [score])
+
+  const getPartVolume = useCallback((partId) => partVolsRef.current[partId] ?? 100, [])
+  const getPartMuted  = useCallback((partId) => partMutesRef.current[partId] ?? false, [])
+
   const playFromBeat = useCallback(async (startBeat) => {
     await Tone.start()
     const effectiveTempo = userTempoRef.current || score.tempo || 120
@@ -465,5 +503,6 @@ export function usePlayback() {
     isMetronomeOn: () => metronomeOnRef.current,
     isLooping:     () => loopRef.current,
     isPaused:      () => isPausedRef.current,
+    setPartVolume, setPartMute, getPartVolume, getPartMuted,
   }
 }

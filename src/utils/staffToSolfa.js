@@ -28,7 +28,7 @@
 // many further beats it spans. That splitting is what most of this file is
 // actually doing.
 
-import { KEY_ROOTS, SOLFA_SEMITONES, buildEmptySolfaScore, VOICE_COMBOS } from '../store/solfaStore'
+import { KEY_ROOTS, SOLFA_SEMITONES, buildEmptySolfaScore, VOICE_COMBOS, VOICE_OCTAVE_OFFSET } from '../store/solfaStore'
 import { noteDuration, MAJOR_SCALES } from '../store/scoreStore'
 
 // ─── Pitch ──────────────────────────────────────────────────────────────────
@@ -65,6 +65,20 @@ export function midiToSolfa(midi, key = 'C') {
   return { syllable, octave }
 }
 
+// Same as midiToSolfa, but applies the INVERSE of the same per-voice
+// octave offset solfaToStaff.js's solfaToMidiForVoice applies (Bass
+// sounds a full octave lower than its written syllable by convention —
+// see VOICE_OCTAVE_OFFSET in solfaStore.js). Storing the octave one
+// higher than the literal pitch here is what makes that offset a no-op
+// for a Score→Solfa→Score round trip: convert down here, then back up
+// when the Solfa score is later read for playback or converted back —
+// without this, a Bass part would come back an extra octave too low.
+export function midiToSolfaForVoice(midi, key, voiceId) {
+  const offset = VOICE_OCTAVE_OFFSET[voiceId] || 0
+  const result = midiToSolfa(midi, key)
+  return { syllable: result.syllable, octave: result.octave - offset }
+}
+
 // Score's key signature is a circle-of-fifths integer (0=C, 1=G, -1=F, …).
 // Solfa's key is a letter name. Reuses the exact tonic spelling Score
 // itself would show for that key signature, falling back to a plain
@@ -92,7 +106,7 @@ function makeSolfaEvent(type, syllable, octave, durationQU) {
   return { id: crypto.randomUUID(), type, syllable, octave, lyric: null, duration: durationQU }
 }
 
-export function convertMeasureToSolfaBeats(notes, timeSignature, key, warnings) {
+export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, warnings) {
   const ts = timeSignature || { beats: 4, beatType: 4 }
   const beatCount = ts.beats
   // How many Score quarter-beats does ONE Solfa beat span? Solfa always
@@ -131,7 +145,7 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, warnings) 
     let syllable = null, octave = 0
     if (!span.isRest && span.pitch) {
       const midi = scorePitchToMidi(span.pitch)
-      const solfa = midiToSolfa(midi, key)
+      const solfa = midiToSolfaForVoice(midi, key, voiceId)
       syllable = solfa.syllable
       octave = solfa.octave
     }
@@ -252,7 +266,7 @@ export function convertStaffScoreToSolfa(staffScore) {
       if (keySig !== startKeySig) {
         warnings.push(`This part changes key partway through — pitches are converted correctly, but the key change itself isn't marked in the sol-fa score yet.`)
       }
-      const beats = convertMeasureToSolfaBeats(measure.notes, ts, key, warnings)
+      const beats = convertMeasureToSolfaBeats(measure.notes, ts, key, voice.id, warnings)
       return { id: crypto.randomUUID(), timeSignature: ts, beats }
     })
 

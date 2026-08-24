@@ -1,7 +1,7 @@
 // src/App.jsx
 import { useEffect, useState, useRef } from 'react'
 import {
-  SkipBack, Play, Pause, Square, Repeat, Metronome, Piano as PianoIcon,
+  SkipBack, Play, Pause, Square, Repeat, Metronome, Piano as PianoIcon, SlidersHorizontal,
   Sun, Moon, Minus, Plus, LogOut, Undo2, Redo2,
   FilePlus, FolderOpen, Save, Printer, Power, Scissors, Copy, Clipboard,
   Trash2, Settings, Sparkles, Eraser, ChevronUp, ChevronDown, UploadCloud, Music4,
@@ -451,7 +451,7 @@ export default function App() {
   const isPlaying    = useScoreStore(s => s.isPlaying)
   const playbackBeat = useScoreStore(s => s.playbackBeat)
 
-  const { play, pause, stop, rewind, playFromBeat, seekToBeat, setTempo: setPlaybackTempo, getCurrentSec, getTotalSecs, toggleMetronome, toggleLoop } = usePlayback()
+  const { play, pause, stop, rewind, playFromBeat, seekToBeat, setTempo: setPlaybackTempo, getCurrentSec, getTotalSecs, toggleMetronome, toggleLoop, setPartVolume, setPartMute } = usePlayback()
 
   // ── Local UI state — all declared together before any logic ───────────────
   const [samplesLoaded, setSamplesLoaded]     = useState(false)
@@ -465,6 +465,8 @@ export default function App() {
   const [showViewMenu, setShowViewMenu]       = useState(false)
   const [showToolsMenu, setShowToolsMenu]     = useState(false)
   const [showPiano, setShowPiano]             = useState(false)
+  const [showMixer, setShowMixer]             = useState(false)
+  const [partVolumes, setPartVolumes]         = useState({})
   const [showPublish, setShowPublish]         = useState(false)
   const [seekValue, setSeekValue]             = useState(0)     // 0-100 for seek bar
   const [tempoOverride, setTempoOverride]     = useState(null)  // null = score tempo
@@ -1248,6 +1250,11 @@ export default function App() {
             className={`w-8 h-8 flex items-center justify-center rounded-md border transition-colors ${showPiano ? 'bg-blue-50 border-blue-400 text-blue-600' : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-100'}`}>
             <PianoIcon size={16} strokeWidth={1.75} />
           </button>
+          {/* Mixer */}
+          <button onClick={() => setShowMixer(v => !v)} title="Mixer"
+            className={`w-8 h-8 flex items-center justify-center rounded-md border transition-colors ${showMixer ? 'bg-blue-50 border-blue-400 text-blue-600' : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-100'}`}>
+            <SlidersHorizontal size={16} strokeWidth={1.75} />
+          </button>
           {samplesLoading && <span className="text-amber-500 text-xs animate-pulse">Loading…</span>}
         </div>
 
@@ -1292,6 +1299,61 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* ── Mixer panel (per-part volume) ── */}
+      {showMixer && (
+        <div style={{
+          background: '#111827', borderBottom: '1px solid #374151',
+          padding: '10px 16px', display: 'flex', alignItems: 'center',
+          gap: 20, flexWrap: 'wrap', flexShrink: 0,
+        }}>
+          {score.parts.map(part => {
+            const vol = partVolumes[part.id] ?? 100
+            const muted = vol === 0
+            return (
+              <div key={part.id} style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                background: '#1f2937', borderRadius: 8, padding: '8px 10px', minWidth: 64,
+              }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#e5e7eb' }}>
+                  {part.name || part.instrument || 'Part'}
+                </span>
+                <input
+                  type="range" min={0} max={100} value={vol}
+                  orient="vertical"
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    setPartVolumes(pv => ({ ...pv, [part.id]: v }))
+                    setPartVolume(part.id, v)
+                    setPartMute(part.id, v === 0)
+                  }}
+                  style={{
+                    writingMode: 'vertical-lr', direction: 'rtl', WebkitAppearance: 'slider-vertical',
+                    width: 28, height: 80, accentColor: muted ? '#dc2626' : '#22c55e', cursor: 'pointer',
+                  }}
+                />
+                <span style={{ fontSize: 9, color: muted ? '#dc2626' : '#6ee7b7', fontFamily: 'monospace', fontWeight: 700 }}>
+                  {muted ? 'MUTE' : `${vol}%`}
+                </span>
+                <button
+                  onClick={() => {
+                    const newVol = muted ? 80 : 0
+                    setPartVolumes(pv => ({ ...pv, [part.id]: newVol }))
+                    setPartVolume(part.id, newVol)
+                    setPartMute(part.id, newVol === 0)
+                  }}
+                  style={{
+                    width: 40, height: 20, borderRadius: 4, border: 'none', cursor: 'pointer',
+                    fontSize: 9, fontWeight: 700, background: muted ? '#dc2626' : '#374151', color: 'white',
+                  }}
+                >
+                  {muted ? 'UNMUTE' : 'MUTE'}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* ── Score info + status bar ── */}
       <div className="bg-white border-b border-gray-200 px-5 py-2 flex items-center gap-5 flex-shrink-0">

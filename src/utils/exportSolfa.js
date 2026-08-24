@@ -10,7 +10,7 @@
 // FluidR3 CDN used by useSolfaPlayback.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { solfaToMidi, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
+import { solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -171,7 +171,7 @@ function buildEventList(score, tempo) {
           }
           const startSec = globalSec + ev.qAbs * secPerQUnit
           const durSec   = Math.max(0.08, totalQ * secPerQUnit - 0.025)
-          const midi     = solfaToMidi(ev.syllable, ev.octave || 0, resolveKeyAt(score, mIdx, ev.beatIdx, ev.eventIdx))
+          const midi     = solfaToMidiForVoice(ev.syllable, ev.octave || 0, resolveKeyAt(score, mIdx, ev.beatIdx, ev.eventIdx), part.id)
           const panPos   = STEREO_PAN[vtype] ?? 0
           events.push({ startSec, durSec, midi, vtype, panPos, partLabel: part.label })
           i = j
