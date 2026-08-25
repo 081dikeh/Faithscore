@@ -314,7 +314,14 @@ function buildVoiceChannel(vtype, panPos, outputNode, onLoad, presetId) {
   const urls    = buildSampleUrls(program, notes)
 
   const panner = new Tone.Panner(panPos).connect(outputNode)
-  const eq     = buildEQChain(soundType)
+  // EQ is keyed by vtype (the real voice), not soundType (the preset-
+  // overridden sample choice) specifically for bass — its low-shelf boost
+  // is compensating for a frequency-register reality (low notes read as
+  // quieter to the ear) that doesn't go away just because "Piano Solo" was
+  // picked for the timbre. Every other voice's EQ is genuinely about
+  // choir_aahs sample artifacts, so those still correctly follow
+  // soundType and go silent (no artifacts to correct) under Piano Solo.
+  const eq     = buildEQChain(vtype === 'bass' ? 'bass' : soundType)
 
   const chorusSettings = VOICE_CHORUS[soundType]
   let chorus = null
@@ -338,11 +345,17 @@ function buildVoiceChannel(vtype, panPos, outputNode, onLoad, presetId) {
     onerror: onLoad,
   }).connect(eq.input)
 
-  // ── Sub-bass reinforcement layer (bass voice only, and only for choir
-  // presets — the piano preset shouldn't get a synthesized sub-bass layer
-  // glued under it, a piano's low end is exactly what the samples give it) ──
+  // ── Sub-bass reinforcement layer (bass voice only) ──────────────────────
+  // Gated on vtype, not soundType/presetId — a bass voice needs this
+  // regardless of which sample timbre the preset picked. This used to be
+  // choir-presets-only, on the assumption a piano's natural low end
+  // wouldn't need it; in practice a piano sample pitch-shifted this far
+  // down (see VOICE_OCTAVE_OFFSET) thins out same as any other sample
+  // would, and a piano's percussive decay is quieter to begin with than a
+  // sustained choir pad, so it needs the same reinforcement everyone else
+  // gets.
   let subSynth = null, subDist = null, subLpf = null
-  if (soundType === 'bass') {
+  if (vtype === 'bass') {
     subSynth = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: 'fatsine', count: 3, spread: 12 },
       envelope:   { attack: 0.09, decay: 0.25, sustain: 0.85, release: 0.5 },

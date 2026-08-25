@@ -278,6 +278,8 @@ export default function ScoreRenderer() {
   // { partId, measureIndex, zKey, beat, pitch, ghostX, ghostY, isChord }
   const [cursor, setCursor] = useState(null);
   const cursorRef = useRef(null); // always-fresh cursor for click handler
+  const playbackCursorElRef = useRef(null); // the playback cursor's own DOM element, for scroll-follow
+  const lastScrollTopRef = useRef(null); // last row Y we auto-scrolled to, so we only scroll on row changes
 
   const score = useScoreStore((s) => s.score);
   const selectedMeasureIndex = useScoreStore((s) => s.selectedMeasureIndex);
@@ -1545,6 +1547,26 @@ export default function ScoreRenderer() {
     };
   })();
 
+  // Follow playback — the page scrolls to keep the cursor in view once it
+  // moves to a new system/row, matching SolfaRenderer's exact behavior
+  // (see the comment there). Only scrolls on a row change (not every
+  // frame within the same row), so it doesn't fight a manual scroll while
+  // the cursor is just moving sideways across the current line.
+  useEffect(() => {
+    if (!cursorStyle) {
+      lastScrollTopRef.current = null;
+      return;
+    }
+    if (cursorStyle.top !== lastScrollTopRef.current) {
+      lastScrollTopRef.current = cursorStyle.top;
+      playbackCursorElRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+        inline: "nearest",
+      });
+    }
+  }, [cursorStyle?.top]);
+
   // ── Shared pitch/beat calculation helpers (used by both mousemove and zone handlers)
   const computeCursorFromEvent = useCallback(
     (e) => {
@@ -2020,7 +2042,7 @@ export default function ScoreRenderer() {
         />
       ))}
       {/* Playback cursor — red vertical line tracking beat position */}
-      {cursorStyle && <div style={cursorStyle} />}
+      {cursorStyle && <div ref={playbackCursorElRef} style={cursorStyle} />}
 
       {/* ── Dynamics overlays ─────────────────────────────────────────── */}
       {dynamics.map((dyn) => {
