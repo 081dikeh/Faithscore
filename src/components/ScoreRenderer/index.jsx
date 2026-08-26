@@ -50,7 +50,7 @@ const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3; // 84px — click zone includes ledg
 // directly from the zone's click-zone height (z.height = realSP * 7, since
 // STAVE_HEIGHT = STAFF_HEIGHT(realSP*4) + realSP*3). This is more direct
 // than the old "scale = z.height/98" ratio and avoids compounding error.
-//
+// Added a coment
 // Clearance = 1.2 staff-spaces — a clearly visible gap in real engraving
 // terms, scaled correctly for whatever staff size is actually rendering.
 function aboveBelowGap(zoneHeight) {
