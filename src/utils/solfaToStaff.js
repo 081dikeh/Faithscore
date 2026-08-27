@@ -110,21 +110,39 @@ function notesFromSpan(qb, pitch, warnings) {
 }
 
 // Converts one Solfa measure's beats[] into a flat Score notes[] list.
-export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, warnings) {
+//
+// carryPitchIn: the pitch (or null for "was a rest") that was still open at
+// the END of the PREVIOUS measure — or undefined if nothing was open. This
+// is used ONLY to interpret a 'sustain' event that's the very FIRST event
+// of THIS measure: that's the one case where "sustain with nothing open to
+// continue" doesn't mean malformed data, it means the held note crossed
+// the barline. Everything within a measure always fully resolves and
+// flushes by the end of that same measure — Score's data model requires a
+// measure's notes to sum to exactly that measure's own capacity, so a note
+// can never literally span two measures as one object; a barline-crossing
+// sustain has to become two separately-flushed, tied pieces, one per
+// measure either side of it.
+//
+// Returns { notes, endOpenPitch, carryConsumed }:
+//   endOpenPitch  — the pitch (or null) still open at the END of this
+//                   measure, for the caller to pass as carryPitchIn to the
+//                   NEXT measure's call. undefined if nothing was open.
+//   carryConsumed — true if carryPitchIn was actually used (this measure's
+//                   first event really was a continuing sustain), so the
+//                   caller knows to go back and set tieStart:true on the
+//                   PREVIOUS measure's last note.
+export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, warnings, carryPitchIn) {
   const ts = timeSignature || { beats: 4, beatType: 4 }
   const qbPerSolfaBeat = 4 / ts.beatType
   const qbPerQuarterUnit = qbPerSolfaBeat / QUARTER_UNITS_PER_BEAT
 
   const notes = []
-  // "open" tracks the pitched note or rest currently being extended by
-  // sustain/consecutive-rest events, in quarter-UNITS, until the next
-  // event that isn't a continuation of it closes it out.
-  let open = null // { pitch: {..}|null, qu: number }
+  let open = null // { pitch: {..}|null, qb: number } | null
+  let carryConsumed = false
 
   const flush = () => {
     if (!open) return
-    const qb = open.qu * qbPerQuarterUnit
-    notes.push(...notesFromSpan(qb, open.pitch, warnings))
+    notes.push(...notesFromSpan(open.qb, open.pitch, warnings))
     open = null
   }
 
@@ -170,33 +188,45 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
     }
 
     for (const ev of events) {
+      const evQb = ev.duration * qbPerQuarterUnit
+      const isVeryFirstEvent = notes.length === 0 && !open
+
       if (ev.type === 'note' && ev.syllable) {
         flush()
-        open = { pitch: solfaToScorePitch(ev.syllable, ev.octave || 0, key, voiceId), qu: ev.duration }
+        open = { pitch: solfaToScorePitch(ev.syllable, ev.octave || 0, key, voiceId), qb: evQb }
       } else if (ev.type === 'sustain') {
         if (open && open.pitch) {
-          open.qu += ev.duration
+          open.qb += evQb
+        } else if (isVeryFirstEvent && carryPitchIn !== undefined && carryPitchIn !== null) {
+          // The barline-crossing case: this measure's very first event is
+          // a sustain, and the previous measure ended with something open
+          // — continue THAT pitch, starting fresh at this measure's own
+          // beat 0 (not carrying over any accumulated duration, since
+          // that duration already got flushed into the previous measure).
+          open = { pitch: carryPitchIn, qb: evQb }
+          carryConsumed = true
         } else {
-          // A sustain with nothing open to continue (malformed/edge data)
-          // — best effort: treat as a rest rather than dropping it, so
-          // total measure duration still comes out right.
+          // Genuinely malformed — a sustain with nothing open to continue
+          // and no barline carry-over to explain it.
           warnings.push('A held note was missing what it continues from — filled with a rest instead.')
           flush()
-          open = { pitch: null, qu: ev.duration }
+          open = { pitch: null, qb: evQb }
         }
       } else { // 'rest', or anything unrecognized
         if (open && !open.pitch) {
-          open.qu += ev.duration
+          open.qb += evQb
         } else {
           flush()
-          open = { pitch: null, qu: ev.duration }
+          open = { pitch: null, qb: evQb }
         }
       }
     }
   }
+
+  const endOpenPitch = open ? open.pitch : undefined
   flush()
 
-  return notes
+  return { notes, endOpenPitch, carryConsumed }
 }
 
 // ─── Part mapping ───────────────────────────────────────────────────────────
@@ -233,12 +263,26 @@ export function convertSolfaScoreToStaff(solfaScore) {
     const name = VOICE_ID_TO_NAME[voicePart.id] || voicePart.name || voicePart.label || 'Voice'
     const clef = voicePart.id === 'b' ? 'bass' : 'treble'
 
-    const measures = (voicePart.measures || []).map(measure => {
-      const migrated = migrateMeasure(measure)
+    const partMeasures = voicePart.measures || []
+    const measures = []
+    let carryPitch // undefined = nothing open yet
+    for (let mi = 0; mi < partMeasures.length; mi++) {
+      const migrated = migrateMeasure(partMeasures[mi])
       const ts = migrated.timeSignature || startTs
-      const notes = convertSolfaBeatsToNotes(migrated.beats, ts, startKey, voicePart.id, warnings)
-      return { id: crypto.randomUUID(), timeSignature: ts, keySignature: startKeySig, notes }
-    })
+      const { notes, endOpenPitch, carryConsumed } = convertSolfaBeatsToNotes(migrated.beats, ts, startKey, voicePart.id, warnings, carryPitch)
+
+      // If this measure's first note really did continue a sustain from
+      // the previous measure, go back and mark the previous measure's
+      // last note as tied forward into this one.
+      if (carryConsumed && measures.length > 0) {
+        const prevNotes = measures[measures.length - 1].notes
+        const lastPrevNote = prevNotes[prevNotes.length - 1]
+        if (lastPrevNote) lastPrevNote.tieStart = true
+      }
+      carryPitch = endOpenPitch
+
+      measures.push({ id: crypto.randomUUID(), timeSignature: ts, keySignature: startKeySig, notes })
+    }
 
     return { id: crypto.randomUUID(), name, instrument: 'piano', clef, measures }
   })

@@ -7,7 +7,6 @@ import {
   Voice,
   Formatter,
   Accidental,
-  Annotation,
   StaveConnector,
   Dot,
   Beam,
@@ -50,7 +49,7 @@ const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3; // 84px — click zone includes ledg
 // directly from the zone's click-zone height (z.height = realSP * 7, since
 // STAVE_HEIGHT = STAFF_HEIGHT(realSP*4) + realSP*3). This is more direct
 // than the old "scale = z.height/98" ratio and avoids compounding error.
-// Added a coment
+//
 // Clearance = 1.2 staff-spaces — a clearly visible gap in real engraving
 // terms, scaled correctly for whatever staff size is actually rendering.
 function aboveBelowGap(zoneHeight) {
@@ -259,13 +258,13 @@ function buildVfNote(n, clef, isSelected, chordExtras = [], keySigAccidentals = 
     accidentalState[stateKey] = actual;
   });
 
-  if (n.lyric) {
-    sn.addModifier(
-      new Annotation(n.lyric)
-        .setVerticalJustification(Annotation.VerticalJustify.BOTTOM)
-        .setFont("serif", 11),
-    );
-  }
+  // Lyrics are NOT attached here as a VexFlow Annotation modifier — that
+  // auto-positions relative to each note's OWN bounding box (which varies
+  // with stem direction, beaming, ledger lines...), which is exactly what
+  // produced a ragged, inconsistent lyric line instead of a straight one.
+  // They're drawn manually instead, after the whole system is laid out,
+  // at one shared baseline per staff row — see the ctx.fillText pass right
+  // after voice.draw(ctx, stave) below.
   return sn;
 }
 
@@ -381,10 +380,21 @@ export default function ScoreRenderer() {
         if (!m) continue;
         const nonChord = m.notes.filter((n) => !n.chordWith);
         const notePx = nonChord.reduce((sum, n) => {
-          const px = NOTE_PX[n.duration] || SP * 3;
-          return (
-            sum + px + (n.dots ? SP : 0) + (n.pitch?.accidental ? SP * 0.8 : 0)
-          );
+          const durationPx =
+            (NOTE_PX[n.duration] || SP * 3) +
+            (n.dots ? SP : 0) +
+            (n.pitch?.accidental ? SP * 0.8 : 0);
+          // A note's slot has to be at least as wide as its lyric syllable
+          // needs, or the syllable just overflows past the bar's right
+          // edge instead of the bar growing to fit it — this was
+          // previously ignored entirely, which is exactly what made typing
+          // a longer lyric look like it was shoving following notes into
+          // the next bar rather than making room in the current one.
+          // ~0.55× font size per character is a standard average-glyph-
+          // width estimate for a proportional serif font — doesn't need to
+          // be exact, just wide enough to avoid overflow.
+          const lyricPx = n.lyric ? n.lyric.length * (11 * 0.55) + SP * 0.5 : 0;
+          return sum + Math.max(durationPx, lyricPx);
         }, 0);
         if (notePx > maxNotePx) maxNotePx = notePx;
       }
@@ -915,6 +925,22 @@ export default function ScoreRenderer() {
             beamGroups.forEach((b) => {
               try {
                 b.setContext(ctx).draw();
+              } catch (_) {}
+            });
+
+            // ── Lyrics ──────────────────────────────────────────────────────
+            // Drawn manually at ONE shared baseline for this entire staff
+            // row (not per-note), which is what actually makes them line
+            // up straight — getAbsoluteX() is only valid now, after
+            // voice.draw() has finished formatting/positioning every note.
+            const lyricY = partY + STAFF_HEIGHT + SP * 2;
+            renderSeq.forEach((seqNote, ni) => {
+              if (!seqNote.lyric) return;
+              try {
+                ctx.save();
+                ctx.setFont("Times New Roman", 11);
+                ctx.fillText(seqNote.lyric, vfNotes[ni].getAbsoluteX(), lyricY);
+                ctx.restore();
               } catch (_) {}
             });
 
