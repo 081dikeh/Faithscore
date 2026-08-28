@@ -933,16 +933,25 @@ export default function ScoreRenderer() {
             // row (not per-note), which is what actually makes them line
             // up straight — getAbsoluteX() is only valid now, after
             // voice.draw() has finished formatting/positioning every note.
-            const lyricY = partY + STAFF_HEIGHT + SP * 2;
-            renderSeq.forEach((seqNote, ni) => {
-              if (!seqNote.lyric) return;
-              try {
-                ctx.save();
-                ctx.setFont("Times New Roman", 11);
-                ctx.fillText(seqNote.lyric, vfNotes[ni].getAbsoluteX(), lyricY);
-                ctx.restore();
-              } catch (_) {}
-            });
+            // Uses the stave's own getBottomY() rather than a hand-rolled
+            // partY + STAFF_HEIGHT approximation — that assumed OUR
+            // STAFF_HEIGHT constant exactly matched VexFlow's own internal
+            // stave geometry, and any mismatch there is exactly what put
+            // the lyrics up inside the staff instead of below it.
+            const lyricY = stave.getBottomY() + SP * 2.5;
+            if (renderSeq.some((n) => n.lyric)) {
+              ctx.setFont("Times New Roman", 11, "normal");
+              renderSeq.forEach((seqNote, ni) => {
+                if (!seqNote.lyric) return;
+                try {
+                  ctx.fillText(seqNote.lyric, vfNotes[ni].getAbsoluteX(), lyricY);
+                } catch (_) {}
+              });
+              // Explicit reset (not save/restore) so whatever draws next —
+              // measure numbers, rehearsal marks — isn't left inheriting
+              // size-11 lyric text as its font.
+              ctx.setFont("Times New Roman", 10);
+            }
 
             // ── Articulations ────────────────────────────────────────────────
             // Draw articulation marks above/below noteheads using canvas primitives.
