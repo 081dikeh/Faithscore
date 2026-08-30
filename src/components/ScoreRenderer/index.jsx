@@ -385,15 +385,25 @@ export default function ScoreRenderer() {
             (n.dots ? SP : 0) +
             (n.pitch?.accidental ? SP * 0.8 : 0);
           // A note's slot has to be at least as wide as its lyric syllable
-          // needs, or the syllable just overflows past the bar's right
-          // edge instead of the bar growing to fit it — this was
-          // previously ignored entirely, which is exactly what made typing
-          // a longer lyric look like it was shoving following notes into
-          // the next bar rather than making room in the current one.
-          // ~0.55× font size per character is a standard average-glyph-
-          // width estimate for a proportional serif font — doesn't need to
-          // be exact, just wide enough to avoid overflow.
-          const lyricPx = n.lyric ? n.lyric.length * (11 * 0.55) + SP * 0.5 : 0;
+          // needs, or the syllable overflows into the next note's space
+          // instead of the bar making room for it.
+          //
+          // IMPORTANT LIMITATION: VexFlow's Formatter distributes a
+          // measure's total width PROPORTIONALLY BY NOTE DURATION, not by
+          // this per-note estimate — so even though this makes the
+          // measure's TOTAL width correctly account for a long lyric, the
+          // formatter doesn't know WHICH note the extra width is for. In a
+          // measure with several notes of the same duration, the surplus
+          // gets spread evenly across all of them rather than concentrated
+          // on the one that actually needs it, so a lyric noticeably
+          // longer than its neighbors can still crowd into the next note's
+          // space in some cases. Correctly fixing that needs VexFlow's
+          // TickContext.setPadding() on the specific note — real, but a
+          // second formatting pass I want to test properly before
+          // shipping rather than bolt on unverified. This estimate is
+          // deliberately generous (not just "exactly enough") specifically
+          // to reduce how often that gap actually matters in practice.
+          const lyricPx = n.lyric ? n.lyric.length * (11 * 0.7) + SP * 1.5 : 0;
           return sum + Math.max(durationPx, lyricPx);
         }, 0);
         if (notePx > maxNotePx) maxNotePx = notePx;
@@ -933,12 +943,16 @@ export default function ScoreRenderer() {
             // row (not per-note), which is what actually makes them line
             // up straight — getAbsoluteX() is only valid now, after
             // voice.draw() has finished formatting/positioning every note.
-            // Uses the stave's own getBottomY() rather than a hand-rolled
-            // partY + STAFF_HEIGHT approximation — that assumed OUR
-            // STAFF_HEIGHT constant exactly matched VexFlow's own internal
-            // stave geometry, and any mismatch there is exactly what put
-            // the lyrics up inside the staff instead of below it.
-            const lyricY = stave.getBottomY() + SP * 2.5;
+            // Uses stave.getBottomLineY() — the RAW bottom-line position,
+            // no padding included — plus our own single, explicit offset.
+            // getBottomY() was tried first and overshot into the next
+            // staff: per VexFlow's own source (stave.js), getBottomY() =
+            // getYForLine(numLines) + spaceBelowStaffLn*spacing — it
+            // already bakes in VexFlow's own default "space below staff"
+            // margin, so adding another offset on top of it was stacking
+            // two paddings. getBottomLineY() has none of that, so there's
+            // exactly one offset in play, not two compounding ones.
+            const lyricY = stave.getBottomLineY() + SP * 1.5;
             if (renderSeq.some((n) => n.lyric)) {
               ctx.setFont("Times New Roman", 11, "normal");
               renderSeq.forEach((seqNote, ni) => {
