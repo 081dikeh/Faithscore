@@ -1,4 +1,5 @@
 // src/components/NoteEditor/index.jsx
+import { useEffect, useRef } from 'react'
 import { useScoreStore } from '../../store/scoreStore'
 import { Trash2, X } from 'lucide-react'
 
@@ -51,6 +52,22 @@ export default function NoteEditor() {
   const chordMode              = useScoreStore(s => s.chordMode)
   const setChordMode           = useScoreStore(s => s.setChordMode)
   const _applyToMeasure        = useScoreStore(s => s._applyToMeasure)
+  const registerLyricInputFocuser = useScoreStore(s => s.registerLyricInputFocuser)
+
+  // Declared before the `if (!note) return null` below (Rules of Hooks —
+  // hooks can't be conditional), so this stays registered/unregistered
+  // consistently regardless of whether a note happens to be selected on
+  // any given render.
+  const lyricInputRef = useRef(null)
+  useEffect(() => {
+    registerLyricInputFocuser(() => {
+      const el = lyricInputRef.current
+      if (!el) return
+      el.focus()
+      el.select() // existing text (if any) is selected, so typing replaces it outright
+    })
+    return () => registerLyricInputFocuser(null)
+  }, [registerLyricInputFocuser])
 
   const note = getSelectedNote()
   if (!note) return null
@@ -147,7 +164,7 @@ export default function NoteEditor() {
         {/* Lyric */}
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-gray-500">Lyric</span>
-          <input value={note.lyric || ''} onChange={e => setProp({ lyric: e.target.value })}
+          <input ref={lyricInputRef} value={note.lyric || ''} onChange={e => setProp({ lyric: e.target.value })}
             placeholder="syl-"
             className="border border-gray-300 rounded px-2 h-7 text-sm w-20 outline-none focus:ring-2 focus:ring-orange-300 bg-white" />
         </div>

@@ -562,6 +562,16 @@ export default function App() {
         return
       }
       if (e.key === 'j' || e.key === 'J') { setChordMode(!st().chordMode); return }
+      // 'L' focuses the lyric input for the currently selected note, so
+      // typing a syllable doesn't need a mouse click first — the actual
+      // typing then goes through the normal <input> (the tag-check guard
+      // at the top of this handler already bails out of every other
+      // shortcut while an input is focused, so nothing else intercepts it).
+      if ((e.key === 'l' || e.key === 'L') && selectedNoteId) {
+        e.preventDefault()
+        st()._lyricInputFocuser?.()
+        return
+      }
 
       // ── When a note/rest is selected ──
       if (selectedNoteId) {
@@ -1413,7 +1423,7 @@ export default function App() {
         {[
           ['N','Note mode'], ['S','Select'], ['A–G','Natural note'],
           ['Enter','Chromatic'], ['1–6','Duration'], ['.','Dot'],
-          ['⇧+A–G','Chord'], ['J','Chord mode'], ['T','Tie'], ['↑↓','Diatonic step'], ['⌥↑↓','Chromatic'], ['⇧↑↓','Octave'],
+          ['⇧+A–G','Chord'], ['J','Chord mode'], ['L','Lyric'], ['T','Tie'], ['↑↓','Diatonic step'], ['⌥↑↓','Chromatic'], ['⇧↑↓','Octave'],
           ['←→','Navigate'], ['Del','Delete'], ['M','Add bar'],
           ['Ctrl+Z','Undo'], ['Ctrl+Y','Redo'], ['Ctrl+C','Copy bar'], ['Ctrl+V','Paste'],
           ['Ctrl+↑↓','Transpose ½'], ['Ctrl+←→','Transpose 8ve'],

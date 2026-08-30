@@ -368,6 +368,14 @@ export const useScoreStore = create((set, get) => ({
   setComposer:  (c) => set(s => ({ score: { ...s.score, composer: c } })),
   setSubtitle:  (t) => set(s => ({ score: { ...s.score, subtitle: t } })),
   setLyricist:  (t) => set(s => ({ score: { ...s.score, lyricist: t } })),
+
+  // A transient (non-persisted) callback the currently-mounted lyric
+  // <input> registers itself under, so the global keyboard handler (App.jsx,
+  // the 'L' shortcut) can focus THAT actual input on demand without either
+  // component needing a direct reference to the other's DOM. NoteEditor
+  // registers this on mount and clears it on unmount.
+  _lyricInputFocuser: null,
+  registerLyricInputFocuser: (fn) => set({ _lyricInputFocuser: fn }),
   setCopyright: (t) => set(s => ({ score: { ...s.score, copyright: t } })),
 
   setPartClef: (partId, clef) => set(s => ({
