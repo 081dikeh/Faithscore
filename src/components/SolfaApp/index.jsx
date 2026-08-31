@@ -582,8 +582,12 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
         return;
       }
 
-      // Bar management
-      if (e.key === "m" || e.key === "M") {
+      // Bar management — 'b' (not 'm') so plain 'm' is free to insert the
+      // 'm' (mi) syllable like every other diatonic letter key does.
+      // ('n' was the first choice, but it's already bound above to
+      // setInputMode("note") — reusing it would've just shadowed that
+      // instead of fixing a shadowing problem.)
+      if (e.key === "b" || e.key === "B") {
         addMeasure();
         return;
       }
