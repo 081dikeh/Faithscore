@@ -958,7 +958,14 @@ export default function ScoreRenderer() {
               renderSeq.forEach((seqNote, ni) => {
                 if (!seqNote.lyric) return;
                 try {
-                  ctx.fillText(seqNote.lyric, vfNotes[ni].getAbsoluteX(), lyricY);
+                  // Centered under the notehead, not left-aligned at it —
+                  // measureText gives the syllable's actual rendered width
+                  // (not an estimate, unlike the width-budgeting guess in
+                  // getMeasureContentWidth above, which only needs to be
+                  // roughly right) so the centering offset is exact.
+                  const { width } = ctx.measureText(seqNote.lyric);
+                  const noteX = vfNotes[ni].getAbsoluteX();
+                  ctx.fillText(seqNote.lyric, noteX - width / 2, lyricY);
                 } catch (_) {}
               });
               // Explicit reset (not save/restore) so whatever draws next —
