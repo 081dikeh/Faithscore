@@ -182,6 +182,19 @@ function buildSchedule(score, tempo, partMutes) {
   const parts = score.parts || []
   const numM  = Math.max(...parts.map(p => p.measures.length), 0)
 
+  // Per-part "open note" carry state — a note whose sustain (`-`) chain ran
+  // off the end of a measure without hitting a new note/rest. Cross-barline
+  // sustains are the same bug shape already fixed once in solfaToStaff.js:
+  // each measure used to be processed in isolation (a fresh `flat` array
+  // per measure), so a sustain landing at the very start of the *next*
+  // measure had no preceding note in that measure's `flat` to attach to —
+  // it fell through the merge loop's `else { i++ }` branch and was silently
+  // dropped, leaving the previous note's already-scheduled duration to
+  // expire early (silence for the rest of the sustained span). Carrying a
+  // reference to the still-open event across the measure boundary lets us
+  // extend its `dur` in place instead of losing the sustain.
+  const openNoteByPart = {}
+
   for (let mIdx = 0; mIdx < numM; mIdx++) {
     const refM     = migrateMeasure(parts[0]?.measures[mIdx])
     const numBeats = refM?.timeSignature?.beats || 4
@@ -210,9 +223,26 @@ function buildSchedule(score, tempo, partMutes) {
         })
       })
 
-      // Walk events, merging sustains into preceding note, and look ahead
-      // to the next note for a small legato overlap.
       let i = 0
+
+      // Resolve any note left open by the previous measure BEFORE walking
+      // this measure's own note/sustain pairs — its leading events may be
+      // pure continuation (sustain) of that still-ringing note.
+      if (openNoteByPart[part.id]) {
+        while (i < flat.length && flat[i].type === 'sustain') {
+          openNoteByPart[part.id].dur += flat[i].duration * secPerQUnit
+          i++
+        }
+        // Closed out (measure didn't start with more sustains, or ran out
+        // of measure entirely) — either way this reference is no longer
+        // "the open note" once something else has been seen. If the whole
+        // measure was consumed by sustains (i === flat.length) it's still
+        // open and stays open below; otherwise it's resolved.
+        if (i < flat.length) openNoteByPart[part.id] = null
+      }
+
+      // Walk remaining events, merging sustains into preceding note, and
+      // look ahead to the next note for a small legato overlap.
       while (i < flat.length) {
         const ev = flat[i]
         if (ev.type === 'note' && ev.syllable) {
@@ -245,7 +275,7 @@ function buildSchedule(score, tempo, partMutes) {
           let accentDb = isMeasureStart ? 1.8 : (isBeatStart ? 0.8 : -0.6)
           const velocityDb = accentDb + gainTrim + rand(HUMAN_VEL_MAX)
 
-          events.push({
+          const scheduled = {
             time:         Math.max(0, nominalStart + timingOffset),
             dur:          Math.max(0.1, nominalDur - 0.025 + overlap),
             hz,
@@ -255,7 +285,14 @@ function buildSchedule(score, tempo, partMutes) {
             partLabel:    part.label,
             measureIndex: mIdx,
             velocityDb,
-          })
+          }
+          events.push(scheduled)
+
+          // If the sustain chain ran off the end of this measure's `flat`
+          // (rather than stopping at a new note/rest), the note is still
+          // ringing when the barline hits — remember it so the next
+          // measure's leading sustains can extend `scheduled.dur` in place.
+          openNoteByPart[part.id] = (j >= flat.length) ? scheduled : null
 
           i = j
         } else {
