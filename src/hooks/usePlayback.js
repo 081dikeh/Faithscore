@@ -116,6 +116,35 @@ function buildSchedule(score, tempo) {
     return Math.max(0.08, Math.min(1, level))
   }
 
+  // Gate/velocity for a note's articulation marks at a given global beat —
+  // shared by both a fresh attack and the (rarer) chord-companion attack
+  // that can still ride alongside a tied-continuation primary note below.
+  function gateAndVelocity(note, gb, partId) {
+    const marks = note.articulations || (note.articulation ? [note.articulation] : [])
+    let gate = 1.0
+    for (const m of marks) if (ARTICULATION_GATE[m] !== undefined) gate = Math.min(gate, ARTICULATION_GATE[m])
+    let holdMult = 1
+    if (marks.includes('fermata')) holdMult = FERMATA_HOLD_MULT
+    let velocity = velocityAt(partId, gb)
+    for (const m of marks) if (ARTICULATION_VELOCITY_MULT[m]) velocity *= ARTICULATION_VELOCITY_MULT[m]
+    velocity = Math.max(0.05, Math.min(1, velocity))
+    return { gate, holdMult, velocity }
+  }
+
+  const samePitch = (a, b) =>
+    a && b &&
+    a.step === b.step &&
+    a.octave === b.octave &&
+    (a.accidental ?? null) === (b.accidental ?? null)
+
+  // Per-part "open tie" — the previously-scheduled event a tieStart note
+  // began, kept live across notes (and measures) so a tied note can extend
+  // it instead of triggering a redundant second attack. A tie means "one
+  // continuous sound", not "two notes" — until this fix every tied note
+  // was scheduled as its own independent triggerAttackRelease, so tied
+  // pairs re-attacked audibly instead of sustaining through.
+  const openTieByPart = {}
+
   for (let mIdx = 0; mIdx < numMeasures; mIdx++) {
     const refM     = score.parts[0]?.measures[mIdx]
     const maxBeats = measureCapacity(refM?.timeSignature)
@@ -133,27 +162,56 @@ function buildSchedule(score, tempo) {
       let beatCursor = 0
       for (const note of measure.notes.filter(n => !n.chordWith)) {
         const durBeats = noteDuration(note)
+        const companions = chordMap[note.id] || []
+        const openTie = openTieByPart[part.id]
+
+        const isTieContinuation =
+          !note.isRest && note.pitch && openTie && samePitch(note.pitch, openTie.pitch)
+
+        if (isTieContinuation) {
+          // This note is the destination of a tie from the previous note —
+          // not a new attack. Extend the held event's duration to cover it
+          // instead of scheduling a second triggerAttackRelease.
+          openTie.event.dur += durBeats * secPerBeat
+          // Chain continues only if this note ALSO starts another tie
+          // onward (a tie spanning 3+ notes); otherwise this link resolves
+          // the chain.
+          openTieByPart[part.id] = note.tieStart
+            ? { event: openTie.event, pitch: note.pitch }
+            : null
+
+          // Any chord companions stacked on this note are separate pitches
+          // that were never part of the tie — they still get their own
+          // fresh attack.
+          const companionTones = companions.map(c => pitchToTone(c.pitch)).filter(Boolean)
+          if (companionTones.length > 0) {
+            const gb = globalBeatOf(mIdx, beatCursor)
+            const { gate, holdMult, velocity } = gateAndVelocity(note, gb, part.id)
+            const fullDurSec = durBeats * secPerBeat * holdMult
+            events.push({
+              time:         globalSec + beatCursor * secPerBeat,
+              dur:          Math.max(0.06, fullDurSec * gate * (holdMult > 1 ? 1 : 0.88)),
+              notes:        companionTones,
+              velocity,
+              partId:       part.id,
+              beatPosition: globalSec / secPerBeat + beatCursor,
+              measureIndex: mIdx,
+            })
+          }
+
+          beatCursor += durBeats
+          continue
+        }
+
         if (!note.isRest && note.pitch) {
-          const companions = chordMap[note.id] || []
-          const toneNotes  = [pitchToTone(note.pitch)].filter(Boolean)
+          const toneNotes = [pitchToTone(note.pitch)].filter(Boolean)
           companions.forEach(c => { const t = pitchToTone(c.pitch); if (t) toneNotes.push(t) })
           if (toneNotes.length > 0) {
             const gb = globalBeatOf(mIdx, beatCursor)
-            const marks = note.articulations || (note.articulation ? [note.articulation] : [])
-
-            // Gate length: how much of the written duration actually sounds.
-            let gate = 1.0
-            for (const m of marks) if (ARTICULATION_GATE[m] !== undefined) gate = Math.min(gate, ARTICULATION_GATE[m])
-            let holdMult = 1
-            if (marks.includes('fermata')) holdMult = FERMATA_HOLD_MULT
-
-            // Velocity: dynamics + active hairpin, boosted by accent/marcato.
-            let velocity = velocityAt(part.id, gb)
-            for (const m of marks) if (ARTICULATION_VELOCITY_MULT[m]) velocity *= ARTICULATION_VELOCITY_MULT[m]
-            velocity = Math.max(0.05, Math.min(1, velocity))
+            const { gate, holdMult, velocity } = gateAndVelocity(note, gb, part.id)
 
             const fullDurSec = durBeats * secPerBeat * holdMult
-            events.push({
+            const scheduled = {
               time:         globalSec + beatCursor * secPerBeat,
               dur:          Math.max(0.06, fullDurSec * gate * (holdMult > 1 ? 1 : 0.88)),
               notes:        toneNotes,
@@ -161,9 +219,17 @@ function buildSchedule(score, tempo) {
               partId:       part.id,
               beatPosition: globalSec / secPerBeat + beatCursor,  // absolute beat
               measureIndex: mIdx,
-            })
+            }
+            events.push(scheduled)
+            openTieByPart[part.id] = note.tieStart ? { event: scheduled, pitch: note.pitch } : null
+          } else {
+            openTieByPart[part.id] = null
           }
+        } else {
+          // A rest can't carry a tie through it.
+          openTieByPart[part.id] = null
         }
+
         beatCursor += durBeats
       }
     }
