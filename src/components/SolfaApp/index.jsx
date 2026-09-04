@@ -31,6 +31,7 @@ import * as Tone from "tone";
 import {
   Download, Cloud, Mic, Music, Repeat, Metronome, SlidersHorizontal,
   FileText, Ruler, ListMusic, PenLine, Volume2, Zap, UploadCloud, Music4,
+  Info,
 } from "lucide-react";
 import PublishToFaithLibrary from "../PublishToFaithLibrary";
 import SolfaRenderer from "../SolfaRenderer";
@@ -209,6 +210,9 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
   const setSelectedDuration = useSolfaStore((s) => s.setSelectedDuration);
   const setTitle    = useSolfaStore((s) => s.setTitle);
   const setComposer = useSolfaStore((s) => s.setComposer);
+  const setArranger  = useSolfaStore((s) => s.setArranger);
+  const setCopyright = useSolfaStore((s) => s.setCopyright);
+  const setCcli       = useSolfaStore((s) => s.setCcli);
   const placeEvent = useSolfaStore((s) => s.placeEvent);
   const setEventInPlace = useSolfaStore((s) => s.setEventInPlace);
   const placeSustain = useSolfaStore((s) => s.placeSustain);
@@ -307,6 +311,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
   const rendererRef   = useRef(null);
   const [showExport,  setShowExport]  = useState(false);
   const [showPublish, setShowPublish] = useState(false);
+  const [showScoreInfo, setShowScoreInfo] = useState(false);
   const [exportTab,   setExportTab]   = useState("pdf"); // "pdf" | "audio"
   const [exportBpm,   setExportBpm]   = useState(score.tempo || 80);
   const [exportBusy,  setExportBusy]  = useState(false);
@@ -831,6 +836,20 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
           }}
           placeholder="Composer name"
         />
+
+        <button
+          onClick={() => setShowScoreInfo(true)}
+          title="Score info (arranger, copyright, CCLI song #)"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: 24, height: 24, border: "none", borderRadius: 6,
+            background: "transparent", color: "#9ca3af", cursor: "pointer",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = "#f3f4f6"; e.currentTarget.style.color = "#6b7280" }}
+          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#9ca3af" }}
+        >
+          <Info size={14} strokeWidth={2} />
+        </button>
 
         <div style={{ flex: 1 }} />
 
@@ -1817,6 +1836,61 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
           </div>
         </main>
       </div>
+      {/* ── Score Info Modal ── */}
+      {/* Arranger/copyright/CCLI — set once per score, rarely touched again.
+          Title and Composer stay inline above (edited far more often); this
+          covers the rest of the publishing metadata, printed under the
+          title on page 1 (arranger) and in a small footer on every page of
+          Print / PDF output (copyright + CCLI song #). */}
+      {showScoreInfo && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 200,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+          onClick={() => setShowScoreInfo(false)}
+        >
+          <div
+            style={{
+              background: "white", borderRadius: 10, width: 360,
+              padding: "18px 20px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#111827", marginBottom: 14 }}>
+              Score info
+            </div>
+
+            {[
+              { label: "Arranger", key: "arranger", set: setArranger, placeholder: "e.g. Arr. Jane Doe" },
+              { label: "Copyright", key: "copyright", set: setCopyright, placeholder: "e.g. © 2026 Jane Doe. All rights reserved." },
+              { label: "CCLI Song #", key: "ccli", set: setCcli, placeholder: "e.g. 1234567" },
+            ].map(f => (
+              <div key={f.key} style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 12.5, color: "#374151", marginBottom: 4, fontWeight: 600 }}>
+                  {f.label}
+                </label>
+                <input
+                  type="text" value={score[f.key] || ""} placeholder={f.placeholder}
+                  onChange={e => f.set(e.target.value)}
+                  style={{ width: "100%", fontSize: 12.5, border: "1px solid #d1d5db", borderRadius: 6,
+                    padding: "6px 8px", color: "#111827", boxSizing: "border-box" }}
+                />
+              </div>
+            ))}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button onClick={() => setShowScoreInfo(false)}
+                style={{ fontSize: 12.5, fontWeight: 600, padding: "7px 16px", borderRadius: 7,
+                  border: "1px solid #2563eb", background: "#2563eb", color: "white", cursor: "pointer" }}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Export Modal ── */}
       {showExport && (
         <div

@@ -1,4 +1,4 @@
-// src/components/SolfaRenderer/index.js
+// src/components/SolfaRenderer/index.jsx
 // FaithScore Solfa Renderer
 //
 // Each beat has EVENTS. Each event has duration in quarter-units (1-4).

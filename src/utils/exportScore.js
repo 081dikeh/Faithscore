@@ -588,7 +588,18 @@ const DEFAULT_PAGE_H_MM   = 297
 const DEFAULT_MARGIN_TOP  = 8
 const DEFAULT_MARGIN_BOT  = 8
 const DEFAULT_MARGIN_SIDE = 14
-const HEADER_H_MM_EST = 9 // rough estimate of .fs-print-header's rendered height
+const HEADER_H_MM_EST = 9 // rough estimate of .fs-print-header's rendered height (title + composer only) — used only as a floor; see headerHeightMmFor() and the real DOM measurement in printScore() below.
+const ARRANGER_LINE_MM_EST = 3.5 // extra .fs-print-header height when an arranger line is present (also just a floor)
+const MM_PER_PX = 25.4 / 96 // CSS px is defined as 1/96 inch; used to convert a measured getBoundingClientRect() height into mm
+
+// The composer/arranger block is a single extra print line when arranger is
+// set — bump the header estimate accordingly so page-1 pagination (and the
+// PDF image's start-y) don't crowd or overlap it. Kept as a function rather
+// than baking arranger-awareness into the constant so scores without an
+// arranger (the common case) keep the tighter, already-tuned estimate.
+function headerHeightMmFor(arranger) {
+  return HEADER_H_MM_EST + (arranger ? ARRANGER_LINE_MM_EST : 0)
+}
 
 // ScoreRenderer draws each system's starting measure number as text at a
 // fixed x=24, y = systemTopY - 10 (see ScoreRenderer's `ctx.fillText(String(startCol+1), 24, sysY-10)`).
@@ -641,8 +652,12 @@ function cropSvg(svg, totalW, y, height) {
 }
 
 export function printScore(score) {
-  const title    = score?.title    || 'Untitled Score'
-  const composer = score?.composer || ''
+  const title     = score?.title     || 'Untitled Score'
+  const composer  = score?.composer  || ''
+  const arranger  = score?.arranger  || ''
+  const copyright = score?.copyright || ''
+  const ccli      = score?.ccli      || ''
+  let headerMm  = headerHeightMmFor(arranger)
 
   const ps = score?.pageSettings || {}
   const sizeMm = PAGE_SIZES_MM[ps.size] || PAGE_SIZES_MM.A4
@@ -673,11 +688,69 @@ export function printScore(score) {
 
   const pageEl = document.createElement('div')
   pageEl.className = 'fs-print-page'
+  pageEl.style.width = `${USABLE_W_MM}mm`
+
+  // ── Print-only styling: hidden on screen, shown (and everything else
+  //    hidden) during printing — injected BEFORE we build/measure the
+  //    header below, so the measurement reflects real styled dimensions
+  //    (font sizes, padding, border) rather than unstyled markup.
+  const style = document.createElement('style')
+  style.id = 'faithscore-print-style'
+  style.textContent = `
+    #faithscore-print-root { display: none; }
+    .fs-print-header {
+      text-align: center; margin-bottom: 2mm; padding-bottom: 1mm;
+      border-bottom: 0.5pt solid #ccc; font-family: 'Times New Roman', serif;
+    }
+    .fs-print-header h1 { font-size: 15pt; font-weight: bold; margin: 0; }
+    .fs-print-header p  { font-size: 9pt; color: #555; text-align: right; margin: 1mm 0 0; }
+    .fs-print-header p.fs-print-arranger { font-style: italic; }
+    .fs-print-slot { width: 100%; position: relative; }
+    .fs-print-row { width: 100%; }
+    .fs-print-row svg { width: 100% !important; height: auto !important; display: block; }
+    .fs-print-footer {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; justify-content: space-between; align-items: baseline; gap: 3mm;
+      font-family: Arial, Helvetica, sans-serif; font-size: 7.5pt; color: #777;
+    }
+    .fs-print-footer span:first-child {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+    }
+    .fs-print-footer span:last-child { flex-shrink: 0; }
+    @media print {
+      body > *:not(#faithscore-print-root) { display: none !important; }
+      #faithscore-print-root { display: block !important; }
+      @page { size: ${PAGE_W_MM}mm ${PAGE_H_MM}mm; margin: ${MARGIN_TOP}mm ${MARGIN_SIDE}mm ${MARGIN_BOT}mm ${MARGIN_SIDE}mm; }
+    }
+  `
+  document.head.appendChild(style)
 
   const header = document.createElement('div')
   header.className = 'fs-print-header'
-  header.innerHTML = `<h1>${escapeHtml(title)}</h1>${composer ? `<p>${escapeHtml(composer)}</p>` : ''}`
+  header.innerHTML = `<h1>${escapeHtml(title)}</h1>` +
+    (composer ? `<p>${escapeHtml(composer)}</p>` : '') +
+    (arranger ? `<p class="fs-print-arranger">${escapeHtml(arranger)}</p>` : '')
   pageEl.appendChild(header)
+
+  // Measure the header's REAL rendered height instead of trusting a fixed
+  // mm estimate — the same "verify against actual behavior, don't guess"
+  // lesson learned the hard way with VexFlow's lyric Y-positioning (see
+  // handoff notes). headerMm/ARRANGER_LINE_MM_EST above are only a floor
+  // now: a weasyprint-based test of this exact slot+footer technique showed
+  // that if the real header is even a little taller than assumed, the
+  // whole first-page slot (sized against the assumption) can overflow the
+  // page and get pushed onto page 2 wholesale — silently losing page 1's
+  // music and stranding its footer. Measuring removes the guesswork.
+  // The stylesheet above already sets #faithscore-print-root's default to
+  // display:none (0 height for any measurement) — the inline `display:
+  // block` here has higher specificity than that ID-selector rule (no
+  // !important on either side, so inline wins), letting the root actually
+  // lay out — off-screen and invisible, but real geometry — for measuring.
+  root.appendChild(pageEl)
+  root.style.cssText = 'position:fixed; left:-9999px; top:0; visibility:hidden; display:block;'
+  document.body.appendChild(root)
+  const measuredHeaderMm = header.getBoundingClientRect().height * MM_PER_PX
+  headerMm = Math.max(headerMm, measuredHeaderMm)
 
   const rows = []
   svgElements.forEach(svg => {
@@ -686,7 +759,7 @@ export function printScore(score) {
     const totalH = (vb && vb.height) || svg.height.baseVal.value || svg.getBoundingClientRect().height
 
     const scaleUnitsPerMm  = totalW / USABLE_W_MM
-    const usableFirstUnits = (USABLE_H_MM - HEADER_H_MM_EST) * scaleUnitsPerMm
+    const usableFirstUnits = (USABLE_H_MM - headerMm) * scaleUnitsPerMm
     const usableRestUnits  = USABLE_H_MM * scaleUnitsPerMm
 
     const sysTops = findSystemTops(svg)
@@ -703,40 +776,52 @@ export function printScore(score) {
     })
   })
 
+  // Footer text (copyright/CCLI) — churches generally need this on every
+  // page, not just page 1, so it's the same string regardless of index.
+  // escapeHtml here too — copyright/CCLI are free-text fields injected via
+  // innerHTML below, same as title/composer/arranger above.
+  const footerLeft = [copyright && escapeHtml(copyright), ccli ? `CCLI Song # ${escapeHtml(ccli)}` : null]
+    .filter(Boolean).join('&nbsp;&nbsp;&bull;&nbsp;&nbsp;')
+
+  // Each row is wrapped in a fixed-height "page slot" rather than appended
+  // directly — a slot's height is set to exactly fill the physical page's
+  // usable area (accounting for the header on page 1 only), so a footer
+  // pinned to the slot's bottom edge lands at the true bottom of that
+  // printed page regardless of how much whitespace is left under the music
+  // (which is expected and normal on the last page).
   rows.forEach((row, i) => {
-    pageEl.appendChild(row)
-    if (i < rows.length - 1) {
-      row.style.breakAfter = 'page'
-      row.style.pageBreakAfter = 'always'
+    const isFirst = i === 0
+    const slotHeightMm = isFirst ? (USABLE_H_MM - headerMm) : USABLE_H_MM
+
+    const slot = document.createElement('div')
+    slot.className = 'fs-print-slot'
+    slot.style.height = `${slotHeightMm}mm`
+    slot.appendChild(row)
+
+    if (footerLeft || rows.length > 1) {
+      const footer = document.createElement('div')
+      footer.className = 'fs-print-footer'
+      footer.innerHTML =
+        `<span>${footerLeft}</span><span>Page ${i + 1} of ${rows.length}</span>`
+      slot.appendChild(footer)
     }
-    row.style.breakInside = 'avoid'
-    row.style.pageBreakInside = 'avoid'
+
+    if (i < rows.length - 1) {
+      slot.style.breakAfter = 'page'
+      slot.style.pageBreakAfter = 'always'
+    }
+    slot.style.breakInside = 'avoid'
+    slot.style.pageBreakInside = 'avoid'
+
+    pageEl.appendChild(slot)
   })
 
-  root.appendChild(pageEl)
-  document.body.appendChild(root)
-
-  // ── Print-only styling: hidden on screen, shown (and everything else
-  //    hidden) during printing ──────────────────────────────────────────────
-  const style = document.createElement('style')
-  style.id = 'faithscore-print-style'
-  style.textContent = `
-    #faithscore-print-root { display: none; }
-    .fs-print-header {
-      text-align: center; margin-bottom: 2mm; padding-bottom: 1mm;
-      border-bottom: 0.5pt solid #ccc; font-family: 'Times New Roman', serif;
-    }
-    .fs-print-header h1 { font-size: 15pt; font-weight: bold; margin: 0; }
-    .fs-print-header p  { font-size: 9pt; color: #555; text-align: right; margin: 1mm 0 0; }
-    .fs-print-row { width: 100%; }
-    .fs-print-row svg { width: 100% !important; height: auto !important; display: block; }
-    @media print {
-      body > *:not(#faithscore-print-root) { display: none !important; }
-      #faithscore-print-root { display: block !important; }
-      @page { size: ${PAGE_W_MM}mm ${PAGE_H_MM}mm; margin: ${MARGIN_TOP}mm ${MARGIN_SIDE}mm ${MARGIN_BOT}mm ${MARGIN_SIDE}mm; }
-    }
-  `
-  document.head.appendChild(style)
+  // Root/pageEl were already appended to the document during header
+  // measurement above — just drop the temporary off-screen positioning now
+  // that pagination is done; the stylesheet (already injected above, before
+  // measurement) takes over from here: display:none by default, shown only
+  // for @media print.
+  root.style.cssText = ''
 
   // The browser's own print header/footer (date/time, page title, URL, page
   // numbers) is NOT something a web page can fully remove — it's controlled
@@ -773,8 +858,12 @@ export function printScore(score) {
 // an in-memory PDF Blob instead of a browser print job. Reads the currently
 // rendered `.score-page svg` elements from the live DOM, same as printScore.
 export async function exportScorePdfBlob(score) {
-  const title    = score?.title    || 'Untitled Score'
-  const composer = score?.composer || ''
+  const title     = score?.title     || 'Untitled Score'
+  const composer  = score?.composer  || ''
+  const arranger  = score?.arranger  || ''
+  const copyright = score?.copyright || ''
+  const ccli      = score?.ccli      || ''
+  const headerMm  = headerHeightMmFor(arranger)
 
   const ps = score?.pageSettings || {}
   const sizeMm = PAGE_SIZES_MM[ps.size] || PAGE_SIZES_MM.A4
@@ -802,7 +891,7 @@ export async function exportScorePdfBlob(score) {
     const totalH = (vb && vb.height) || svg.height.baseVal.value || svg.getBoundingClientRect().height
 
     const scaleUnitsPerMm  = totalW / USABLE_W_MM
-    const usableFirstUnits = (USABLE_H_MM - HEADER_H_MM_EST) * scaleUnitsPerMm
+    const usableFirstUnits = (USABLE_H_MM - headerMm) * scaleUnitsPerMm
     const usableRestUnits  = USABLE_H_MM * scaleUnitsPerMm
 
     const sysTops = findSystemTops(svg)
@@ -819,8 +908,9 @@ export async function exportScorePdfBlob(score) {
   return buildPdfFromSvgPages({
     pages,
     pageWmm: PAGE_W_MM, pageHmm: PAGE_H_MM, marginTop: MARGIN_TOP, marginSide: MARGIN_SIDE,
-    title, subtitle: composer,
-    headerHeightMm: HEADER_H_MM_EST,
+    title, subtitle: composer, arranger,
+    copyright, ccli,
+    headerHeightMm: headerMm,
   })
 }
 

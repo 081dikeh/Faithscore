@@ -240,6 +240,16 @@ const SF_MARGIN_SIDE  = 14
 const SF_USABLE_W_MM  = SF_PAGE_W_MM - SF_MARGIN_SIDE * 2
 const SF_USABLE_H_MM  = SF_PAGE_H_MM - SF_MARGIN_TOP - SF_MARGIN_BOT
 const SF_HEADER_H_MM_EST = 15 // title + meta row is a bit taller than the staff header
+const SF_ARRANGER_LINE_MM_EST = 3.5 // extra .sf-print-header height when an arranger line is present
+const MM_PER_PX = 25.4 / 96 // CSS px is defined as 1/96 inch; used to convert a measured getBoundingClientRect() height into mm
+
+// See headerHeightMmFor() in exportScore.js for the identical reasoning —
+// the arranger line is a real extra row in .sf-print-header's meta block
+// (stacked under the composer via <br/>), so pagination and the PDF image's
+// start-y both need to know about it, not just the no-arranger estimate.
+function headerHeightMmFor(arranger) {
+  return SF_HEADER_H_MM_EST + (arranger ? SF_ARRANGER_LINE_MM_EST : 0)
+}
 
 // SolfaRenderer tags each system's starting measure-number label with
 // data-sysmark="1" data-sysy="<system top Y>" specifically so print export
@@ -299,7 +309,11 @@ function cropSolfaSvg(svg, totalW, y, height) {
 }
 
 export function exportSolfaPDF(score, svgElement) {
-  const title = score?.title || 'Untitled'
+  const title     = score?.title     || 'Untitled'
+  const arranger  = score?.arranger  || ''
+  const copyright = score?.copyright || ''
+  const ccli      = score?.ccli      || ''
+  let headerMm  = headerHeightMmFor(arranger)
 
   if (!svgElement) {
     alert('Nothing to print yet — add some notes first.')
@@ -320,48 +334,11 @@ export function exportSolfaPDF(score, svgElement) {
 
   const pageEl = document.createElement('div')
   pageEl.className = 'sf-print-page'
+  pageEl.style.width = `${SF_USABLE_W_MM}mm`
 
-  const header = document.createElement('div')
-  header.className = 'sf-print-header'
-  header.innerHTML = `
-    <h1>${escapeHtml(title)}</h1>
-    <div class="sf-print-meta">
-      <span>${partsInfo}</span>
-      <span>${score?.composer ? escapeHtml(score.composer) : ''}</span>
-    </div>`
-  pageEl.appendChild(header)
-
-  const vb = svgElement.viewBox && svgElement.viewBox.baseVal
-  const totalW = (vb && vb.width)  || svgElement.width.baseVal.value  || svgElement.getBoundingClientRect().width
-  const totalH = (vb && vb.height) || svgElement.height.baseVal.value || svgElement.getBoundingClientRect().height
-
-  const scaleUnitsPerMm  = totalW / SF_USABLE_W_MM
-  const usableFirstUnits = (SF_USABLE_H_MM - SF_HEADER_H_MM_EST) * scaleUnitsPerMm
-  const usableRestUnits  = SF_USABLE_H_MM * scaleUnitsPerMm
-
-  const sysTops = findSolfaSystemTops(svgElement)
-  const slices = sysTops
-    ? paginateSolfaSystems(sysTops, totalH, Math.max(usableFirstUnits, 1), Math.max(usableRestUnits, 1))
-    : [{ y: 0, height: totalH }] // couldn't detect systems — fall back to one uncut block
-
-  slices.forEach((slice, i) => {
-    const clone = cropSolfaSvg(svgElement, totalW, slice.y, slice.height)
-    const row = document.createElement('div')
-    row.className = 'sf-print-row'
-    row.appendChild(clone)
-    if (i < slices.length - 1) {
-      row.style.breakAfter = 'page'
-      row.style.pageBreakAfter = 'always'
-    }
-    row.style.breakInside = 'avoid'
-    row.style.pageBreakInside = 'avoid'
-    pageEl.appendChild(row)
-  })
-
-  root.appendChild(pageEl)
-  document.body.appendChild(root)
-
-  // ── Print-only styling ───────────────────────────────────────────────────
+  // ── Print-only styling — injected BEFORE we build/measure the header
+  //    below, so the measurement reflects real styled dimensions (font
+  //    sizes, padding, border) rather than unstyled markup.
   const style = document.createElement('style')
   style.id = 'faithscore-solfa-print-style'
   style.textContent = `
@@ -375,8 +352,19 @@ export function exportSolfaPDF(score, svgElement) {
       font-size: 9pt; color: #555; margin-top: 1.5mm;
       display: flex; justify-content: space-between;
     }
+    .sf-print-header .sf-print-meta em { font-style: italic; }
+    .sf-print-slot { width: 100%; position: relative; }
     .sf-print-row { width: 100%; }
     .sf-print-row svg { width: 100% !important; height: auto !important; display: block; overflow: visible; }
+    .sf-print-footer {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; justify-content: space-between; align-items: baseline; gap: 3mm;
+      font-family: Arial, Helvetica, sans-serif; font-size: 7.5pt; color: #777;
+    }
+    .sf-print-footer span:first-child {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+    }
+    .sf-print-footer span:last-child { flex-shrink: 0; }
     @media print {
       body > *:not(#faithscore-solfa-print-root) { display: none !important; }
       #faithscore-solfa-print-root { display: block !important; }
@@ -384,6 +372,90 @@ export function exportSolfaPDF(score, svgElement) {
     }
   `
   document.head.appendChild(style)
+
+  const header = document.createElement('div')
+  header.className = 'sf-print-header'
+  header.innerHTML = `
+    <h1>${escapeHtml(title)}</h1>
+    <div class="sf-print-meta">
+      <span>${partsInfo}</span>
+      <span>${score?.composer ? escapeHtml(score.composer) : ''}${arranger ? `<br/><em>${escapeHtml(arranger)}</em>` : ''}</span>
+    </div>`
+  pageEl.appendChild(header)
+
+  // Measure the header's REAL rendered height instead of trusting a fixed
+  // mm estimate — see the matching comment in exportScore.js's printScore()
+  // for the full reasoning (a weasyprint-based test of this exact
+  // slot+footer technique showed an underestimated header can push the
+  // whole first-page slot onto page 2, losing page 1's content entirely).
+  root.appendChild(pageEl)
+  root.style.cssText = 'position:fixed; left:-9999px; top:0; visibility:hidden; display:block;'
+  document.body.appendChild(root)
+  const measuredHeaderMm = header.getBoundingClientRect().height * MM_PER_PX
+  headerMm = Math.max(headerMm, measuredHeaderMm)
+
+  const vb = svgElement.viewBox && svgElement.viewBox.baseVal
+  const totalW = (vb && vb.width)  || svgElement.width.baseVal.value  || svgElement.getBoundingClientRect().width
+  const totalH = (vb && vb.height) || svgElement.height.baseVal.value || svgElement.getBoundingClientRect().height
+
+  const scaleUnitsPerMm  = totalW / SF_USABLE_W_MM
+  const usableFirstUnits = (SF_USABLE_H_MM - headerMm) * scaleUnitsPerMm
+  const usableRestUnits  = SF_USABLE_H_MM * scaleUnitsPerMm
+
+  const sysTops = findSolfaSystemTops(svgElement)
+  const slices = sysTops
+    ? paginateSolfaSystems(sysTops, totalH, Math.max(usableFirstUnits, 1), Math.max(usableRestUnits, 1))
+    : [{ y: 0, height: totalH }] // couldn't detect systems — fall back to one uncut block
+
+  // Footer text (copyright/CCLI) — same on every page, church-licensing
+  // convention (see the identical footer in exportScore.js's printScore()).
+  // escapeHtml here too — copyright/CCLI are free-text fields injected via
+  // innerHTML below, same as title/composer/arranger above.
+  const footerLeft = [copyright && escapeHtml(copyright), ccli ? `CCLI Song # ${escapeHtml(ccli)}` : null]
+    .filter(Boolean).join('&nbsp;&nbsp;&bull;&nbsp;&nbsp;')
+
+  // Each slice is wrapped in a fixed-height "page slot" (rather than
+  // appended directly) so a footer pinned to the slot's bottom edge lands
+  // at the true bottom of that printed page — see the matching comment in
+  // exportScore.js's printScore() for the full reasoning.
+  slices.forEach((slice, i) => {
+    const isFirst = i === 0
+    const slotHeightMm = isFirst ? (SF_USABLE_H_MM - headerMm) : SF_USABLE_H_MM
+
+    const clone = cropSolfaSvg(svgElement, totalW, slice.y, slice.height)
+    const row = document.createElement('div')
+    row.className = 'sf-print-row'
+    row.appendChild(clone)
+
+    const slot = document.createElement('div')
+    slot.className = 'sf-print-slot'
+    slot.style.height = `${slotHeightMm}mm`
+    slot.appendChild(row)
+
+    if (footerLeft || slices.length > 1) {
+      const footer = document.createElement('div')
+      footer.className = 'sf-print-footer'
+      footer.innerHTML =
+        `<span>${footerLeft}</span><span>Page ${i + 1} of ${slices.length}</span>`
+      slot.appendChild(footer)
+    }
+
+    if (i < slices.length - 1) {
+      slot.style.breakAfter = 'page'
+      slot.style.pageBreakAfter = 'always'
+    }
+    slot.style.breakInside = 'avoid'
+    slot.style.pageBreakInside = 'avoid'
+
+    pageEl.appendChild(slot)
+  })
+
+  // Root/pageEl were already appended to the document during header
+  // measurement above — just drop the temporary off-screen positioning now
+  // that pagination is done; the stylesheet (already injected above, before
+  // measurement) takes over from here: display:none by default, shown only
+  // for @media print.
+  root.style.cssText = ''
 
   // Blank the page-title portion of the browser's print header for the
   // duration of the job (the date/URL/page-number portions are controlled
@@ -411,6 +483,7 @@ export function exportSolfaPDF(score, svgElement) {
 // Blob instead of a browser print job.
 export async function exportSolfaPdfBlob(score, svgElement) {
   const title = score?.title || 'Untitled'
+  const headerMm = headerHeightMmFor(score?.arranger || '')
 
   if (!svgElement) throw new Error('Nothing to publish yet — add some notes first.')
 
@@ -419,7 +492,7 @@ export async function exportSolfaPdfBlob(score, svgElement) {
   const totalH = (vb && vb.height) || svgElement.height.baseVal.value || svgElement.getBoundingClientRect().height
 
   const scaleUnitsPerMm  = totalW / SF_USABLE_W_MM
-  const usableFirstUnits = (SF_USABLE_H_MM - SF_HEADER_H_MM_EST) * scaleUnitsPerMm
+  const usableFirstUnits = (SF_USABLE_H_MM - headerMm) * scaleUnitsPerMm
   const usableRestUnits  = SF_USABLE_H_MM * scaleUnitsPerMm
 
   const sysTops = findSolfaSystemTops(svgElement)
@@ -442,8 +515,9 @@ export async function exportSolfaPdfBlob(score, svgElement) {
   return buildPdfFromSvgPages({
     pages,
     pageWmm: SF_PAGE_W_MM, pageHmm: SF_PAGE_H_MM, marginTop: SF_MARGIN_TOP, marginSide: SF_MARGIN_SIDE,
-    title, subtitle: score?.composer || '',
-    headerHeightMm: SF_HEADER_H_MM_EST,
+    title, subtitle: score?.composer || '', arranger: score?.arranger || '',
+    copyright: score?.copyright || '', ccli: score?.ccli || '',
+    headerHeightMm: headerMm,
   })
 }
 

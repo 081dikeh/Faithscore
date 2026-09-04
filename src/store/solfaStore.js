@@ -130,6 +130,7 @@ export function buildEmptySolfaScore(voiceComboKey='satb',key='C',beats=4,numMea
   const combo=VOICE_COMBOS[voiceComboKey]||VOICE_COMBOS.satb
   return {
     id:uid(), type:'solfa', title:'Untitled', key,
+    composer:'', arranger:'', copyright:'', ccli:'',
     tempo:80, timeSignature:{beats,beatType:4},
     voiceCombo:voiceComboKey,
     parts:combo.voices.map(v=>makePart(v,numMeasures,beats)),
@@ -304,6 +305,9 @@ export const useSolfaStore = create((set,get) => ({
   // this store, so every edit silently failed (or threw, depending on
   // React's error boundaries) instead of actually saving anything.
   setComposer: c => set(s=>({score:{...s.score,composer:c}})),
+  setArranger: a => set(s=>({score:{...s.score,arranger:a}})),
+  setCopyright: c => set(s=>({score:{...s.score,copyright:c}})),
+  setCcli:     c => set(s=>({score:{...s.score,ccli:c}})),
   // DEPRECATED for mid-score use: rewrites the score's starting key only —
   // it does NOT touch any measure's key. Kept for score creation (Wizard)
   // where there's nothing to modulate from yet. For modulating partway

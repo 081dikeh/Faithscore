@@ -96,6 +96,61 @@ function PageSettingsModal({ pageSettings, onChange, onClose }) {
   )
 }
 
+// ── Score Info modal ──────────────────────────────────────────────────────────
+// Publishing metadata that's set once per score and rarely touched again —
+// arranger credit, copyright line, CCLI song number — printed under the
+// title/composer on page 1 and (copyright/CCLI) in a small footer on every
+// page of Print / PDF output. Title and Composer stay editable inline in the
+// status bar (they're touched far more often); this modal covers the rest.
+function ScoreInfoModal({ score, onChange, onClose }) {
+  const field = (label, key, placeholder) => (
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ display: 'block', fontSize: 12.5, color: '#374151', marginBottom: 4, fontWeight: 600 }}>
+        {label}
+      </label>
+      <input
+        type="text" value={score[key] || ''} placeholder={placeholder}
+        onChange={e => onChange({ [key]: e.target.value })}
+        style={{ width: '100%', fontSize: 12.5, border: '1px solid #d1d5db', borderRadius: 6,
+          padding: '6px 8px', color: '#111827', boxSizing: 'border-box' }}
+      />
+    </div>
+  )
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 200,
+        display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background: 'white', borderRadius: 10, width: 360, padding: '18px 20px 16px',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.25)', fontFamily: 'system-ui,sans-serif' }}
+      >
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 14 }}>Score info</div>
+
+        {field('Arranger', 'arranger', 'e.g. Arr. Jane Doe')}
+        {field('Copyright', 'copyright', 'e.g. © 2026 Jane Doe. All rights reserved.')}
+        {field('CCLI Song #', 'ccli', 'e.g. 1234567')}
+
+        <div style={{ fontSize: 10.5, color: '#9ca3af', margin: '2px 0 16px', lineHeight: 1.4 }}>
+          Arranger prints under the composer on page 1. Copyright and CCLI Song #
+          print as a small footer on every page of Print / PDF output.
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button onClick={onClose}
+            style={{ fontSize: 12.5, fontWeight: 600, padding: '7px 16px', borderRadius: 7,
+              border: '1px solid #2563eb', background: '#2563eb', color: 'white', cursor: 'pointer' }}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Open Recent modal ─────────────────────────────────────────────────────────
 function OpenRecentModal({ items, loading, onPick, onClose }) {
   return (
@@ -151,6 +206,7 @@ export default function App() {
   const score                  = useScoreStore(s => s.score)
   const [appView, setAppView] = useState('home')
   const [showPageSettings, setShowPageSettings] = useState(false)
+  const [showScoreInfo, setShowScoreInfo]       = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   // ── Auth state ─────────────────────────────────────────────────────────────
   const [user, setUser]           = useState(null)
@@ -796,6 +852,18 @@ export default function App() {
         onChange={handleOpenFileChosen}
       />
 
+      {showScoreInfo && (
+        <ScoreInfoModal
+          score={score}
+          onChange={patch => {
+            if ('arranger'  in patch) useScoreStore.getState().setArranger(patch.arranger)
+            if ('copyright' in patch) useScoreStore.getState().setCopyright(patch.copyright)
+            if ('ccli'      in patch) useScoreStore.getState().setCcli(patch.ccli)
+          }}
+          onClose={() => setShowScoreInfo(false)}
+        />
+      )}
+
       {showPageSettings && (
         <PageSettingsModal
           pageSettings={score.pageSettings}
@@ -1076,6 +1144,8 @@ export default function App() {
           // ── FORMAT ─────────────────────────────────────────────────────────
           const formatMenu = <>
             <Item icon=""  label="Style…"                                  disabled soon />
+            <Item icon=""  label="Score info…"
+              onClick={() => setShowScoreInfo(true)} />
             <Item icon=""  label="Page settings…"
               onClick={() => setShowPageSettings(true)} />
             <CheckItem label="Automatic layout (fit to width)"

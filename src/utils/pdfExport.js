@@ -35,6 +35,29 @@ const FONT_FACE_STYLE = `
   </style>
 `
 
+// How much room the footer needs at the bottom of every page, in mm. Kept
+// small and out of the way — this is a footer, not a second header.
+const FOOTER_HEIGHT_MM = 6
+const FOOTER_FONT_PT   = 7.5
+const FOOTER_GAP_MM    = 4  // minimum gap between the copyright/CCLI text and "Page N of M"
+
+// Truncates `text` with a trailing ellipsis so it fits within `maxWidthMm`
+// at the PDF's current font, measured with jsPDF's own metrics rather than
+// guessed — a copyright line can be arbitrarily long (band names, multiple
+// rightsholders), and this runs on the same physical line as "Page N of M",
+// so an un-truncated long string would visually collide with the page
+// number instead of just wrapping (PDF text doesn't wrap on its own).
+function truncateToWidth(pdf, text, maxWidthMm) {
+  if (!text || pdf.getTextWidth(text) <= maxWidthMm) return text || ''
+  let lo = 0, hi = text.length
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (pdf.getTextWidth(text.slice(0, mid) + '…') <= maxWidthMm) lo = mid
+    else hi = mid - 1
+  }
+  return lo > 0 ? text.slice(0, lo) + '…' : ''
+}
+
 // pages: [{ svgElement, totalW, sliceHeight }]
 //   svgElement  — a cloned <svg> with viewBox already set to the cropped region
 //   totalW      — the SVG's full viewBox width (same units for every page)
@@ -42,7 +65,8 @@ const FONT_FACE_STYLE = `
 export async function buildPdfFromSvgPages({
   pages,
   pageWmm, pageHmm, marginTop, marginSide,
-  title, subtitle,
+  title, subtitle, arranger,
+  copyright, ccli,
   headerHeightMm = 0,
 }) {
   if (!pages.length) throw new Error('Nothing to export yet — add some notes first.')
@@ -50,19 +74,26 @@ export async function buildPdfFromSvgPages({
   const usableWmm = pageWmm - marginSide * 2
   const pdf = new jsPDF({ unit: 'mm', format: [pageWmm, pageHmm], compress: true })
 
+  // Built once, reused per page — "CCLI Song # 1234567" if both are present,
+  // falling back gracefully to whichever one is actually filled in.
+  const footerLeft = [copyright, ccli ? `CCLI Song # ${ccli}` : null]
+    .filter(Boolean)
+    .join('   •   ')
+
   for (let i = 0; i < pages.length; i++) {
     if (i > 0) pdf.addPage([pageWmm, pageHmm])
 
     let y = marginTop
-    if (i === 0 && (title || subtitle)) {
+    if (i === 0 && (title || subtitle || arranger)) {
       pdf.setFont('times', 'bold')
       pdf.setFontSize(15)
       if (title) pdf.text(title, pageWmm / 2, y + 5, { align: 'center' })
-      if (subtitle) {
-        pdf.setFont('times', 'normal')
-        pdf.setFontSize(9)
-        pdf.text(subtitle, pageWmm - marginSide, y + 5, { align: 'right' })
-      }
+
+      pdf.setFont('times', 'normal')
+      pdf.setFontSize(9)
+      if (subtitle) pdf.text(subtitle, pageWmm - marginSide, y + 5, { align: 'right' })
+      if (arranger) pdf.text(arranger, pageWmm - marginSide, y + 5 + (subtitle ? 4 : 0), { align: 'right' })
+
       y += headerHeightMm
     }
 
@@ -79,6 +110,23 @@ export async function buildPdfFromSvgPages({
     const canvas = await rasterizeSvgPage(svgElement, totalW, sliceHeight, scale)
     const imgData = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
     pdf.addImage(imgData, 'JPEG', marginSide, y, usableWmm, drawHmm)
+
+    // Footer — copyright/CCLI on the left (church licensing convention:
+    // this typically needs to appear on every page, not just page 1), page
+    // number on the right. Placed a fixed distance above the bottom edge
+    // rather than inside the (variable) bottom margin, so it reads reliably
+    // regardless of how tight a given score's margins are set.
+    const footerY = pageHmm - Math.max(4, FOOTER_HEIGHT_MM)
+    pdf.setFont('helvetica', 'normal')
+    pdf.setFontSize(FOOTER_FONT_PT)
+    pdf.setTextColor(120, 120, 120)
+    const pageLabel = `Page ${i + 1} of ${pages.length}`
+    if (footerLeft) {
+      const maxLeftWidthMm = usableWmm - pdf.getTextWidth(pageLabel) - FOOTER_GAP_MM
+      pdf.text(truncateToWidth(pdf, footerLeft, Math.max(0, maxLeftWidthMm)), marginSide, footerY)
+    }
+    pdf.text(pageLabel, pageWmm - marginSide, footerY, { align: 'right' })
+    pdf.setTextColor(0, 0, 0)
   }
 
   return pdf.output('blob')

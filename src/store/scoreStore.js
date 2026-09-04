@@ -263,6 +263,9 @@ export const EMPTY_SCORE = {
   id: crypto.randomUUID(),
   title: 'Untitled Score',
   composer: '',
+  arranger:  '',   // e.g. "Arr. Jane Doe" — printed under the composer line
+  copyright: '',   // e.g. "© 2026 Jane Doe. All rights reserved." — footer on every page
+  ccli:      '',   // CCLI Song # — footer on every page, alongside copyright
   tempo: 120,
   parts: [
     { id: 'part-treble', name: 'Treble', instrument: 'piano', clef: 'treble', measures: Array.from({ length: 12 }, () => makeEmptyMeasure({ beats: 4, beatType: 4 }, 0)) },
@@ -368,6 +371,9 @@ export const useScoreStore = create((set, get) => ({
   setComposer:  (c) => set(s => ({ score: { ...s.score, composer: c } })),
   setSubtitle:  (t) => set(s => ({ score: { ...s.score, subtitle: t } })),
   setLyricist:  (t) => set(s => ({ score: { ...s.score, lyricist: t } })),
+  setArranger:  (a) => set(s => ({ score: { ...s.score, arranger: a } })),
+  setCopyright: (c) => set(s => ({ score: { ...s.score, copyright: c } })),
+  setCcli:      (c) => set(s => ({ score: { ...s.score, ccli: c } })),
 
   // A transient (non-persisted) callback the currently-mounted lyric
   // <input> registers itself under, so the global keyboard handler (App.jsx,
