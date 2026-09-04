@@ -893,8 +893,8 @@ export default function App() {
             borderRadius:5 }}
           onMouseEnter={e=>e.currentTarget.style.background='#eff6ff'}
           onMouseLeave={e=>e.currentTarget.style.background='none'}>
-          <img src="/FaithScore_logo.png" alt="FaithScore" style={{ height:20, width:'auto', objectFit:'contain' }} />
-          FaithScore
+          <img src="/FaithScore_logo.png" alt="FaithScore" style={{ height:30, width:'auto', objectFit:'contain' }} />
+        
         </button>
 
         {/* ── Menu system ─────────────────────────────────────────────── */}

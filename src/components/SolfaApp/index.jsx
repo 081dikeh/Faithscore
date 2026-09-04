@@ -785,9 +785,9 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
           <img
             src="/FaithScore_logo.png"
             alt=""
-            style={{ height: 20, width: "auto" }}
+            style={{ height: 30, width: "auto" }}
           />
-          FaithScore
+        
         </button>
 
         <span
