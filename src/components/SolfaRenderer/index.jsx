@@ -46,8 +46,14 @@ const NOTE_HIT_H = NOTE_SZ + 4; // note click target — only above baseline, no
 const SYS_GAP = 46;
 const BRAK_W = 10;
 const LABEL_W = 26;
-const PAGE_L = 36;
-const PAGE_R = 20;
+// Base left/right insets, BEFORE the brace/label block on the left. Trimmed
+// from 36/20 after feedback that the printed page had too much unused
+// margin on the sides — this is on top of the page's own physical margin
+// (SF_MARGIN_SIDE in exportSolfa.js), so tightening it here directly grows
+// how many measures fit per line at the SAME note size (NOTE_SZ etc. are
+// unaffected), rather than shrinking anything to fit.
+const PAGE_L = 22;
+const PAGE_R = 12;
 const HDR_H = 44;
 const VOICE_H = ROW_H + LYRIC_H + VOICE_G;
 

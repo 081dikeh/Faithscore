@@ -230,13 +230,19 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
-// A4 page geometry (mm) — matches the tightened values used for the staff
-// side's print (see exportScore.js) so both apps produce similarly dense pages.
+// A4 page geometry (mm). Side margin trimmed from the staff app's 14mm
+// default to 10mm after feedback that the printed page had too much unused
+// side margin — Solfa doesn't have a Page Settings UI yet (unlike the staff
+// app, where marginSide is user-adjustable), so this default needs to be
+// reasonable on its own rather than relying on the user tuning it. Also
+// reduced SolfaRenderer's own internal PAGE_L/PAGE_R insets (see that file)
+// on top of this — the two are separate paddings that stack, so both needed
+// trimming for a visibly tighter side margin.
 const SF_PAGE_W_MM    = 210
 const SF_PAGE_H_MM    = 297
 const SF_MARGIN_TOP   = 8
 const SF_MARGIN_BOT   = 8
-const SF_MARGIN_SIDE  = 14
+const SF_MARGIN_SIDE  = 10
 const SF_USABLE_W_MM  = SF_PAGE_W_MM - SF_MARGIN_SIDE * 2
 const SF_USABLE_H_MM  = SF_PAGE_H_MM - SF_MARGIN_TOP - SF_MARGIN_BOT
 const SF_HEADER_H_MM_EST = 15 // title + meta row is a bit taller than the staff header — pre-existing estimate, already proven safe in real-world use before Arranger/Copyright/CCLI existed, so left as-is.
@@ -594,4 +600,4 @@ export async function exportSolfaAudio(score, opts = {}) {
   setTimeout(() => URL.revokeObjectURL(url), 3000)
 
   onStatus?.('Done! ✓')
-}
+}       
