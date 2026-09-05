@@ -242,6 +242,16 @@ const SF_USABLE_H_MM  = SF_PAGE_H_MM - SF_MARGIN_TOP - SF_MARGIN_BOT
 const SF_HEADER_H_MM_EST = 15 // title + meta row is a bit taller than the staff header — pre-existing estimate, already proven safe in real-world use before Arranger/Copyright/CCLI existed, so left as-is.
 const SF_ARRANGER_LINE_MM_EST = 7 // extra .sf-print-header height reserved when an arranger line is present — deliberately generous; see the matching comment in exportScore.js for why (break-inside:avoid has zero tolerance for underestimating available space).
 
+// Target width (in CSS px, at the standard 96px/inch the export math below
+// already assumes) to render the Solfa layout at BEFORE export, instead of
+// reusing whatever width the on-screen editor's browser window happens to
+// be. Matches the actual printed page's usable width exactly, so the
+// exported image needs ZERO further downscaling — NOTE_SZ/SYM_SZ/OCT_SZ/
+// LYR_SZ in SolfaRenderer print as their real pixel size instead of
+// whatever they happened to shrink to. See SolfaRenderer's exportAtWidth()
+// for the full reasoning; this is the number that call site needs.
+export const SF_PRINT_TARGET_PX = Math.round(SF_USABLE_W_MM * (96 / 25.4))
+
 // See headerHeightMmFor() in exportScore.js for the identical reasoning —
 // the arranger line is a real extra row in .sf-print-header's meta block
 // (stacked under the composer via <br/>), so pagination and the PDF image's

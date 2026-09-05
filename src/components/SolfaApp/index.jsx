@@ -42,7 +42,7 @@ import {
   migrateMeasure,
 } from "../../store/solfaStore";
 import { useSolfaPlayback, SOUND_PRESETS } from "../../hooks/useSolfaPlayback";
-import { exportSolfaPDF, exportSolfaAudio } from "../../utils/exportSolfa";
+import { exportSolfaPDF, exportSolfaAudio, SF_PRINT_TARGET_PX } from "../../utils/exportSolfa";
 import { supabase } from "../../lib/supabase";
 
 const SYLLABLES = ["d", "r", "m", "f", "s", "l", "t"];
@@ -785,9 +785,9 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
           <img
             src="/FaithScore_logo.png"
             alt=""
-            style={{ height: 30, width: "auto" }}
+            style={{ height: 20, width: "auto" }}
           />
-        
+          FaithScore
         </button>
 
         <span
@@ -1953,8 +1953,13 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                     <div style={{ display: "flex", alignItems: "center", gap: 7 }}><PenLine size={13} strokeWidth={1.75} /> All voice parts included</div>
                   </div>
                   <button
-                    onClick={() => {
-                      const svgEl = rendererRef.current?.getSvgElement()
+                    onClick={async () => {
+                      // Render at the actual print page's target width
+                      // rather than grabbing the live on-screen SVG — see
+                      // exportAtWidth() in SolfaRenderer for why this fixes
+                      // "notes too small to read" regardless of how wide
+                      // the editor window happens to be.
+                      const svgEl = await rendererRef.current?.exportAtWidth(SF_PRINT_TARGET_PX)
                       exportSolfaPDF(score, svgEl)
                     }}
                     style={{
@@ -2049,7 +2054,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
         <PublishToFaithLibrary
           score={score}
           mode="solfa"
-          getSvgElement={() => rendererRef.current?.getSvgElement()}
+          getSvgElement={() => rendererRef.current?.exportAtWidth(SF_PRINT_TARGET_PX)}
           onClose={() => setShowPublish(false)}
         />
       )}

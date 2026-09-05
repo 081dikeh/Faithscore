@@ -205,6 +205,12 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
   const wrapRef = useRef(null);
   const svgNodeRef = useRef(null);
   const [svgW, setSvgW] = useState(900);
+  // True while a temporary export-width render is in flight (see
+  // exportAtWidth below) — the ResizeObserver below must not stomp on the
+  // export width mid-capture if the container happens to resize at that
+  // exact moment (rare, but exporting is already async across a couple of
+  // animation frames, so it's worth guarding).
+  const exportingRef = useRef(false);
   const [lyricEdit, setLyricEdit] = useState(null);
   const [hoveredSlurId, setHoveredSlurId] = useState(null);
   const [hoveredTieId, setHoveredTieId] = useState(null);
@@ -219,8 +225,54 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
     ref,
     () => ({
       getSvgElement: () => svgNodeRef.current,
+
+      // Renders this SAME component (same layout code, same note-size
+      // constants — see NOTE_SZ/SYM_SZ/OCT_SZ/LYR_SZ up top) at a FIXED
+      // target pixel width instead of whatever width the on-screen
+      // container happens to be, then hands back a detached clone of the
+      // resulting <svg>.
+      //
+      // Why this exists: print/export used to just grab getSvgElement()
+      // directly — the LIVE on-screen SVG, laid out for however wide the
+      // user's browser window happened to be. Measure width and note size
+      // (NOTE_SZ etc.) are fixed pixel values; only how many measures fit
+      // per line adapts to the container width. So a wide monitor packs
+      // many measures per line at a normal on-screen size, and export then
+      // scales that WHOLE wide image down to fit a fixed page width —
+      // shrinking already-fixed-size noteheads/syllables along with it.
+      // The wider the editing window, the smaller the print output came
+      // out, with no floor.
+      //
+      // Rendering at a width that matches the actual printed page's usable
+      // width (in px, at the same 96px/inch the export math already
+      // assumes) means the export image needs ZERO further downscaling —
+      // NOTE_SZ=14 on screen prints as an actual ~14px-tall glyph, not
+      // whatever it happened to shrink to. Fewer measures naturally fit
+      // per line at that narrower target width, which is the explicit
+      // trade-off requested: readable notes over bars-per-line.
+      exportAtWidth: (px) =>
+        new Promise((resolve) => {
+          const original = svgW;
+          exportingRef.current = true;
+          setSvgW(px);
+          // Two animation frames: one lets React commit the svgW state
+          // update and re-render the SVG at the new width; the second lets
+          // the browser actually complete layout/paint before we read the
+          // DOM. Reading synchronously after setSvgW would still see the
+          // OLD width — state updates aren't applied to the DOM until React
+          // flushes and the browser paints.
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              const svg = svgNodeRef.current;
+              const clone = svg ? svg.cloneNode(true) : null;
+              exportingRef.current = false;
+              setSvgW(original);
+              resolve(clone);
+            });
+          });
+        }),
     }),
-    [],
+    [svgW],
   );
 
   const score = useSolfaStore((s) => s.score);
@@ -253,9 +305,10 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
 
   useEffect(() => {
     if (!wrapRef.current) return;
-    const ro = new ResizeObserver((e) =>
-      setSvgW(e[0].contentRect.width || 900),
-    );
+    const ro = new ResizeObserver((e) => {
+      if (exportingRef.current) return; // don't clobber the temporary export-width render
+      setSvgW(e[0].contentRect.width || 900);
+    });
     ro.observe(wrapRef.current);
     return () => ro.disconnect();
   }, []);

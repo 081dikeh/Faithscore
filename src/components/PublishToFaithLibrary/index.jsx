@@ -2,7 +2,11 @@
 //
 // Works for both staff scores and solfa scores — pass `mode` and, for
 // solfa, `getSvgElement` (staff reads its SVG straight from the DOM via
-// exportScorePdfBlob, same as Print already does).
+// exportScorePdfBlob, same as Print already does). `getSvgElement`, for
+// solfa, is actually SolfaRenderer's exportAtWidth() under the hood — it
+// returns a Promise (rendering at a fixed print-target width takes a
+// couple of animation frames), not a synchronous DOM node, so it must be
+// awaited — see the "await getSvgElement" call below.
 import { useEffect, useRef, useState } from 'react'
 import { X, Eye, EyeOff, UploadCloud, CheckCircle2, ExternalLink } from 'lucide-react'
 import { faithlibrary, getFaithLibrarySession } from '../../lib/faithlibrary'
@@ -124,7 +128,7 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
       if (!fresh) { setSession(null); throw new Error('Your FaithLibrary connection expired — please reconnect.') }
 
       const pdfBlob = mode === 'solfa'
-        ? await exportSolfaPdfBlob(score, getSvgElement?.())
+        ? await exportSolfaPdfBlob(score, await getSvgElement?.())
         : await exportScorePdfBlob(score)
 
       const cleanTitle = title.trim() || 'Untitled Score'
