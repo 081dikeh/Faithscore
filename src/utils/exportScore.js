@@ -588,9 +588,8 @@ const DEFAULT_PAGE_H_MM   = 297
 const DEFAULT_MARGIN_TOP  = 8
 const DEFAULT_MARGIN_BOT  = 8
 const DEFAULT_MARGIN_SIDE = 14
-const HEADER_H_MM_EST = 9 // rough estimate of .fs-print-header's rendered height (title + composer only) — used only as a floor; see headerHeightMmFor() and the real DOM measurement in printScore() below.
-const ARRANGER_LINE_MM_EST = 3.5 // extra .fs-print-header height when an arranger line is present (also just a floor)
-const MM_PER_PX = 25.4 / 96 // CSS px is defined as 1/96 inch; used to convert a measured getBoundingClientRect() height into mm
+const HEADER_H_MM_EST = 9 // rough estimate of .fs-print-header's rendered height (title + composer only) — this was the pre-existing estimate, already proven safe in real-world use before Arranger/Copyright/CCLI existed, so left as-is.
+const ARRANGER_LINE_MM_EST = 7 // extra .fs-print-header height reserved when an arranger line is present. Deliberately generous (roughly 2x a single 9pt line's real height): .fs-print-row has break-inside:avoid, which — confirmed via a weasyprint pagination test — has zero tolerance for underestimating available space: if page 1's music doesn't fit the remaining area by even a few mm, the WHOLE thing gets pushed to page 2 rather than just the overflow, leaving page 1 blank under the header. A few extra mm of harmless whitespace under the header is a far better failure mode than that.
 
 // The composer/arranger block is a single extra print line when arranger is
 // set — bump the header estimate accordingly so page-1 pagination (and the
@@ -657,7 +656,7 @@ export function printScore(score) {
   const arranger  = score?.arranger  || ''
   const copyright = score?.copyright || ''
   const ccli      = score?.ccli      || ''
-  let headerMm  = headerHeightMmFor(arranger)
+  const headerMm  = headerHeightMmFor(arranger)
 
   const ps = score?.pageSettings || {}
   const sizeMm = PAGE_SIZES_MM[ps.size] || PAGE_SIZES_MM.A4
@@ -688,42 +687,6 @@ export function printScore(score) {
 
   const pageEl = document.createElement('div')
   pageEl.className = 'fs-print-page'
-  pageEl.style.width = `${USABLE_W_MM}mm`
-
-  // ── Print-only styling: hidden on screen, shown (and everything else
-  //    hidden) during printing — injected BEFORE we build/measure the
-  //    header below, so the measurement reflects real styled dimensions
-  //    (font sizes, padding, border) rather than unstyled markup.
-  const style = document.createElement('style')
-  style.id = 'faithscore-print-style'
-  style.textContent = `
-    #faithscore-print-root { display: none; }
-    .fs-print-header {
-      text-align: center; margin-bottom: 2mm; padding-bottom: 1mm;
-      border-bottom: 0.5pt solid #ccc; font-family: 'Times New Roman', serif;
-    }
-    .fs-print-header h1 { font-size: 15pt; font-weight: bold; margin: 0; }
-    .fs-print-header p  { font-size: 9pt; color: #555; text-align: right; margin: 1mm 0 0; }
-    .fs-print-header p.fs-print-arranger { font-style: italic; }
-    .fs-print-slot { width: 100%; position: relative; }
-    .fs-print-row { width: 100%; }
-    .fs-print-row svg { width: 100% !important; height: auto !important; display: block; }
-    .fs-print-footer {
-      position: absolute; left: 0; right: 0; bottom: 0;
-      display: flex; justify-content: space-between; align-items: baseline; gap: 3mm;
-      font-family: Arial, Helvetica, sans-serif; font-size: 7.5pt; color: #777;
-    }
-    .fs-print-footer span:first-child {
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
-    }
-    .fs-print-footer span:last-child { flex-shrink: 0; }
-    @media print {
-      body > *:not(#faithscore-print-root) { display: none !important; }
-      #faithscore-print-root { display: block !important; }
-      @page { size: ${PAGE_W_MM}mm ${PAGE_H_MM}mm; margin: ${MARGIN_TOP}mm ${MARGIN_SIDE}mm ${MARGIN_BOT}mm ${MARGIN_SIDE}mm; }
-    }
-  `
-  document.head.appendChild(style)
 
   const header = document.createElement('div')
   header.className = 'fs-print-header'
@@ -731,26 +694,6 @@ export function printScore(score) {
     (composer ? `<p>${escapeHtml(composer)}</p>` : '') +
     (arranger ? `<p class="fs-print-arranger">${escapeHtml(arranger)}</p>` : '')
   pageEl.appendChild(header)
-
-  // Measure the header's REAL rendered height instead of trusting a fixed
-  // mm estimate — the same "verify against actual behavior, don't guess"
-  // lesson learned the hard way with VexFlow's lyric Y-positioning (see
-  // handoff notes). headerMm/ARRANGER_LINE_MM_EST above are only a floor
-  // now: a weasyprint-based test of this exact slot+footer technique showed
-  // that if the real header is even a little taller than assumed, the
-  // whole first-page slot (sized against the assumption) can overflow the
-  // page and get pushed onto page 2 wholesale — silently losing page 1's
-  // music and stranding its footer. Measuring removes the guesswork.
-  // The stylesheet above already sets #faithscore-print-root's default to
-  // display:none (0 height for any measurement) — the inline `display:
-  // block` here has higher specificity than that ID-selector rule (no
-  // !important on either side, so inline wins), letting the root actually
-  // lay out — off-screen and invisible, but real geometry — for measuring.
-  root.appendChild(pageEl)
-  root.style.cssText = 'position:fixed; left:-9999px; top:0; visibility:hidden; display:block;'
-  document.body.appendChild(root)
-  const measuredHeaderMm = header.getBoundingClientRect().height * MM_PER_PX
-  headerMm = Math.max(headerMm, measuredHeaderMm)
 
   const rows = []
   svgElements.forEach(svg => {
@@ -776,52 +719,75 @@ export function printScore(score) {
     })
   })
 
-  // Footer text (copyright/CCLI) — churches generally need this on every
-  // page, not just page 1, so it's the same string regardless of index.
-  // escapeHtml here too — copyright/CCLI are free-text fields injected via
-  // innerHTML below, same as title/composer/arranger above.
-  const footerLeft = [copyright && escapeHtml(copyright), ccli ? `CCLI Song # ${escapeHtml(ccli)}` : null]
-    .filter(Boolean).join('&nbsp;&nbsp;&bull;&nbsp;&nbsp;')
-
-  // Each row is wrapped in a fixed-height "page slot" rather than appended
-  // directly — a slot's height is set to exactly fill the physical page's
-  // usable area (accounting for the header on page 1 only), so a footer
-  // pinned to the slot's bottom edge lands at the true bottom of that
-  // printed page regardless of how much whitespace is left under the music
-  // (which is expected and normal on the last page).
   rows.forEach((row, i) => {
-    const isFirst = i === 0
-    const slotHeightMm = isFirst ? (USABLE_H_MM - headerMm) : USABLE_H_MM
-
-    const slot = document.createElement('div')
-    slot.className = 'fs-print-slot'
-    slot.style.height = `${slotHeightMm}mm`
-    slot.appendChild(row)
-
-    if (footerLeft || rows.length > 1) {
-      const footer = document.createElement('div')
-      footer.className = 'fs-print-footer'
-      footer.innerHTML =
-        `<span>${footerLeft}</span><span>Page ${i + 1} of ${rows.length}</span>`
-      slot.appendChild(footer)
-    }
-
+    pageEl.appendChild(row)
     if (i < rows.length - 1) {
-      slot.style.breakAfter = 'page'
-      slot.style.pageBreakAfter = 'always'
+      row.style.breakAfter = 'page'
+      row.style.pageBreakAfter = 'always'
     }
-    slot.style.breakInside = 'avoid'
-    slot.style.pageBreakInside = 'avoid'
-
-    pageEl.appendChild(slot)
+    row.style.breakInside = 'avoid'
+    row.style.pageBreakInside = 'avoid'
   })
 
-  // Root/pageEl were already appended to the document during header
-  // measurement above — just drop the temporary off-screen positioning now
-  // that pagination is done; the stylesheet (already injected above, before
-  // measurement) takes over from here: display:none by default, shown only
-  // for @media print.
-  root.style.cssText = ''
+  // Footer — copyright/CCLI only, deliberately WITHOUT a per-page number.
+  // An earlier version of this tried to pin a numbered "Page N of M" to the
+  // exact bottom of each individual page using a fixed-height wrapper per
+  // page (matched to an estimated/measured header height) plus
+  // break-inside:avoid. That combination has zero tolerance: if the real
+  // rendered height is even slightly off from the estimate — different
+  // font metrics, sub-pixel rounding, anything not caught by testing this
+  // outside a real Chrome print — break-inside:avoid doesn't split or
+  // overflow the mismatched box, it moves the ENTIRE thing to the next
+  // page. That's exactly what caused a real regression (blank page 1,
+  // music pushed to page 2) once this ran in an actual browser.
+  // A single `position: fixed` element sidesteps all of that: Chrome
+  // repeats it at the same spot on every physical printed page automatically,
+  // with no height math and no fragile fit requirement — genuinely the
+  // standard technique for a repeating print footer. The one thing it can't
+  // do is show different text per page (there's no "which page am I on"
+  // signal available to pure position:fixed content), so the page number
+  // that used to live here is gone from THIS export path. It's still shown
+  // reliably in the one-click Publish PDF export, which builds pages in JS
+  // and always knows the real page count.
+  if (copyright || ccli) {
+    const footer = document.createElement('div')
+    footer.className = 'fs-print-footer'
+    const footerLeft = [copyright && escapeHtml(copyright), ccli ? `CCLI Song # ${escapeHtml(ccli)}` : null]
+      .filter(Boolean).join('&nbsp;&nbsp;&bull;&nbsp;&nbsp;')
+    footer.innerHTML = `<span>${footerLeft}</span>`
+    pageEl.appendChild(footer)
+  }
+
+  root.appendChild(pageEl)
+  document.body.appendChild(root)
+
+  // ── Print-only styling: hidden on screen, shown (and everything else
+  //    hidden) during printing ──────────────────────────────────────────────
+  const style = document.createElement('style')
+  style.id = 'faithscore-print-style'
+  style.textContent = `
+    #faithscore-print-root { display: none; }
+    .fs-print-header {
+      text-align: center; margin-bottom: 2mm; padding-bottom: 1mm;
+      border-bottom: 0.5pt solid #ccc; font-family: 'Times New Roman', serif;
+    }
+    .fs-print-header h1 { font-size: 15pt; font-weight: bold; margin: 0; }
+    .fs-print-header p  { font-size: 9pt; color: #555; text-align: right; margin: 1mm 0 0; }
+    .fs-print-header p.fs-print-arranger { font-style: italic; }
+    .fs-print-row { width: 100%; }
+    .fs-print-row svg { width: 100% !important; height: auto !important; display: block; }
+    .fs-print-footer {
+      position: fixed; left: ${MARGIN_SIDE}mm; right: ${MARGIN_SIDE}mm; bottom: ${Math.max(2, MARGIN_BOT - 4)}mm;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: Arial, Helvetica, sans-serif; font-size: 7.5pt; color: #777;
+    }
+    @media print {
+      body > *:not(#faithscore-print-root) { display: none !important; }
+      #faithscore-print-root { display: block !important; }
+      @page { size: ${PAGE_W_MM}mm ${PAGE_H_MM}mm; margin: ${MARGIN_TOP}mm ${MARGIN_SIDE}mm ${MARGIN_BOT}mm ${MARGIN_SIDE}mm; }
+    }
+  `
+  document.head.appendChild(style)
 
   // The browser's own print header/footer (date/time, page title, URL, page
   // numbers) is NOT something a web page can fully remove — it's controlled
