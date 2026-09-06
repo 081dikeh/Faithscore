@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
+import { PAGE_SIZES_MM } from '../store/scoreStore'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -230,23 +231,41 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
-// A4 page geometry (mm). Side margin trimmed from the staff app's 14mm
-// default to 10mm after feedback that the printed page had too much unused
-// side margin — Solfa doesn't have a Page Settings UI yet (unlike the staff
-// app, where marginSide is user-adjustable), so this default needs to be
-// reasonable on its own rather than relying on the user tuning it. Also
-// reduced SolfaRenderer's own internal PAGE_L/PAGE_R insets (see that file)
-// on top of this — the two are separate paddings that stack, so both needed
-// trimming for a visibly tighter side margin.
-const SF_PAGE_W_MM    = 210
-const SF_PAGE_H_MM    = 297
-const SF_MARGIN_TOP   = 8
-const SF_MARGIN_BOT   = 8
-const SF_MARGIN_SIDE  = 10
-const SF_USABLE_W_MM  = SF_PAGE_W_MM - SF_MARGIN_SIDE * 2
-const SF_USABLE_H_MM  = SF_PAGE_H_MM - SF_MARGIN_TOP - SF_MARGIN_BOT
+// A4 default page geometry (mm) — actual values used at export time come
+// from score.pageSettings (see Page settings under Solfa's Format menu),
+// mirroring exactly how the staff app's exportScore.js already works. These
+// are just the fallback for scores that predate that setting. Side margin
+// default trimmed from the staff app's 14mm to 10mm after feedback that the
+// printed page had too much unused side margin — also reduced
+// SolfaRenderer's own internal PAGE_L/PAGE_R insets (see that file) on top
+// of this, since the two are separate paddings that stack.
+const DEFAULT_SF_PAGE_W_MM   = 210
+const DEFAULT_SF_PAGE_H_MM   = 297
+const DEFAULT_SF_MARGIN_TOP  = 8
+const DEFAULT_SF_MARGIN_BOT  = 8
+const DEFAULT_SF_MARGIN_SIDE = 10
 const SF_HEADER_H_MM_EST = 15 // title + meta row is a bit taller than the staff header — pre-existing estimate, already proven safe in real-world use before Arranger/Copyright/CCLI existed, so left as-is.
 const SF_ARRANGER_LINE_MM_EST = 7 // extra .sf-print-header height reserved when an arranger line is present — deliberately generous; see the matching comment in exportScore.js for why (break-inside:avoid has zero tolerance for underestimating available space).
+
+// Resolves a score's actual page geometry from score.pageSettings, falling
+// back to the DEFAULT_SF_* constants above for scores that predate the
+// setting (or if pageSettings is missing/partial). Centralized here since
+// every export/print entry point (and the print-target-width helper below)
+// needs the exact same resolution logic.
+function resolvePageGeometry(score) {
+  const ps = score?.pageSettings || {}
+  const sizeMm = PAGE_SIZES_MM[ps.size] || { w: DEFAULT_SF_PAGE_W_MM, h: DEFAULT_SF_PAGE_H_MM }
+  const pageWmm   = sizeMm.w
+  const pageHmm   = sizeMm.h
+  const marginTop  = ps.marginTop    ?? DEFAULT_SF_MARGIN_TOP
+  const marginBot  = ps.marginBottom ?? DEFAULT_SF_MARGIN_BOT
+  const marginSide = ps.marginSide   ?? DEFAULT_SF_MARGIN_SIDE
+  return {
+    pageWmm, pageHmm, marginTop, marginBot, marginSide,
+    usableWmm: pageWmm - marginSide * 2,
+    usableHmm: pageHmm - marginTop - marginBot,
+  }
+}
 
 // Target width (in CSS px, at the standard 96px/inch the export math below
 // already assumes) to render the Solfa layout at BEFORE export, instead of
@@ -255,8 +274,11 @@ const SF_ARRANGER_LINE_MM_EST = 7 // extra .sf-print-header height reserved when
 // exported image needs ZERO further downscaling — NOTE_SZ/SYM_SZ/OCT_SZ/
 // LYR_SZ in SolfaRenderer print as their real pixel size instead of
 // whatever they happened to shrink to. See SolfaRenderer's exportAtWidth()
-// for the full reasoning; this is the number that call site needs.
-export const SF_PRINT_TARGET_PX = Math.round(SF_USABLE_W_MM * (96 / 25.4))
+// for the full reasoning. Takes `score` now (not a bare constant) so it
+// reflects that score's own page size/margins once Page settings exists.
+export function solfaPrintTargetPx(score) {
+  return Math.round(resolvePageGeometry(score).usableWmm * (96 / 25.4))
+}
 
 // See headerHeightMmFor() in exportScore.js for the identical reasoning —
 // the arranger line is a real extra row in .sf-print-header's meta block
@@ -329,6 +351,7 @@ export function exportSolfaPDF(score, svgElement) {
   const copyright = score?.copyright || ''
   const ccli      = score?.ccli      || ''
   const headerMm  = headerHeightMmFor(arranger)
+  const { pageWmm, pageHmm, marginTop, marginBot, marginSide, usableWmm, usableHmm } = resolvePageGeometry(score)
 
   if (!svgElement) {
     alert('Nothing to print yet — add some notes first.')
@@ -364,28 +387,9 @@ export function exportSolfaPDF(score, svgElement) {
   const totalW = (vb && vb.width)  || svgElement.width.baseVal.value  || svgElement.getBoundingClientRect().width
   const totalH = (vb && vb.height) || svgElement.height.baseVal.value || svgElement.getBoundingClientRect().height
 
-  const scaleUnitsPerMm  = totalW / SF_USABLE_W_MM
-  const usableFirstUnits = (SF_USABLE_H_MM - headerMm) * scaleUnitsPerMm
-  const usableRestUnits  = SF_USABLE_H_MM * scaleUnitsPerMm
-
-  const sysTops = findSolfaSystemTops(svgElement)
-  const slices = sysTops
-    ? paginateSolfaSystems(sysTops, totalH, Math.max(usableFirstUnits, 1), Math.max(usableRestUnits, 1))
-    : [{ y: 0, height: totalH }] // couldn't detect systems — fall back to one uncut block
-
-  slices.forEach((slice, i) => {
-    const clone = cropSolfaSvg(svgElement, totalW, slice.y, slice.height)
-    const row = document.createElement('div')
-    row.className = 'sf-print-row'
-    row.appendChild(clone)
-    if (i < slices.length - 1) {
-      row.style.breakAfter = 'page'
-      row.style.pageBreakAfter = 'always'
-    }
-    row.style.breakInside = 'avoid'
-    row.style.pageBreakInside = 'avoid'
-    pageEl.appendChild(row)
-  })
+  const scaleUnitsPerMm  = totalW / usableWmm
+  const usableFirstUnits = (usableHmm - headerMm) * scaleUnitsPerMm
+  const usableRestUnits  = usableHmm * scaleUnitsPerMm
 
   // Footer — copyright/CCLI only, deliberately WITHOUT a per-page number.
   // See the matching (much longer) comment in exportScore.js's printScore()
@@ -427,14 +431,14 @@ export function exportSolfaPDF(score, svgElement) {
     .sf-print-row { width: 100%; }
     .sf-print-row svg { width: 100% !important; height: auto !important; display: block; overflow: visible; }
     .sf-print-footer {
-      position: fixed; left: ${SF_MARGIN_SIDE}mm; right: ${SF_MARGIN_SIDE}mm; bottom: ${Math.max(2, SF_MARGIN_BOT - 4)}mm;
+      position: fixed; left: ${marginSide}mm; right: ${marginSide}mm; bottom: ${Math.max(2, marginBot - 4)}mm;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       font-family: Arial, Helvetica, sans-serif; font-size: 7.5pt; color: #777;
     }
     @media print {
       body > *:not(#faithscore-solfa-print-root) { display: none !important; }
       #faithscore-solfa-print-root { display: block !important; }
-      @page { size: ${SF_PAGE_W_MM}mm ${SF_PAGE_H_MM}mm; margin: ${SF_MARGIN_TOP}mm ${SF_MARGIN_SIDE}mm ${SF_MARGIN_BOT}mm ${SF_MARGIN_SIDE}mm; }
+      @page { size: ${pageWmm}mm ${pageHmm}mm; margin: ${marginTop}mm ${marginSide}mm ${marginBot}mm ${marginSide}mm; }
     }
   `
   document.head.appendChild(style)
@@ -466,6 +470,7 @@ export function exportSolfaPDF(score, svgElement) {
 export async function exportSolfaPdfBlob(score, svgElement) {
   const title = score?.title || 'Untitled'
   const headerMm = headerHeightMmFor(score?.arranger || '')
+  const { pageWmm, pageHmm, marginTop, marginSide, usableWmm, usableHmm } = resolvePageGeometry(score)
 
   if (!svgElement) throw new Error('Nothing to publish yet — add some notes first.')
 
@@ -473,9 +478,9 @@ export async function exportSolfaPdfBlob(score, svgElement) {
   const totalW = (vb && vb.width)  || svgElement.width.baseVal.value  || svgElement.getBoundingClientRect().width
   const totalH = (vb && vb.height) || svgElement.height.baseVal.value || svgElement.getBoundingClientRect().height
 
-  const scaleUnitsPerMm  = totalW / SF_USABLE_W_MM
-  const usableFirstUnits = (SF_USABLE_H_MM - headerMm) * scaleUnitsPerMm
-  const usableRestUnits  = SF_USABLE_H_MM * scaleUnitsPerMm
+  const scaleUnitsPerMm  = totalW / usableWmm
+  const usableFirstUnits = (usableHmm - headerMm) * scaleUnitsPerMm
+  const usableRestUnits  = usableHmm * scaleUnitsPerMm
 
   const sysTops = findSolfaSystemTops(svgElement)
   const slices = sysTops
@@ -496,7 +501,7 @@ export async function exportSolfaPdfBlob(score, svgElement) {
   const { buildPdfFromSvgPages } = await import('./pdfExport')
   return buildPdfFromSvgPages({
     pages,
-    pageWmm: SF_PAGE_W_MM, pageHmm: SF_PAGE_H_MM, marginTop: SF_MARGIN_TOP, marginSide: SF_MARGIN_SIDE,
+    pageWmm, pageHmm, marginTop, marginSide,
     title, subtitle: score?.composer || '', arranger: score?.arranger || '',
     copyright: score?.copyright || '', ccli: score?.ccli || '',
     headerHeightMm: headerMm,
@@ -600,4 +605,4 @@ export async function exportSolfaAudio(score, opts = {}) {
   setTimeout(() => URL.revokeObjectURL(url), 3000)
 
   onStatus?.('Done! ✓')
-}       
+}

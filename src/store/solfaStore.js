@@ -131,6 +131,12 @@ export function buildEmptySolfaScore(voiceComboKey='satb',key='C',beats=4,numMea
   return {
     id:uid(), type:'solfa', title:'Untitled', key,
     composer:'', arranger:'', copyright:'', ccli:'',
+    // Mirrors the staff app's score.pageSettings shape exactly (see
+    // scoreStore.js) so exportSolfa.js's resolvePageGeometry() and the
+    // staff app's Page Settings modal pattern both work the same way here.
+    // Side margin defaults to 10mm (not the staff app's 14mm) — see the
+    // comment on DEFAULT_SF_MARGIN_SIDE in exportSolfa.js for why.
+    pageSettings: { size: 'A4', marginTop: 8, marginBottom: 8, marginSide: 10 },
     tempo:80, timeSignature:{beats,beatType:4},
     voiceCombo:voiceComboKey,
     parts:combo.voices.map(v=>makePart(v,numMeasures,beats)),
@@ -308,6 +314,7 @@ export const useSolfaStore = create((set,get) => ({
   setArranger: a => set(s=>({score:{...s.score,arranger:a}})),
   setCopyright: c => set(s=>({score:{...s.score,copyright:c}})),
   setCcli:     c => set(s=>({score:{...s.score,ccli:c}})),
+  setPageSettings: patch => set(s=>({score:{...s.score,pageSettings:{...s.score.pageSettings,...patch}}})),
   // DEPRECATED for mid-score use: rewrites the score's starting key only —
   // it does NOT touch any measure's key. Kept for score creation (Wizard)
   // where there's nothing to modulate from yet. For modulating partway

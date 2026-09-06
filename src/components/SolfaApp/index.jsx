@@ -41,8 +41,9 @@ import {
   VOICE_COMBOS,
   migrateMeasure,
 } from "../../store/solfaStore";
+import { PAGE_SIZES_MM } from "../../store/scoreStore";
 import { useSolfaPlayback, SOUND_PRESETS } from "../../hooks/useSolfaPlayback";
-import { exportSolfaPDF, exportSolfaAudio, SF_PRINT_TARGET_PX } from "../../utils/exportSolfa";
+import { exportSolfaPDF, exportSolfaAudio, solfaPrintTargetPx } from "../../utils/exportSolfa";
 import { supabase } from "../../lib/supabase";
 
 const SYLLABLES = ["d", "r", "m", "f", "s", "l", "t"];
@@ -213,6 +214,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
   const setArranger  = useSolfaStore((s) => s.setArranger);
   const setCopyright = useSolfaStore((s) => s.setCopyright);
   const setCcli       = useSolfaStore((s) => s.setCcli);
+  const setPageSettings = useSolfaStore((s) => s.setPageSettings);
   const placeEvent = useSolfaStore((s) => s.placeEvent);
   const setEventInPlace = useSolfaStore((s) => s.setEventInPlace);
   const placeSustain = useSolfaStore((s) => s.placeSustain);
@@ -312,6 +314,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
   const [showExport,  setShowExport]  = useState(false);
   const [showPublish, setShowPublish] = useState(false);
   const [showScoreInfo, setShowScoreInfo] = useState(false);
+  const [showPageSettings, setShowPageSettings] = useState(false);
   const [exportTab,   setExportTab]   = useState("pdf"); // "pdf" | "audio"
   const [exportBpm,   setExportBpm]   = useState(score.tempo || 80);
   const [exportBusy,  setExportBusy]  = useState(false);
@@ -849,6 +852,20 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
           onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#9ca3af" }}
         >
           <Info size={14} strokeWidth={2} />
+        </button>
+
+        <button
+          onClick={() => setShowPageSettings(true)}
+          title="Page settings (page size, margins)"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: 24, height: 24, border: "none", borderRadius: 6,
+            background: "transparent", color: "#9ca3af", cursor: "pointer",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = "#f3f4f6"; e.currentTarget.style.color = "#6b7280" }}
+          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#9ca3af" }}
+        >
+          <Ruler size={14} strokeWidth={2} />
         </button>
 
         <div style={{ flex: 1 }} />
@@ -1891,6 +1908,78 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
         </div>
       )}
 
+      {/* ── Page Settings Modal ── */}
+      {/* Mirrors the staff app's PageSettingsModal (App.jsx) exactly — same
+          fields, same layout, same PAGE_SIZES_MM options — just wired to
+          useSolfaStore instead of useScoreStore, since the two apps keep
+          separate score objects. Controls page size + margins used by both
+          Print and the one-click Publish PDF (see resolvePageGeometry() in
+          exportSolfa.js). */}
+      {showPageSettings && (() => {
+        const ps = score.pageSettings || { size: "A4", marginTop: 8, marginBottom: 8, marginSide: 10 };
+        const dims = PAGE_SIZES_MM[ps.size] || PAGE_SIZES_MM.A4;
+        const field = (label, key, min, max) => (
+          <label key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12.5, color: "#374151", marginBottom: 8 }}>
+            {label}
+            <input
+              type="number" min={min} max={max} step={1} value={ps[key]}
+              onChange={e => {
+                const v = Number(e.target.value);
+                if (!isNaN(v)) setPageSettings({ [key]: Math.max(min, Math.min(max, v)) });
+              }}
+              style={{ width: 70, fontSize: 12.5, border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", textAlign: "right" }}
+            />
+          </label>
+        );
+        return (
+          <div
+            onClick={() => setShowPageSettings(false)}
+            style={{
+              position: "fixed", inset: 0, zIndex: 200,
+              background: "rgba(0,0,0,0.35)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ background: "white", borderRadius: 10, width: 340, padding: "18px 20px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.25)" }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#111827", marginBottom: 14 }}>Page settings</div>
+
+              <label style={{ display: "block", fontSize: 12.5, color: "#374151", marginBottom: 6, fontWeight: 600 }}>
+                Page size
+              </label>
+              <select
+                value={ps.size}
+                onChange={e => setPageSettings({ size: e.target.value })}
+                style={{ width: "100%", fontSize: 12.5, border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", marginBottom: 14, color: "#111827" }}
+              >
+                {Object.keys(PAGE_SIZES_MM).map(k => (
+                  <option key={k} value={k}>{k} ({PAGE_SIZES_MM[k].w}×{PAGE_SIZES_MM[k].h}mm)</option>
+                ))}
+              </select>
+
+              <div style={{ fontSize: 12.5, color: "#374151", marginBottom: 8, fontWeight: 600 }}>Margins (mm)</div>
+              {field("Top", "marginTop", 0, 50)}
+              {field("Bottom", "marginBottom", 0, 50)}
+              {field("Left / Right", "marginSide", 0, 50)}
+
+              <div style={{ fontSize: 10.5, color: "#9ca3af", margin: "10px 0 16px", lineHeight: 1.4 }}>
+                Usable print area: {Math.max(0, dims.w - ps.marginSide * 2).toFixed(0)} ×{" "}
+                {Math.max(0, dims.h - ps.marginTop - ps.marginBottom).toFixed(0)} mm. Applies to Print and Publish PDF.
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button onClick={() => setShowPageSettings(false)}
+                  style={{ fontSize: 12.5, fontWeight: 600, padding: "7px 16px", borderRadius: 7, border: "1px solid #2563eb", background: "#2563eb", color: "white", cursor: "pointer" }}>
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── Export Modal ── */}
       {showExport && (
         <div
@@ -1948,7 +2037,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                     Use <strong>File → Print</strong> or <strong>Save as PDF</strong> in the print dialog.
                   </p>
                   <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", marginBottom: 18, fontSize: 12, color: "#64748b", display: "flex", flexDirection: "column", gap: 5 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Ruler size={13} strokeWidth={1.75} /> A4 portrait format</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Ruler size={13} strokeWidth={1.75} /> {(score.pageSettings?.size || "A4")} portrait — use the ruler icon above to change</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 7 }}><ListMusic size={13} strokeWidth={1.75} /> Includes title, key, time signature &amp; tempo</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 7 }}><PenLine size={13} strokeWidth={1.75} /> All voice parts included</div>
                   </div>
@@ -1959,7 +2048,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                       // exportAtWidth() in SolfaRenderer for why this fixes
                       // "notes too small to read" regardless of how wide
                       // the editor window happens to be.
-                      const svgEl = await rendererRef.current?.exportAtWidth(SF_PRINT_TARGET_PX)
+                      const svgEl = await rendererRef.current?.exportAtWidth(solfaPrintTargetPx(score))
                       exportSolfaPDF(score, svgEl)
                     }}
                     style={{
@@ -2054,7 +2143,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
         <PublishToFaithLibrary
           score={score}
           mode="solfa"
-          getSvgElement={() => rendererRef.current?.exportAtWidth(SF_PRINT_TARGET_PX)}
+          getSvgElement={() => rendererRef.current?.exportAtWidth(solfaPrintTargetPx(score))}
           onClose={() => setShowPublish(false)}
         />
       )}
