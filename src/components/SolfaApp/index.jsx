@@ -1959,6 +1959,38 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                 ))}
               </select>
 
+              <div style={{ fontSize: 12.5, color: "#374151", marginBottom: 8, fontWeight: 600 }}>Density</div>
+              <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+                {[
+                  { label: "Compact", marginTop: 6, marginBottom: 6, marginSide: 6 },
+                  { label: "Normal", marginTop: 8, marginBottom: 8, marginSide: 10 },
+                  { label: "Spacious", marginTop: 14, marginBottom: 14, marginSide: 18 },
+                ].map(preset => {
+                  const isActive = ps.marginTop === preset.marginTop && ps.marginBottom === preset.marginBottom && ps.marginSide === preset.marginSide;
+                  return (
+                    <button
+                      key={preset.label}
+                      onClick={() => setPageSettings({ marginTop: preset.marginTop, marginBottom: preset.marginBottom, marginSide: preset.marginSide })}
+                      title={`Top/Bottom ${preset.marginTop}mm, Left/Right ${preset.marginSide}mm`}
+                      style={{
+                        flex: 1, fontSize: 11.5, fontWeight: 600, padding: "6px 0", borderRadius: 6, cursor: "pointer",
+                        border: isActive ? "1px solid #2563eb" : "1px solid #d1d5db",
+                        background: isActive ? "#eff6ff" : "white",
+                        color: isActive ? "#2563eb" : "#374151",
+                      }}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 10.5, color: "#9ca3af", marginTop: -8, marginBottom: 14, lineHeight: 1.4 }}>
+                Presets set the margins below — more page taken up by margin
+                means fewer measures fit per line at the same note size, and
+                vice versa. Tune the individual numbers below for anything
+                in between.
+              </div>
+
               <div style={{ fontSize: 12.5, color: "#374151", marginBottom: 8, fontWeight: 600 }}>Margins (mm)</div>
               {field("Top", "marginTop", 0, 50)}
               {field("Bottom", "marginBottom", 0, 50)}

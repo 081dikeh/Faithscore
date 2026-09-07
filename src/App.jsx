@@ -74,6 +74,32 @@ function PageSettingsModal({ pageSettings, onChange, onClose }) {
           ))}
         </select>
 
+        <div style={{ fontSize: 12.5, color: '#374151', marginBottom: 8, fontWeight: 600 }}>Density</div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+          {[
+            { label: 'Compact', marginTop: 6, marginBottom: 6, marginSide: 8 },
+            { label: 'Normal', marginTop: 8, marginBottom: 8, marginSide: 14 },
+            { label: 'Spacious', marginTop: 14, marginBottom: 14, marginSide: 20 },
+          ].map(preset => {
+            const isActive = ps.marginTop === preset.marginTop && ps.marginBottom === preset.marginBottom && ps.marginSide === preset.marginSide
+            return (
+              <button
+                key={preset.label}
+                onClick={() => onChange({ marginTop: preset.marginTop, marginBottom: preset.marginBottom, marginSide: preset.marginSide })}
+                title={`Top/Bottom ${preset.marginTop}mm, Left/Right ${preset.marginSide}mm`}
+                style={{
+                  flex: 1, fontSize: 11.5, fontWeight: 600, padding: '6px 0', borderRadius: 6, cursor: 'pointer',
+                  border: isActive ? '1px solid #2563eb' : '1px solid #d1d5db',
+                  background: isActive ? '#eff6ff' : 'white',
+                  color: isActive ? '#2563eb' : '#374151',
+                }}
+              >
+                {preset.label}
+              </button>
+            )
+          })}
+        </div>
+
         <div style={{ fontSize: 12.5, color: '#374151', marginBottom: 8, fontWeight: 600 }}>Margins (mm)</div>
         {field('Top', 'marginTop', 0, 50)}
         {field('Bottom', 'marginBottom', 0, 50)}
@@ -893,8 +919,8 @@ export default function App() {
             borderRadius:5 }}
           onMouseEnter={e=>e.currentTarget.style.background='#eff6ff'}
           onMouseLeave={e=>e.currentTarget.style.background='none'}>
-          <img src="/FaithScore_logo.png" alt="FaithScore" style={{ height:30, width:'auto', objectFit:'contain' }} />
-        
+          <img src="/FaithScore_logo.png" alt="FaithScore" style={{ height:20, width:'auto', objectFit:'contain' }} />
+          FaithScore
         </button>
 
         {/* ── Menu system ─────────────────────────────────────────────── */}
