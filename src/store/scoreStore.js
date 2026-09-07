@@ -87,21 +87,57 @@ export function spellPitch(pitchClass, keySignature) {
   const isFlatKey = (keySignature || 0) < 0
   if (!isFlatKey) {
     for (const nm of scale) {
+      const { step, accidental } = parseNoteName(nm)
+      // Skip a scale tone that's already sharped (e.g. F# in A major) —
+      // raising it again would need a double-sharp (Fx), which this
+      // function doesn't produce. Left unskipped, this silently returned
+      // the SAME spelling as the unaltered neighbor (e.g. "F#" again for
+      // the pitch a further semitone above real F#), which made repeated
+      // chromatic arrow-key presses look "stuck" on heavily-sharped keys —
+      // a real, reproducible bug, not just a display quirk.
+      if (accidental === '#') continue
       if ((noteNameToPc(nm) + 1) % 12 === pc) {
-        return { step: parseNoteName(nm).step, accidental: '#' }
+        return { step, accidental: '#' }
       }
     }
   } else {
     for (const nm of scale) {
+      const { step, accidental } = parseNoteName(nm)
+      // Same reasoning as above, mirrored for flat keys — skip a scale
+      // tone that's already flatted (e.g. Bb in Eb major) rather than
+      // needing a double-flat.
+      if (accidental === 'b') continue
       if (((noteNameToPc(nm) - 1) + 12) % 12 === pc) {
-        return { step: parseNoteName(nm).step, accidental: 'b' }
+        return { step, accidental: 'b' }
       }
     }
   }
-  // Fallback — shouldn't normally be reached (every pc is either a scale
-  // tone or exactly one semitone from one), but keeps this total.
-  const FALLBACK = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-  return parseNoteName(FALLBACK[pc])
+  // Fallback — either no neighbor was found, or the only neighbor was
+  // already altered (skipped above). Spell chromatically using a plain
+  // single-accidental table instead of a double-sharp/double-flat —
+  // simpler and far more readable for church/choir notation than the
+  // theoretically "purer" but visually confusing alternative.
+  const SHARP_FALLBACK = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+  const FLAT_FALLBACK  = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
+  return parseNoteName((isFlatKey ? FLAT_FALLBACK : SHARP_FALLBACK)[pc])
+}
+
+// spellPitch() only returns {step, accidental} — it has no notion of
+// octave. But B# and Cb are the one enharmonic pair that crosses the
+// octave-number boundary (the boundary sits at B→C, not at any other
+// letter pair): B#4 is the SAME pitch as C5, and Cb5 is the SAME pitch as
+// B4. A caller that computes "which octave" from a plain pitch-class/12
+// formula BEFORE spelling (as both shiftPitchHalfStep below and
+// solfaToStaff.js's solfaToScorePitch do) gets that octave number right
+// for a 'C'/'B' spelling, but it's off by exactly one octave if spellPitch
+// hands back 'B#' or 'Cb' instead — a real bug that showed up as chromatic
+// arrow-key presses occasionally jumping a full octave in certain key
+// signatures. Centralized here so every caller applies the same
+// correction instead of each reimplementing (or missing) it.
+export function spellingOctaveDelta(spelled) {
+  if (spelled.step === 'B' && spelled.accidental === '#') return -1
+  if (spelled.step === 'C' && spelled.accidental === 'b') return 1
+  return 0
 }
 
 export const DURATION_BEATS = {
@@ -1488,7 +1524,7 @@ export const useScoreStore = create((set, get) => ({
     // fixed sharps-only table) — e.g. stepping into a black key in Bb
     // major now correctly yields Eb, not D#.
     const spelled = spellPitch(pc, measure?.keySignature ?? 0)
-    const np = { step: spelled.step, accidental: spelled.accidental, octave: oct2 }
+    const np = { step: spelled.step, accidental: spelled.accidental, octave: oct2 + spellingOctaveDelta(spelled) }
     get()._applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) =>
       notes.map(n => n.id === selectedNoteId ? { ...n, pitch: np } : n)
     )

@@ -30,7 +30,7 @@
 // across a measure boundary.
 
 import { solfaToMidiForVoice, migrateMeasure } from '../store/solfaStore'
-import { spellPitch, MAJOR_SCALES, beatsToRest, DURATION_BEATS, EMPTY_SCORE } from '../store/scoreStore'
+import { spellPitch, spellingOctaveDelta, MAJOR_SCALES, beatsToRest, DURATION_BEATS, EMPTY_SCORE } from '../store/scoreStore'
 
 // ─── Pitch ──────────────────────────────────────────────────────────────────
 
@@ -76,7 +76,11 @@ export function solfaToScorePitch(syllable, octave, key, voiceId) {
   const scoreOctave = Math.floor(midi / 12) - 1
   const keySig = solfaKeyToKeySignature(key)
   const spelled = spellPitch(pc, keySig)
-  return { step: spelled.step, accidental: spelled.accidental, octave: scoreOctave }
+  // See spellingOctaveDelta()'s comment in scoreStore.js — B#/Cb cross the
+  // octave-number boundary, so scoreOctave (computed above from plain MIDI
+  // math, before spelling) needs a ±1 correction whenever spellPitch hands
+  // back one of those two spellings.
+  return { step: spelled.step, accidental: spelled.accidental, octave: scoreOctave + spellingOctaveDelta(spelled) }
 }
 
 // ─── Rhythm: merge beats/events back into a flat, tied Score note list ─────
