@@ -2,9 +2,10 @@
 //
 // Converts a Score (staff notation) score into a Solfa (tonic sol-fa) score.
 //
-// v1 scope, deliberately: pitch + basic rhythm only. No ties, slurs, chords,
-// or mid-score modulation carried over yet — those are real features, not
-// afterthoughts, and trying to get everything right in one pass risks
+// v1 scope, deliberately: pitch + basic rhythm + chords (see
+// expandChordVoices below). Independently-authored ties/slurs, lyrics, and
+// mid-score modulation are NOT carried over yet — those are real features,
+// not afterthoughts, and trying to get everything right in one pass risks
 // getting the common case (a plain SATB hymn/anthem with no exotic
 // notation) subtly wrong. This gets that common case right first.
 //
@@ -116,10 +117,10 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, w
   // How many Score quarter-beats does one Solfa quarter-UNIT span?
   const qbPerQuarterUnit = qbPerSolfaBeat / QUARTER_UNITS_PER_BEAT
 
-  // Flatten to absolute-quarter-unit spans, skipping chord notes (v1 scope
-  // — a chord tone has no separate representation in monophonic sol-fa
-  // notation without inventing something new, so for now only the base
-  // note of any chord is carried over).
+  // Flatten to absolute-quarter-unit spans. By the time this runs, any
+  // chord has already been resolved into a separate voice one level up
+  // (see expandChordVoices) — this function only ever sees ONE pitch per
+  // moment, exactly like the pre-chord-support version did.
   let cursorQB = 0
   const spans = []
   for (const n of notes.filter(x => !x.chordWith)) {
@@ -199,19 +200,102 @@ const NAME_TO_VOICE_ID = {
 function pickVoiceCombo(scoreParts) {
   const matched = scoreParts.map(p => NAME_TO_VOICE_ID[(p.name || '').trim().toLowerCase()] || null)
   const matchedSet = new Set(matched.filter(Boolean))
-  // Prefer an exact voice-combo match by matched ID set.
+  // Prefer an exact voice-combo match by matched ID set — but only if that
+  // combo actually has room for every part, INCLUDING any chord-split
+  // voices that don't carry a recognizable name (like "Soprano (chord
+  // voice 2)"). Without the length check, a SATB score with even one
+  // divisi chord would still match the plain 4-voice 'satb' combo by name
+  // alone and silently drop the extra voice, when a bigger combo
+  // (satb_piano, 5 voices) could actually have held it.
   for (const [comboKey, combo] of Object.entries(VOICE_COMBOS)) {
     const comboIds = new Set(combo.voices.map(v => v.id))
-    if (comboIds.size === matchedSet.size && [...comboIds].every(id => matchedSet.has(id))) {
+    if (comboIds.size === matchedSet.size && comboIds.size >= scoreParts.length
+        && [...comboIds].every(id => matchedSet.has(id))) {
       return comboKey
     }
   }
-  // Fall back by part count.
+  // Fall back by part count. 5 is the largest combo that exists
+  // (satb_piano / solo_satb) — anything beyond that has to fall back to
+  // the biggest available and lose the excess; convertStaffScoreToSolfa
+  // warns the user explicitly when that happens rather than silently
+  // dropping parts (this can now happen more easily than before chord
+  // splitting existed — a 4-part score with even one chord needs a 5th
+  // voice, and a 4-part score with a 2-note chord needs a 6th).
   const n = scoreParts.length
   if (n <= 1) return 'solo'
   if (n === 2) return 'sa'
   if (n === 3) return 'sab'
-  return 'satb'
+  if (n === 4) return 'satb'
+  return 'satb_piano'
+}
+
+// A chord companion (see addChordNote in scoreStore.js) always mirrors its
+// primary note's duration/dots exactly and only ever exists for the exact
+// span of that one primary note — it has no independent rhythm. That
+// invariant is what makes this tractable: splitting a chorded part into N
+// separate "voice slots" (one per simultaneous pitch) just means walking
+// each primary note in order and, for slot k>0, substituting either the
+// k-th companion's pitch (same duration as the primary) or a plain rest of
+// that same duration where no companion exists at that moment — every
+// slot ends up with EXACTLY the same rhythmic shape as the original part,
+// just different pitches (or silence) in some of them.
+//
+// Slot assignment is by AUTHORING ORDER, not sorted pitch: slot 0 is
+// always the note actually entered (the "primary"), slot 1 is the first
+// companion added via chord mode, slot 2 the second, and so on. This is a
+// deliberate, documented simplification — real SATB voice-leading would
+// sort by pitch instead, but that needs tracking voice identity
+// consistently across an entire phrase (a note that's the middle pitch in
+// one chord and the top pitch in the next shouldn't visually swap which
+// sol-fa voice it belongs to), which is real design work beyond what a
+// direct companion-order mapping needs for a first pass at this.
+//
+// Returns [scorePart] unchanged (as a single-element array) if the part
+// has no chords anywhere — this is a no-op for the overwhelmingly common
+// case of a plain, chordless SATB/solo score.
+function expandChordVoices(scorePart, warnings) {
+  const maxCompanions = Math.max(
+    0,
+    ...scorePart.measures.map(m => {
+      const counts = {}
+      for (const n of m.notes) {
+        if (n.chordWith) counts[n.chordWith] = (counts[n.chordWith] || 0) + 1
+      }
+      return Math.max(0, ...Object.values(counts))
+    }),
+  )
+  if (maxCompanions === 0) return [scorePart]
+
+  warnings.push(
+    `"${scorePart.name || 'A part'}" has chords — split into ${maxCompanions + 1} ` +
+    `separate sol-fa voices so every chord tone is preserved and editable ` +
+    `(sol-fa can't show a chord within a single line the way staff notation can).`
+  )
+
+  const slots = []
+  for (let slot = 0; slot <= maxCompanions; slot++) {
+    const measures = scorePart.measures.map(m => {
+      const primaries = m.notes.filter(n => !n.chordWith)
+      const notes = primaries.map(primary => {
+        if (slot === 0) return primary
+        const companions = m.notes.filter(n => n.chordWith === primary.id)
+        const companion = companions[slot - 1]
+        if (companion) return { ...companion, chordWith: undefined }
+        // No chord tone in this slot for this particular note — hold the
+        // same rhythmic position as a rest, so this voice's timing still
+        // lines up with slot 0 and every other slot.
+        return { id: crypto.randomUUID(), isRest: true, duration: primary.duration, dots: primary.dots }
+      })
+      return { ...m, notes }
+    })
+    slots.push({
+      ...scorePart,
+      id: slot === 0 ? scorePart.id : `${scorePart.id}__chord${slot}`,
+      name: slot === 0 ? scorePart.name : `${scorePart.name} (chord voice ${slot + 1})`,
+      measures,
+    })
+  }
+  return slots
 }
 
 // ─── Top-level entry point ─────────────────────────────────────────────────
@@ -219,8 +303,17 @@ function pickVoiceCombo(scoreParts) {
 // Returns { score: <solfa score>, warnings: string[] }.
 export function convertStaffScoreToSolfa(staffScore) {
   const warnings = []
-  const comboKey = pickVoiceCombo(staffScore.parts)
+  const expandedParts = staffScore.parts.flatMap(p => expandChordVoices(p, warnings))
+  const comboKey = pickVoiceCombo(expandedParts)
   const combo = VOICE_COMBOS[comboKey]
+
+  if (expandedParts.length > combo.voices.length) {
+    warnings.push(
+      `This score needs ${expandedParts.length} simultaneous sol-fa voices (after splitting ` +
+      `out chords), but the largest supported combo only has ${combo.voices.length}. ` +
+      `${expandedParts.length - combo.voices.length} voice(s) could not be included.`
+    )
+  }
 
   const firstMeasure = staffScore.parts[0]?.measures?.[0]
   const startKeySig = firstMeasure?.keySignature ?? 0
@@ -238,11 +331,11 @@ export function convertStaffScoreToSolfa(staffScore) {
   // than depending on part order lining up.
   const usedScoreParts = new Set()
   const partForVoice = combo.voices.map(voice => {
-    let match = staffScore.parts.find(p =>
+    let match = expandedParts.find(p =>
       !usedScoreParts.has(p) && NAME_TO_VOICE_ID[(p.name || '').trim().toLowerCase()] === voice.id,
     )
     if (!match) {
-      match = staffScore.parts.find(p => !usedScoreParts.has(p))
+      match = expandedParts.find(p => !usedScoreParts.has(p))
     }
     if (match) usedScoreParts.add(match)
     return match
