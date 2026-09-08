@@ -1,4 +1,4 @@
-// src/components/SolfaEditor/index.jsx
+// src/components/SolfaEditor/index.js
 // FaithScore — Solfa input toolbar: syllable buttons, octave, duration, layout switch
 
 import { useState } from 'react'

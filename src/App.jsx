@@ -825,12 +825,23 @@ export default function App() {
   const liveNote = getSelectedNote()
 
   // ── Save score with timestamp whenever score changes ──────────────────
+  const [autosaveStatus, setAutosaveStatus] = useState('saved') // 'saving' | 'saved'
+  const autosaveTimerRef = useRef(null)
   useEffect(() => {
     if (appView !== 'editor') return
     try {
       const scored = { ...score, _savedAt: Date.now() }
       localStorage.setItem('faithscore_autosave', JSON.stringify(scored))
     } catch(_) {}
+
+    // Visual-only debounce — the localStorage write above already happens
+    // synchronously on every single change, so there's nothing to actually
+    // wait for; this just holds the indicator on "Saving…" briefly instead
+    // of flickering between the two states on every keystroke, which would
+    // be more distracting than reassuring.
+    setAutosaveStatus('saving')
+    clearTimeout(autosaveTimerRef.current)
+    autosaveTimerRef.current = setTimeout(() => setAutosaveStatus('saved'), 600)
   }, [score, appView])
 
   // ── Auth gate — show AuthScreen until user is logged in ──────────────────
@@ -1474,6 +1485,13 @@ export default function App() {
 
         {/* Status indicators */}
         <div className="flex items-center gap-3 text-xs">
+          <span
+            title={autosaveStatus === 'saved' ? 'Autosaved to this browser' : 'Saving…'}
+            className="flex items-center gap-1 font-medium text-gray-400"
+          >
+            {autosaveStatus === 'saving' ? 'Saving…' : '✓ Saved'}
+          </span>
+
           <span className={`px-2.5 py-0.5 rounded-full font-medium border
             ${inputMode === 'note'
               ? 'bg-green-50 text-green-700 border-green-300'
