@@ -409,10 +409,10 @@ export default function App() {
   // Converts the current Solfa score into a Score (staff notation) score
   // and switches to the Score editor with it loaded — the reverse of
   // handleConvertToSolfa above, completing the round trip. Same v1 scope:
-  // pitch + rhythm only (ties ARE produced, but only where merging a
-  // note+sustain chain back together structurally requires one — not
-  // independently-authored slurs, lyrics, chords, or mid-score
-  // modulation). See solfaToStaff.js for the full reasoning.
+  // pitch + rhythm + chords + lyrics (ties ARE produced, but only where
+  // merging a note+sustain chain back together structurally requires one —
+  // not independently-authored slurs or mid-score modulation). See
+  // solfaToStaff.js for the full reasoning.
   const handleConvertToStaff = (solfaScore) => {
     const hasNotes = solfaScore.parts.some(p =>
       p.measures.some(m => (m.beats || []).some(b => (b.events || []).some(e => e.type === 'note')))

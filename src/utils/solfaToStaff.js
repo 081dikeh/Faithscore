@@ -4,12 +4,12 @@
 // — the reverse of staffToSolfa.js, completing the round trip.
 //
 // Same v1 scope as the forward direction, for the same reasons (see the
-// module comment in staffToSolfa.js): pitch + rhythm only. Ties ARE
-// produced here, but only the ones structurally required to represent a
-// note held across a beat boundary (merging 'note'+'sustain' chains back
-// into a single sustained pitch) — not independently-authored slur/tie
-// markings, lyrics, chords, or mid-score modulation. Those are still
-// phase 2/3, same as before.
+// module comment in staffToSolfa.js): pitch + rhythm + chords + lyrics.
+// Ties ARE produced here, but only the ones structurally required to
+// represent a note held across a beat boundary (merging 'note'+'sustain'
+// chains back into a single sustained pitch) — not independently-authored
+// slur/tie markings or mid-score modulation. Those are still phase 2/3,
+// same as before.
 //
 // ── Why this direction is actually easier ───────────────────────────────
 //
@@ -93,10 +93,11 @@ const QUARTER_UNITS_PER_BEAT = 4
 // greedy algorithm and the same tie-on-truncation convention
 // normalizeMeasure() already uses, just applied here to build a span
 // instead of to truncate one.
-function notesFromSpan(qb, pitch, warnings) {
+function notesFromSpan(qb, pitch, warnings, lyric) {
   const notes = []
   let rem = qb
   let guard = 0
+  let isFirstNote = true
   while (rem > 0.001 && guard++ < 20) {
     const { duration, dots } = beatsToRest(rem)
     const used = DURATION_BEATS[duration + (dots ? 'd' : '')] || DURATION_BEATS[duration] || 1
@@ -106,8 +107,14 @@ function notesFromSpan(qb, pitch, warnings) {
       pitch: pitch || null,
       duration, dots,
       tieStart: !pitch ? undefined : (rem - used > 0.001 || undefined),
+      // Only the first Score note this span decomposes into gets the
+      // lyric — if a long solfa note has to become 2+ tied Score notes
+      // (no single duration value covers it), the syllable belongs under
+      // the onset, not repeated under each tied piece.
+      lyric: (isFirstNote && pitch && lyric) ? lyric : undefined,
     })
     rem -= used
+    isFirstNote = false
   }
   if (guard >= 20) warnings.push('An unusually long note had to be capped while converting — check the result.')
   return notes
@@ -146,7 +153,7 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
 
   const flush = () => {
     if (!open) return
-    notes.push(...notesFromSpan(open.qb, open.pitch, warnings))
+    notes.push(...notesFromSpan(open.qb, open.pitch, warnings, open.lyric))
     open = null
   }
 
@@ -186,6 +193,7 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
           pitch,
           duration: half.duration, dots: half.dots,
           tuplet: { num: 3, den: 2 },
+          lyric: (ev.type === 'note' && ev.lyric) ? ev.lyric : undefined,
         })
       })
       continue
@@ -197,7 +205,7 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
 
       if (ev.type === 'note' && ev.syllable) {
         flush()
-        open = { pitch: solfaToScorePitch(ev.syllable, ev.octave || 0, key, voiceId), qb: evQb }
+        open = { pitch: solfaToScorePitch(ev.syllable, ev.octave || 0, key, voiceId), qb: evQb, lyric: ev.lyric || null }
       } else if (ev.type === 'sustain') {
         if (open && open.pitch) {
           open.qb += evQb

@@ -3,7 +3,9 @@
 // Converts a Score (staff notation) score into a Solfa (tonic sol-fa) score.
 //
 // v1 scope, deliberately: pitch + basic rhythm + chords (see
-// expandChordVoices below). Independently-authored ties/slurs, lyrics, and
+// expandChordVoices below) + lyrics (one syllable per note-onset, carried
+// straight across since both apps already store it per-note/event —
+// see makeSolfaEvent's lyric param). Independently-authored ties/slurs and
 // mid-score modulation are NOT carried over yet — those are real features,
 // not afterthoughts, and trying to get everything right in one pass risks
 // getting the common case (a plain SATB hymn/anthem with no exotic
@@ -103,8 +105,8 @@ export function keySignatureToSolfaKey(keySignature) {
 
 const QUARTER_UNITS_PER_BEAT = 4
 
-function makeSolfaEvent(type, syllable, octave, durationQU) {
-  return { id: crypto.randomUUID(), type, syllable, octave, lyric: null, duration: durationQU }
+function makeSolfaEvent(type, syllable, octave, durationQU, lyric = null) {
+  return { id: crypto.randomUUID(), type, syllable, octave, lyric, duration: durationQU }
 }
 
 export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, warnings) {
@@ -132,6 +134,11 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, w
       endQU: Math.round(endQU),
       isRest: !!n.isRest,
       pitch: n.pitch,
+      // A lyric belongs to the note's ONSET only — never carried by the
+      // sustain pieces a long note gets split into below, matching how
+      // both apps already render lyrics (under the attack, not repeated
+      // under a tied/sustained continuation).
+      lyric: n.isRest ? null : (n.lyric || null),
     })
     if (Math.abs(startQU - Math.round(startQU)) > 0.05 || Math.abs(endQU - Math.round(endQU)) > 0.05) {
       warnings.push(`A note didn't line up with sol-fa's beat grid and was rounded to the nearest quarter-unit.`)
@@ -163,7 +170,7 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, w
       if (pieceDur > 0) {
         const type = span.isRest ? 'rest' : (firstPiece ? 'note' : 'sustain')
         beats[beatIdx].events.push(
-          makeSolfaEvent(type, type === 'note' ? syllable : null, octave, pieceDur),
+          makeSolfaEvent(type, type === 'note' ? syllable : null, octave, pieceDur, type === 'note' ? span.lyric : null),
         )
       }
 
