@@ -5,11 +5,14 @@
 // v1 scope, deliberately: pitch + basic rhythm + chords (see
 // expandChordVoices below) + lyrics (one syllable per note-onset, carried
 // straight across since both apps already store it per-note/event —
-// see makeSolfaEvent's lyric param). Independently-authored ties/slurs and
-// mid-score modulation are NOT carried over yet — those are real features,
-// not afterthoughts, and trying to get everything right in one pass risks
-// getting the common case (a plain SATB hymn/anthem with no exotic
-// notation) subtly wrong. This gets that common case right first.
+// see makeSolfaEvent's lyric param) + independently-authored ties (see
+// mergeTiedSpans below — a tied pair of notes becomes ONE continuous
+// sol-fa tone instead of two separate attacks, including when the tie
+// crosses a barline). Slurs and mid-score modulation are NOT carried over
+// yet — those are real features, not afterthoughts, and trying to get
+// everything right in one pass risks getting the common case (a plain
+// SATB hymn/anthem with no exotic notation) subtly wrong. This gets that
+// common case right first.
 //
 // ── The two apps' data models, and why this isn't just a pitch lookup ──────
 //
@@ -109,7 +112,68 @@ function makeSolfaEvent(type, syllable, octave, durationQU, lyric = null) {
   return { id: crypto.randomUUID(), type, syllable, octave, lyric, duration: durationQU }
 }
 
-export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, warnings) {
+const samePitch = (a, b) =>
+  a && b &&
+  a.step === b.step &&
+  a.octave === b.octave &&
+  (a.accidental ?? null) === (b.accidental ?? null)
+
+// Merges a run of independently-authored tied notes (same pitch, `tieStart`
+// chaining one into the next — the exact same convention already
+// established for playback in usePlayback.js and for rendering in
+// ScoreRenderer) into a single logical span with their combined duration.
+// A tie means "one continuous tone", so it needs to feed into the SAME
+// note+sustain-chain splitting logic below as if it had always been one
+// long note, rather than becoming two separate sol-fa attacks — which is
+// what happened before this existed, since nothing here ever looked at
+// tieStart at all.
+//
+// Each returned span's `openTieEnd` is true only if its LAST underlying
+// note still has tieStart set with no next note left in this measure's
+// list to resolve it against — meaning the tie continues past the end of
+// this measure, into whatever note starts the next one. The caller
+// (convertStaffScoreToSolfa) verifies that boundary actually matches
+// before treating it as carried over.
+function mergeTiedSpans(notes) {
+  const spans = []
+  let i = 0
+  while (i < notes.length) {
+    const start = notes[i]
+    let durQB = noteDuration(start)
+    let last = start
+    let j = i + 1
+    while (
+      !last.isRest && last.tieStart &&
+      j < notes.length && !notes[j].isRest &&
+      samePitch(last.pitch, notes[j].pitch)
+    ) {
+      durQB += noteDuration(notes[j])
+      last = notes[j]
+      j++
+    }
+    spans.push({
+      durQB,
+      isRest: !!start.isRest,
+      pitch: start.pitch,
+      lyric: start.isRest ? null : (start.lyric || null),
+      openTieEnd: !last.isRest && !!last.tieStart && j >= notes.length,
+    })
+    i = j
+  }
+  return spans
+}
+
+// carryPitchIn: the pitch still open (tied) at the END of the PREVIOUS
+// measure for this part, or undefined if nothing was open. If this
+// measure's very first (tie-merged) span matches that pitch, it gets no
+// fresh 'note' attack at all — every quarter-unit it covers becomes
+// 'sustain', exactly as if it were a continuation of a note that started
+// before this measure began (because it was).
+//
+// Returns { beats, endOpenPitch } — endOpenPitch is the pitch (or
+// undefined) still open at the END of THIS measure, for the caller to pass
+// as carryPitchIn to the NEXT measure's call.
+export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, warnings, carryPitchIn) {
   const ts = timeSignature || { beats: 4, beatType: 4 }
   const beatCount = ts.beats
   // How many Score quarter-beats does ONE Solfa beat span? Solfa always
@@ -119,32 +183,31 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, w
   // How many Score quarter-beats does one Solfa quarter-UNIT span?
   const qbPerQuarterUnit = qbPerSolfaBeat / QUARTER_UNITS_PER_BEAT
 
-  // Flatten to absolute-quarter-unit spans. By the time this runs, any
-  // chord has already been resolved into a separate voice one level up
-  // (see expandChordVoices) — this function only ever sees ONE pitch per
-  // moment, exactly like the pre-chord-support version did.
+  // By the time this runs, any chord has already been resolved into a
+  // separate voice one level up (see expandChordVoices) — this function
+  // only ever sees ONE pitch per moment. Tied notes are pre-merged into
+  // single logical spans (see mergeTiedSpans above) before being turned
+  // into absolute-quarter-unit spans.
+  const logicalSpans = mergeTiedSpans(notes.filter(x => !x.chordWith))
+
   let cursorQB = 0
   const spans = []
-  for (const n of notes.filter(x => !x.chordWith)) {
-    const durQB = noteDuration(n)
+  logicalSpans.forEach((ls, idx) => {
     const startQU = cursorQB / qbPerQuarterUnit
-    const endQU = (cursorQB + durQB) / qbPerQuarterUnit
+    const endQU = (cursorQB + ls.durQB) / qbPerQuarterUnit
     spans.push({
       startQU: Math.round(startQU),
       endQU: Math.round(endQU),
-      isRest: !!n.isRest,
-      pitch: n.pitch,
-      // A lyric belongs to the note's ONSET only — never carried by the
-      // sustain pieces a long note gets split into below, matching how
-      // both apps already render lyrics (under the attack, not repeated
-      // under a tied/sustained continuation).
-      lyric: n.isRest ? null : (n.lyric || null),
+      isRest: ls.isRest,
+      pitch: ls.pitch,
+      lyric: ls.lyric,
+      suppressAttack: idx === 0 && !ls.isRest && carryPitchIn != null && samePitch(ls.pitch, carryPitchIn),
     })
     if (Math.abs(startQU - Math.round(startQU)) > 0.05 || Math.abs(endQU - Math.round(endQU)) > 0.05) {
       warnings.push(`A note didn't line up with sol-fa's beat grid and was rounded to the nearest quarter-unit.`)
     }
-    cursorQB += durQB
-  }
+    cursorQB += ls.durQB
+  })
 
   const totalQU = beatCount * QUARTER_UNITS_PER_BEAT
   const beats = Array.from({ length: beatCount }, () => ({ id: crypto.randomUUID(), events: [] }))
@@ -168,7 +231,8 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, w
       const pieceDur = Math.min(remaining, spaceLeftInBeat)
 
       if (pieceDur > 0) {
-        const type = span.isRest ? 'rest' : (firstPiece ? 'note' : 'sustain')
+        const isAttack = !span.isRest && firstPiece && !span.suppressAttack
+        const type = span.isRest ? 'rest' : (isAttack ? 'note' : 'sustain')
         beats[beatIdx].events.push(
           makeSolfaEvent(type, type === 'note' ? syllable : null, octave, pieceDur, type === 'note' ? span.lyric : null),
         )
@@ -190,7 +254,10 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, w
     }
   }
 
-  return beats
+  const lastSpan = logicalSpans[logicalSpans.length - 1]
+  const endOpenPitch = (lastSpan && !lastSpan.isRest && lastSpan.openTieEnd) ? lastSpan.pitch : undefined
+
+  return { beats, endOpenPitch }
 }
 
 // ─── Part mapping ───────────────────────────────────────────────────────────
@@ -355,7 +422,10 @@ export function convertStaffScoreToSolfa(staffScore) {
       return { id: voice.id, name: voice.name, label: voice.label, measures: [] }
     }
 
-    const measures = scorePart.measures.map(measure => {
+    const measures = []
+    let carryPitch // undefined = nothing open yet
+    for (let mi = 0; mi < scorePart.measures.length; mi++) {
+      const measure = scorePart.measures[mi]
       const ts = measure.timeSignature || startTs
       const keySig = measure.keySignature ?? startKeySig
       const key = keySignatureToSolfaKey(keySig)
@@ -366,9 +436,10 @@ export function convertStaffScoreToSolfa(staffScore) {
       if (keySig !== startKeySig) {
         warnings.push(`This part changes key partway through — pitches are converted correctly, but the key change itself isn't marked in the sol-fa score yet.`)
       }
-      const beats = convertMeasureToSolfaBeats(measure.notes, ts, key, voice.id, warnings)
-      return { id: crypto.randomUUID(), timeSignature: ts, beats }
-    })
+      const { beats, endOpenPitch } = convertMeasureToSolfaBeats(measure.notes, ts, key, voice.id, warnings, carryPitch)
+      measures.push({ id: crypto.randomUUID(), timeSignature: ts, beats })
+      carryPitch = endOpenPitch
+    }
 
     return { id: voice.id, name: voice.name, label: voice.label, measures }
   })
