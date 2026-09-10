@@ -4,12 +4,19 @@
 // — the reverse of staffToSolfa.js, completing the round trip.
 //
 // Same v1 scope as the forward direction, for the same reasons (see the
-// module comment in staffToSolfa.js): pitch + rhythm + chords + lyrics.
-// Ties ARE produced here, but only the ones structurally required to
-// represent a note held across a beat boundary (merging 'note'+'sustain'
-// chains back into a single sustained pitch) — not independently-authored
-// slur/tie markings or mid-score modulation. Those are still phase 2/3,
-// same as before.
+// module comment in staffToSolfa.js): pitch + rhythm + chords + lyrics +
+// mid-score modulation (resolveKeyAt() is called per-measure below, so a
+// modulation recorded in score.keyChanges converts to the RIGHT pitches
+// AND a real per-measure key signature, not just the score's starting
+// key applied throughout). Ties ARE produced here, but only the ones
+// structurally required to represent a note held across a beat boundary
+// (merging 'note'+'sustain' chains back into a single sustained pitch) —
+// sol-fa has no concept of an independently-authored tie the way staff
+// notation does (a sustain chain IS the only way sol-fa represents a held
+// note, so there's nothing "extra" to carry over here — unlike the
+// forward direction, where an existing tie between two already-valid
+// note durations needed its own detection). Slurs are still not carried
+// over, same open product question as the forward direction.
 //
 // ── Why this direction is actually easier ───────────────────────────────
 //
@@ -29,7 +36,7 @@
 // algorithm normalizeMeasure() already uses when a note needs to be split
 // across a measure boundary.
 
-import { solfaToMidiForVoice, migrateMeasure } from '../store/solfaStore'
+import { solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
 import { spellPitch, spellingOctaveDelta, MAJOR_SCALES, beatsToRest, DURATION_BEATS, EMPTY_SCORE } from '../store/scoreStore'
 
 // ─── Pitch ──────────────────────────────────────────────────────────────────
@@ -264,13 +271,6 @@ export function convertSolfaScoreToStaff(solfaScore) {
     parts: [],
   }
 
-  // v1 doesn't carry Solfa's note-level keyChanges into Score's per-measure
-  // key signatures yet — every measure converts using the score's OWN
-  // starting key, same limitation (in reverse) as staffToSolfa.js.
-  if (solfaScore.keyChanges?.length) {
-    warnings.push('This piece changes key partway through — pitches are converted using the starting key only for now; the modulation itself isn\'t carried over yet.')
-  }
-
   staffScore.parts = (solfaScore.parts || []).map(voicePart => {
     const name = VOICE_ID_TO_NAME[voicePart.id] || voicePart.name || voicePart.label || 'Voice'
     const clef = voicePart.id === 'b' ? 'bass' : 'treble'
@@ -281,7 +281,17 @@ export function convertSolfaScoreToStaff(solfaScore) {
     for (let mi = 0; mi < partMeasures.length; mi++) {
       const migrated = migrateMeasure(partMeasures[mi])
       const ts = migrated.timeSignature || startTs
-      const { notes, endOpenPitch, carryConsumed } = convertSolfaBeatsToNotes(migrated.beats, ts, startKey, voicePart.id, warnings, carryPitch)
+      // The key actually in effect AT this measure — not just the score's
+      // starting key — so a mid-score modulation (recorded via
+      // score.keyChanges, e.g. by the Solfa editor's own native modulation
+      // feature, or now by staffToSolfa.js's own conversion — see that
+      // file) converts to the RIGHT pitches, not the pre-modulation ones.
+      // This was a real correctness bug, not just a missing visual marker
+      // the way the equivalent gap in the forward direction was: every
+      // measure after a modulation was silently getting the WRONG pitches.
+      const key = resolveKeyAt(solfaScore, mi, 0, 0)
+      const keySig = solfaKeyToKeySignature(key)
+      const { notes, endOpenPitch, carryConsumed } = convertSolfaBeatsToNotes(migrated.beats, ts, key, voicePart.id, warnings, carryPitch)
 
       // If this measure's first note really did continue a sustain from
       // the previous measure, go back and mark the previous measure's
@@ -293,7 +303,7 @@ export function convertSolfaScoreToStaff(solfaScore) {
       }
       carryPitch = endOpenPitch
 
-      measures.push({ id: crypto.randomUUID(), timeSignature: ts, keySignature: startKeySig, notes })
+      measures.push({ id: crypto.randomUUID(), timeSignature: ts, keySignature: keySig, notes })
     }
 
     return { id: crypto.randomUUID(), name, instrument: 'piano', clef, measures }
