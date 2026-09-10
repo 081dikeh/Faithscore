@@ -8,11 +8,15 @@
 // see makeSolfaEvent's lyric param) + independently-authored ties (see
 // mergeTiedSpans below — a tied pair of notes becomes ONE continuous
 // sol-fa tone instead of two separate attacks, including when the tie
-// crosses a barline). Slurs and mid-score modulation are NOT carried over
-// yet — those are real features, not afterthoughts, and trying to get
-// everything right in one pass risks getting the common case (a plain
-// SATB hymn/anthem with no exotic notation) subtly wrong. This gets that
-// common case right first.
+// crosses a barline) + mid-score modulation (a Score key-signature change
+// becomes a real keyChanges entry, not just correctly-converted pitches
+// with no visible marker — see convertStaffScoreToSolfa). Slurs are NOT
+// carried over yet — sol-fa has no functional equivalent to a slur within
+// a single voice line, and deciding how that should even behave (drop it,
+// or preserve it invisibly for a round trip back to Score) is a real
+// product decision, not just an implementation detail. This gets the
+// common case (a plain SATB hymn/anthem with no exotic notation) right
+// first.
 //
 // ── The two apps' data models, and why this isn't just a pitch lookup ──────
 //
@@ -400,6 +404,32 @@ export function convertStaffScoreToSolfa(staffScore) {
   solfaScore.tempo = staffScore.tempo || 80
   solfaScore.timeSignature = startTs
 
+  // Mid-score modulation: key signature is a per-measure Score property, and
+  // in a well-formed score every part shares the same key signature at a
+  // given measure index — so the FIRST part is a reliable stand-in for "the
+  // score's own modulation map" rather than needing to merge across every
+  // part. Anchored to the first beat/event of the measure where the new key
+  // begins, since that's the finest anchor Score's own per-measure key
+  // signature actually captures (a true mid-BAR pivot note isn't something
+  // Score tracks either, so this is a faithful 1:1 mapping, not a further
+  // approximation). Once this is populated, the existing resolveKeyAt() /
+  // resolveKeyBefore() machinery and SolfaRenderer's pivot-syllable display
+  // — both already built for the Solfa editor's own native modulation
+  // feature — pick it up automatically; nothing else needs to change.
+  const refPart = staffScore.parts[0]
+  const keyChanges = []
+  if (refPart) {
+    let prevKeySig = startKeySig
+    refPart.measures.forEach((m, mi) => {
+      const keySig = m.keySignature ?? startKeySig
+      if (mi > 0 && keySig !== prevKeySig) {
+        keyChanges.push({ measureIdx: mi, beatIdx: 0, eventIdx: 0, key: keySignatureToSolfaKey(keySig) })
+      }
+      prevKeySig = keySig
+    })
+  }
+  solfaScore.keyChanges = keyChanges
+
   // Assign each Solfa voice slot the best-matching Score part (by name where
   // possible), so "Soprano" in Score reliably becomes "S" in Solfa rather
   // than depending on part order lining up.
@@ -429,13 +459,6 @@ export function convertStaffScoreToSolfa(staffScore) {
       const ts = measure.timeSignature || startTs
       const keySig = measure.keySignature ?? startKeySig
       const key = keySignatureToSolfaKey(keySig)
-      // v1 doesn't carry mid-score key changes into keyChanges yet — every
-      // measure is converted using ITS OWN key signature independently, so
-      // the pitches come out correct even though the modulation itself
-      // isn't recorded as a keyChanges entry. See module comment.
-      if (keySig !== startKeySig) {
-        warnings.push(`This part changes key partway through — pitches are converted correctly, but the key change itself isn't marked in the sol-fa score yet.`)
-      }
       const { beats, endOpenPitch } = convertMeasureToSolfaBeats(measure.notes, ts, key, voice.id, warnings, carryPitch)
       measures.push({ id: crypto.randomUUID(), timeSignature: ts, beats })
       carryPitch = endOpenPitch
