@@ -10,11 +10,11 @@
 // sol-fa tone instead of two separate attacks, including when the tie
 // crosses a barline) + mid-score modulation (a Score key-signature change
 // becomes a real keyChanges entry, not just correctly-converted pitches
-// with no visible marker — see convertStaffScoreToSolfa). Slurs are NOT
-// carried over yet — sol-fa has no functional equivalent to a slur within
-// a single voice line, and deciding how that should even behave (drop it,
-// or preserve it invisibly for a round trip back to Score) is a real
-// product decision, not just an implementation detail. This gets the
+// with no visible marker — see convertStaffScoreToSolfa) + slurs (Score's
+// per-note slurStart/slurEnd flags are resolved into position pairs and
+// translated into sol-fa's own {startMeasure/startBeat/startEvent,
+// endMeasure/endBeat/endEvent} slur shape — see resolveScoreSlurs and the
+// notePositions tracking in convertMeasureToSolfaBeats). This gets the
 // common case (a plain SATB hymn/anthem with no exotic notation) right
 // first.
 //
@@ -161,10 +161,43 @@ function mergeTiedSpans(notes) {
       pitch: start.pitch,
       lyric: start.isRest ? null : (start.lyric || null),
       openTieEnd: !last.isRest && !!last.tieStart && j >= notes.length,
+      // The FIRST underlying Score note's id — the correct slur anchor
+      // point even for a tie-merged run, since a slur attaches to the
+      // attack, and a tied group's attack is its first note.
+      scoreNoteId: start.id,
     })
     i = j
   }
   return spans
+}
+
+// Resolves Score's slurStart/slurEnd flags into concrete {startNoteId,
+// endNoteId} pairs, using EXACTLY the same resolution rule ScoreRenderer's
+// own rendering already uses (see the "SLURS" section in
+// ScoreRenderer/index.jsx): search forward from a slurStart note across
+// the WHOLE part's note sequence (a slur can cross barlines — the
+// start/end toggle actions aren't confined to one measure, they just edit
+// whichever note is currently selected) for an explicit slurEnd; if none
+// exists, the slur silently connects to the very next real note. Chord
+// companions are excluded — a slur only ever anchors to a part's primary
+// line, and companions never carry slurStart/slurEnd in the first place
+// (see addChordNote in scoreStore.js), so this is really just filtering
+// out notes that could never match anyway.
+function resolveScoreSlurs(scorePart) {
+  const seq = []
+  scorePart.measures.forEach(m => {
+    m.notes.filter(n => !n.chordWith).forEach(n => seq.push(n))
+  })
+
+  const slurs = []
+  seq.forEach((note, i) => {
+    if (!note.slurStart || note.isRest) return
+    let endIdx = seq.findIndex((n, j) => j > i && n.slurEnd && !n.isRest)
+    if (endIdx < 0) endIdx = seq.findIndex((n, j) => j > i && !n.isRest)
+    if (endIdx < 0 || endIdx <= i) return
+    slurs.push({ startNoteId: note.id, endNoteId: seq[endIdx].id })
+  })
+  return slurs
 }
 
 // carryPitchIn: the pitch still open (tied) at the END of the PREVIOUS
@@ -174,10 +207,17 @@ function mergeTiedSpans(notes) {
 // 'sustain', exactly as if it were a continuation of a note that started
 // before this measure began (because it was).
 //
+// measureIdx/notePositions: if provided, records where (measureIdx,
+// beatIdx, eventIdx) each Score note's FIRST sol-fa piece landed, keyed by
+// that Score note's id — this is how convertStaffScoreToSolfa resolves
+// Score slurStart/slurEnd note-id pairs (see resolveScoreSlurs above) into
+// concrete sol-fa positions afterward, without this function needing to
+// know anything about slurs itself.
+//
 // Returns { beats, endOpenPitch } — endOpenPitch is the pitch (or
 // undefined) still open at the END of THIS measure, for the caller to pass
 // as carryPitchIn to the NEXT measure's call.
-export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, warnings, carryPitchIn) {
+export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, warnings, carryPitchIn, measureIdx, notePositions) {
   const ts = timeSignature || { beats: 4, beatType: 4 }
   const beatCount = ts.beats
   // How many Score quarter-beats does ONE Solfa beat span? Solfa always
@@ -205,6 +245,7 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, w
       isRest: ls.isRest,
       pitch: ls.pitch,
       lyric: ls.lyric,
+      scoreNoteId: ls.scoreNoteId,
       suppressAttack: idx === 0 && !ls.isRest && carryPitchIn != null && samePitch(ls.pitch, carryPitchIn),
     })
     if (Math.abs(startQU - Math.round(startQU)) > 0.05 || Math.abs(endQU - Math.round(endQU)) > 0.05) {
@@ -237,6 +278,9 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, w
       if (pieceDur > 0) {
         const isAttack = !span.isRest && firstPiece && !span.suppressAttack
         const type = span.isRest ? 'rest' : (isAttack ? 'note' : 'sustain')
+        if (firstPiece && notePositions && span.scoreNoteId != null) {
+          notePositions.set(span.scoreNoteId, { measureIdx, beatIdx, eventIdx: beats[beatIdx].events.length })
+        }
         beats[beatIdx].events.push(
           makeSolfaEvent(type, type === 'note' ? syllable : null, octave, pieceDur, type === 'note' ? span.lyric : null),
         )
@@ -445,12 +489,23 @@ export function convertStaffScoreToSolfa(staffScore) {
     return match
   })
 
+  const allSlurs = []
   solfaScore.parts = combo.voices.map((voice, i) => {
     const scorePart = partForVoice[i]
     if (!scorePart) {
       warnings.push(`No matching Score part found for "${voice.name}" — left empty.`)
       return { id: voice.id, name: voice.name, label: voice.label, measures: [] }
     }
+
+    // Resolve this part's slurStart/slurEnd note-id pairs BEFORE
+    // conversion, and record where each Score note's first sol-fa piece
+    // lands DURING conversion (notePositions) — then translate the two
+    // together into sol-fa's own {startMeasure/startBeat/startEvent,
+    // endMeasure/endBeat/endEvent} slur shape once the part is fully
+    // converted. See resolveScoreSlurs and convertMeasureToSolfaBeats's
+    // notePositions param for the reasoning.
+    const scoreSlurs = resolveScoreSlurs(scorePart)
+    const notePositions = new Map()
 
     const measures = []
     let carryPitch // undefined = nothing open yet
@@ -459,13 +514,26 @@ export function convertStaffScoreToSolfa(staffScore) {
       const ts = measure.timeSignature || startTs
       const keySig = measure.keySignature ?? startKeySig
       const key = keySignatureToSolfaKey(keySig)
-      const { beats, endOpenPitch } = convertMeasureToSolfaBeats(measure.notes, ts, key, voice.id, warnings, carryPitch)
+      const { beats, endOpenPitch } = convertMeasureToSolfaBeats(measure.notes, ts, key, voice.id, warnings, carryPitch, mi, notePositions)
       measures.push({ id: crypto.randomUUID(), timeSignature: ts, beats })
       carryPitch = endOpenPitch
     }
 
+    for (const { startNoteId, endNoteId } of scoreSlurs) {
+      const startPos = notePositions.get(startNoteId)
+      const endPos = notePositions.get(endNoteId)
+      if (!startPos || !endPos) continue // e.g. the endpoint fell in a part that couldn't be included at all
+      allSlurs.push({
+        id: crypto.randomUUID(),
+        partId: voice.id,
+        startMeasure: startPos.measureIdx, startBeat: startPos.beatIdx, startEvent: startPos.eventIdx,
+        endMeasure: endPos.measureIdx, endBeat: endPos.beatIdx, endEvent: endPos.eventIdx,
+      })
+    }
+
     return { id: voice.id, name: voice.name, label: voice.label, measures }
   })
+  solfaScore.slurs = allSlurs
 
   return { score: solfaScore, warnings: [...new Set(warnings)] }
 }

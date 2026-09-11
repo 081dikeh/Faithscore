@@ -8,15 +8,18 @@
 // mid-score modulation (resolveKeyAt() is called per-measure below, so a
 // modulation recorded in score.keyChanges converts to the RIGHT pitches
 // AND a real per-measure key signature, not just the score's starting
-// key applied throughout). Ties ARE produced here, but only the ones
+// key applied throughout) + slurs (sol-fa's own {startMeasure/startBeat/
+// startEvent, endMeasure/endBeat/endEvent} slur shape is translated back
+// into Score's slurStart/slurEnd note flags via a position→note-id map
+// built during conversion — see convertSolfaBeatsToNotes's
+// positionToNoteId param). Ties ARE produced here, but only the ones
 // structurally required to represent a note held across a beat boundary
 // (merging 'note'+'sustain' chains back into a single sustained pitch) —
 // sol-fa has no concept of an independently-authored tie the way staff
 // notation does (a sustain chain IS the only way sol-fa represents a held
 // note, so there's nothing "extra" to carry over here — unlike the
 // forward direction, where an existing tie between two already-valid
-// note durations needed its own detection). Slurs are still not carried
-// over, same open product question as the forward direction.
+// note durations needed its own detection).
 //
 // ── Why this direction is actually easier ───────────────────────────────
 //
@@ -149,7 +152,7 @@ function notesFromSpan(qb, pitch, warnings, lyric) {
 //                   first event really was a continuing sustain), so the
 //                   caller knows to go back and set tieStart:true on the
 //                   PREVIOUS measure's last note.
-export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, warnings, carryPitchIn) {
+export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, warnings, carryPitchIn, measureIdx, positionToNoteId) {
   const ts = timeSignature || { beats: 4, beatType: 4 }
   const qbPerSolfaBeat = 4 / ts.beatType
   const qbPerQuarterUnit = qbPerSolfaBeat / QUARTER_UNITS_PER_BEAT
@@ -157,11 +160,22 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
   const notes = []
   let open = null // { pitch: {..}|null, qb: number } | null
   let carryConsumed = false
+  // Position key(s) ("measureIdx:beatIdx:eventIdx") that should resolve to
+  // whichever Score note `open` eventually becomes once flushed — set
+  // when a fresh 'note' event starts a new open span, cleared by rests and
+  // by a sustain that only extends an already-open span (a sustain is
+  // never itself a new attack, so it's never a valid slur anchor point).
+  let openPosKeys = []
 
   const flush = () => {
     if (!open) return
-    notes.push(...notesFromSpan(open.qb, open.pitch, warnings, open.lyric))
+    const newNotes = notesFromSpan(open.qb, open.pitch, warnings, open.lyric)
+    notes.push(...newNotes)
+    if (positionToNoteId && newNotes.length > 0) {
+      for (const posKey of openPosKeys) positionToNoteId.set(posKey, newNotes[0].id)
+    }
     open = null
+    openPosKeys = []
   }
 
   for (let bi = 0; bi < beats.length; bi++) {
@@ -175,6 +189,9 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
     // own case here (rather than letting the generic merge logic treat
     // those fractional durations as one long tied span) keeps a triplet a
     // real Score triplet instead of an approximated chain of tied notes.
+    // (A slur endpoint landing exactly inside a triplet isn't tracked for
+    // position lookup — a documented v1 scope limit, not a crash: the
+    // slur just silently won't resolve for that rare case.)
     if (events.length === 3 && events.every(e => Math.abs(e.duration - 4 / 3) < 0.01)) {
       flush()
       // Base duration = the Score note value for HALF of this beat's
@@ -206,13 +223,15 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
       continue
     }
 
-    for (const ev of events) {
+    for (let ei = 0; ei < events.length; ei++) {
+      const ev = events[ei]
       const evQb = ev.duration * qbPerQuarterUnit
       const isVeryFirstEvent = notes.length === 0 && !open
 
       if (ev.type === 'note' && ev.syllable) {
         flush()
         open = { pitch: solfaToScorePitch(ev.syllable, ev.octave || 0, key, voiceId), qb: evQb, lyric: ev.lyric || null }
+        openPosKeys = measureIdx != null ? [`${measureIdx}:${bi}:${ei}`] : []
       } else if (ev.type === 'sustain') {
         if (open && open.pitch) {
           open.qb += evQb
@@ -223,6 +242,12 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
           // beat 0 (not carrying over any accumulated duration, since
           // that duration already got flushed into the previous measure).
           open = { pitch: carryPitchIn, qb: evQb }
+          // Not tagged with a position — this note's real "attack" position
+          // is in the PREVIOUS measure, which already resolved its own
+          // position mapping when IT flushed. A slur endpoint landing
+          // exactly on this continuation event (rather than the original
+          // attack) is a rare edge case that safely just won't resolve.
+          openPosKeys = []
           carryConsumed = true
         } else {
           // Genuinely malformed — a sustain with nothing open to continue
@@ -230,6 +255,7 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
           warnings.push('A held note was missing what it continues from — filled with a rest instead.')
           flush()
           open = { pitch: null, qb: evQb }
+          openPosKeys = []
         }
       } else { // 'rest', or anything unrecognized
         if (open && !open.pitch) {
@@ -237,6 +263,7 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
         } else {
           flush()
           open = { pitch: null, qb: evQb }
+          openPosKeys = []
         }
       }
     }
@@ -278,6 +305,11 @@ export function convertSolfaScoreToStaff(solfaScore) {
     const partMeasures = voicePart.measures || []
     const measures = []
     let carryPitch // undefined = nothing open yet
+    // Records which Score note (by id) each sol-fa position
+    // ("measureIdx:beatIdx:eventIdx") became, so this part's slurs (see
+    // below) can be translated from sol-fa's position-pair shape into
+    // Score's own slurStart/slurEnd note flags once conversion is done.
+    const positionToNoteId = new Map()
     for (let mi = 0; mi < partMeasures.length; mi++) {
       const migrated = migrateMeasure(partMeasures[mi])
       const ts = migrated.timeSignature || startTs
@@ -291,7 +323,7 @@ export function convertSolfaScoreToStaff(solfaScore) {
       // measure after a modulation was silently getting the WRONG pitches.
       const key = resolveKeyAt(solfaScore, mi, 0, 0)
       const keySig = solfaKeyToKeySignature(key)
-      const { notes, endOpenPitch, carryConsumed } = convertSolfaBeatsToNotes(migrated.beats, ts, key, voicePart.id, warnings, carryPitch)
+      const { notes, endOpenPitch, carryConsumed } = convertSolfaBeatsToNotes(migrated.beats, ts, key, voicePart.id, warnings, carryPitch, mi, positionToNoteId)
 
       // If this measure's first note really did continue a sustain from
       // the previous measure, go back and mark the previous measure's
@@ -304,6 +336,29 @@ export function convertSolfaScoreToStaff(solfaScore) {
       carryPitch = endOpenPitch
 
       measures.push({ id: crypto.randomUUID(), timeSignature: ts, keySignature: keySig, notes })
+    }
+
+    // Translate this part's sol-fa slurs (score.slurs, position-pair shape
+    // — see solfaStore.js's addSlur) into Score's own slurStart/slurEnd
+    // note flags, via the position→note-id map just built. Silently skips
+    // (rather than warns) a slur whose start or end position didn't
+    // resolve to a real note — the rare edge cases that can cause that
+    // (documented above: a triplet region, or a position that landed on a
+    // cross-barline continuation piece rather than a true attack) are
+    // genuinely rare, and a dropped slur is a minor, silent visual
+    // difference rather than a correctness problem worth interrupting the
+    // user over.
+    const noteById = new Map()
+    for (const m of measures) for (const n of m.notes) noteById.set(n.id, n)
+    for (const slur of (solfaScore.slurs || [])) {
+      if (slur.partId !== voicePart.id) continue
+      const startId = positionToNoteId.get(`${slur.startMeasure}:${slur.startBeat}:${slur.startEvent}`)
+      const endId = positionToNoteId.get(`${slur.endMeasure}:${slur.endBeat}:${slur.endEvent}`)
+      const startNote = startId && noteById.get(startId)
+      const endNote = endId && noteById.get(endId)
+      if (!startNote || !endNote || startNote === endNote) continue
+      startNote.slurStart = true
+      endNote.slurEnd = true
     }
 
     return { id: crypto.randomUUID(), name, instrument: 'piano', clef, measures }
