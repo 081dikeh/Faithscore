@@ -6,7 +6,7 @@ import { useSolfaStore } from '../../store/solfaStore'
 import SolfaWizard from '../SolfaWizard'
 import { supabase } from '../../lib/supabase'
 
-// ─── Data ────────────────────────────────────────────────────────────────────
+// ─── Data  ────────────────────────────────────────────────────────────────────
 
 const FAMILIES = {
   'Woodwinds':            ['Piccolo','Flute','Oboe','Clarinet in Bb','Bass Clarinet in Bb','Soprano Saxophone','Alto Saxophone','Tenor Saxophone','Baritone Saxophone','Bassoon','Contrabassoon'],
