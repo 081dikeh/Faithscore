@@ -662,7 +662,7 @@ export const useScoreStore = create((set, get) => ({
     const part    = score.parts.find(p => p.id === selectedPartId)
     const measure = part?.measures[selectedMeasureIndex]
     const note    = measure?.notes.find(n => n.id === selectedNoteId)
-    if (!note || note.isRest) return
+    if (!note) return
     get()._snapshot()
 
     const turningOn = !note.slurStart
@@ -698,7 +698,7 @@ export const useScoreStore = create((set, get) => ({
     if (!selectedNoteId) return
     const note = score.parts.find(p => p.id === selectedPartId)
       ?.measures[selectedMeasureIndex]?.notes.find(n => n.id === selectedNoteId)
-    if (!note || note.isRest) return
+    if (!note) return
     get()._snapshot()
     get()._applyToMeasure(selectedPartId, selectedMeasureIndex, notes =>
       notes.map(n => n.id === selectedNoteId

@@ -191,8 +191,14 @@ function resolveScoreSlurs(scorePart) {
 
   const slurs = []
   seq.forEach((note, i) => {
-    if (!note.slurStart || note.isRest) return
-    let endIdx = seq.findIndex((n, j) => j > i && n.slurEnd && !n.isRest)
+    if (!note.slurStart) return
+    // Priority 1: explicit slurEnd — rests allowed (an explicit mark means
+    // the user really did ask to slur into that empty beat, mirroring the
+    // same allowance in ScoreRenderer's rendering logic).
+    let endIdx = seq.findIndex((n, j) => j > i && n.slurEnd)
+    // Priority 2: silent "next note" default — rests excluded here, since
+    // auto-landing on a rest the user never explicitly marked would be a
+    // surprising conversion result, not a helpful one.
     if (endIdx < 0) endIdx = seq.findIndex((n, j) => j > i && !n.isRest)
     if (endIdx < 0 || endIdx <= i) return
     slurs.push({ startNoteId: note.id, endNoteId: seq[endIdx].id })

@@ -11,7 +11,6 @@ import {
   Dot,
   Beam,
   StaveTie,
-  Curve,
   Tuplet,
   Barline,
 } from "vexflow";
@@ -1144,14 +1143,21 @@ export default function ScoreRenderer() {
             // Draws two bezier curves forming a closed path and fills it black.
             // This gives the same visual weight as the slur automatically.
             // bow: pixels of arc height (positive = curves down, negative = curves up)
-            const drawTieCanvas = (x1, y1, x2, y2, stemUp) => {
+            // depthFn: distance(px) -> depth(px) — ties and slurs are tuned
+            // separately on purpose (see slurCurveDepth/tieCurveDepth above:
+            // a tie is tight glue between two notes, a slur is a broader,
+            // more graceful phrase arc), so this is a parameter rather than
+            // hardcoded, letting both reuse the exact same clearance/inset
+            // geometry instead of two separately-tuned (and previously
+            // inconsistent) drawing paths.
+            const drawTieCanvas = (x1, y1, x2, y2, stemUp, depthFn = tieCurveDepth) => {
               try {
                 ctx.save();
                 // Depth scales gently with distance between the two
                 // noteheads (clamped) rather than a fixed 12px for every
                 // tie regardless of how far apart the notes are.
                 const dist = Math.abs(x2 - x1);
-                const depth = tieCurveDepth(dist);
+                const depth = depthFn(dist);
                 const bow = stemUp ? depth : -depth; // arc direction and height
                 const INS = 3; // inset so arc starts near notehead center
                 const lx1 = x1 + INS;
@@ -1231,107 +1237,75 @@ export default function ScoreRenderer() {
             // ── SLURS ──────────────────────────────────────────────────────────
             // Slur: connects slurStart → slurEnd.
             // DEFAULT (no slurEnd set): connects to the VERY NEXT real note only.
-            // With explicit slurEnd: connects slurStart → that specific note.
+            // With explicit slurEnd: connects slurStart → that specific note
+            // (which may itself be a rest — a slur can explicitly anchor to
+            // an empty beat, e.g. phrasing into a written rest).
             // Slur bows OPPOSITE to stem direction (same rule as ties).
-            // Uses Curve from VexFlow for proper engraving-quality arc.
+            // Drawn with the SAME canvas bezier-lens shape as ties
+            // (drawTieCanvas, with slurCurveDepth instead of tieCurveDepth
+            // for the broader, more open arc a slur should have) instead of
+            // VexFlow's own Curve class — Curve's default anchor points sit
+            // essentially AT the notehead with no clearance, which is what
+            // made a slur look like it touched the noteheads head-to-head
+            // instead of curving cleanly beside them the way a tie already
+            // does via drawTieCanvas's INS inset.
+            //
+            // Crossing a barline: mirrors the tie convention directly above
+            // — renderSeq is scoped to ONE measure, so a slur whose end note
+            // lives in a LATER measure will never be found by index here.
+            // Rather than silently drawing nothing (the previous behavior),
+            // draw a "departing" arc from the start note to this measure's
+            // right edge, exactly like a tie does when its target isn't
+            // found in-bar. The next measure draws no "arriving" stub for
+            // the same reason ties don't: a second arc would create a "U"
+            // shape at the barline instead of one continuous-looking curve.
 
             renderSeq.forEach((seqNote, ni) => {
-              if (!seqNote.slurStart || seqNote.isRest) return;
+              if (!seqNote.slurStart) return;
 
               // Find the end note:
-              // Priority 1: explicit slurEnd mark on a later note
-              // Priority 2: NEXT real note only (not last note in bar!)
-              let endIdx = renderSeq.findIndex(
-                (n, i) => i > ni && n.slurEnd && !n.isRest,
-              );
+              // Priority 1: explicit slurEnd mark on a later note (rests
+              // allowed here — an explicit mark means the user really did
+              // ask to slur into that empty beat).
+              // Priority 2: NEXT real note only (not last note in bar!) —
+              // rests excluded here since this is the SILENT default
+              // behavior; auto-landing on a rest the user never marked
+              // would be surprising, not helpful.
+              let endIdx = renderSeq.findIndex((n, i) => i > ni && n.slurEnd);
               if (endIdx < 0) {
-                // Default: just the NEXT real note
                 endIdx = renderSeq.findIndex((n, i) => i > ni && !n.isRest);
               }
-              if (endIdx < 0 || endIdx <= ni) return;
 
-              // Get stem directions for arc orientation
-              let stemUp = true;
+              const vfStart = vfNotes[ni];
+              let nx, ny, stemUp;
               try {
-                stemUp = vfNotes[ni].getStemDirection() === 1;
-              } catch (_) {}
-              // Slur bows OPPOSITE to stem: stem up → slur below; stem down → slur above.
-              // Depth scales gently with the distance between the two
-              // notes (clamped) — a slur spanning many notes gets wider,
-              // not dramatically taller.
-              let slurDist = 80; // sane fallback if position lookup fails
-              try {
-                slurDist = Math.abs(
-                  vfNotes[endIdx].getAbsoluteX() - vfNotes[ni].getAbsoluteX(),
-                );
-              } catch (_) {}
-              const slurDepth = slurCurveDepth(slurDist);
-              const cpY = stemUp ? slurDepth : -slurDepth;
-
-              try {
-                new Curve(vfNotes[ni], vfNotes[endIdx], {
-                  cps: [
-                    { x: 0, y: cpY },
-                    { x: 0, y: cpY },
-                  ],
-                })
-                  .setContext(ctx)
-                  .draw();
+                nx = vfStart.getAbsoluteX();
+                ny = vfStart.getYs()[0];
+                stemUp = vfStart.getStemDirection() === 1;
               } catch (_) {
-                // Canvas fallback
-                let sx1, sx2, sy1, sy2;
-                try {
-                  sx1 = vfNotes[ni].getAbsoluteX() + 4;
-                  sy1 = vfNotes[ni].getYs()[0];
-                } catch (_) {
-                  sx1 = x + 20;
-                  sy1 = partY + STAFF_HEIGHT / 2;
-                }
-                try {
-                  sx2 = vfNotes[endIdx].getAbsoluteX() - 4;
-                  sy2 = vfNotes[endIdx].getYs()[0];
-                } catch (_) {
-                  sx2 = x + 80;
-                  sy2 = sy1;
-                }
-                try {
-                  ctx.save();
-                  const fallbackDist = Math.abs(sx2 - sx1);
-                  const fallbackDepth = slurCurveDepth(fallbackDist);
-                  const ey = stemUp
-                    ? Math.max(sy1, sy2) + fallbackDepth
-                    : Math.min(sy1, sy2) - fallbackDepth;
-                  ctx.beginPath();
-                  ctx.moveTo(sx1, sy1);
-                  ctx.bezierCurveTo(
-                    sx1 + (sx2 - sx1) * 0.3,
-                    ey,
-                    sx1 + (sx2 - sx1) * 0.7,
-                    ey,
-                    sx2,
-                    sy2,
-                  );
-                  ctx.strokeStyle = "#1a1a1a";
-                  ctx.lineWidth = 1.6;
-                  ctx.lineCap = "round";
-                  ctx.stroke();
-                  // Inner curve for thickness
-                  ctx.beginPath();
-                  const ey2 = stemUp ? ey - 5 : ey + 5;
-                  ctx.moveTo(sx1, sy1);
-                  ctx.bezierCurveTo(
-                    sx1 + (sx2 - sx1) * 0.3,
-                    ey2,
-                    sx1 + (sx2 - sx1) * 0.7,
-                    ey2,
-                    sx2,
-                    sy2,
-                  );
-                  ctx.lineWidth = 0.8;
-                  ctx.stroke();
-                  ctx.restore();
-                } catch (_) {}
+                nx = colX[colInLine] + 30;
+                ny = partY + STAFF_HEIGHT / 2;
+                stemUp = true;
               }
+
+              if (endIdx < 0 || endIdx <= ni) {
+                // No end note anywhere in this bar — the slur continues
+                // into the next measure. Draw only the departing half.
+                const tx = x + width - 8;
+                drawTieCanvas(nx + 6, ny, tx, ny, stemUp, slurCurveDepth);
+                return;
+              }
+
+              let tx, ty;
+              try {
+                tx = vfNotes[endIdx].getAbsoluteX();
+                ty = vfNotes[endIdx].getYs()[0];
+              } catch (_) {
+                tx = nx + 60;
+                ty = ny;
+              }
+
+              drawTieCanvas(nx + 6, ny, tx - 2, ty, stemUp, slurCurveDepth);
             });
 
             // Measure background zone — store actual note area X so cursor is accurate
