@@ -736,10 +736,21 @@ export default function ScoreRenderer() {
             // Formatter width = stave width minus glyph overhead.
             // getGlyphOverhead() accounts for clef + key sig accidentals + time sig.
             const glyphOverhead = getGlyphOverhead(col, isFirst);
-            const BARLINE_PAD = SP * 2; // breathing room from barlines on each side
+            // Breathing room from the barlines — kept asymmetric on
+            // purpose. The LEFT side (right after the clef/key/time
+            // glyphs, before the first note) keeps its original spacing.
+            // The RIGHT side (after the last note, before the next
+            // barline) was reserving the same amount, which is where the
+            // visible "dead space after the last note" was coming from —
+            // reduced, not removed, and the reclaimed width is handed
+            // straight to VexFlow's own Formatter.format() call below, so
+            // it naturally redistributes it across every note's spacing
+            // instead of just shrinking the trailing gap in isolation.
+            const BARLINE_PAD_LEFT = SP * 2;
+            const BARLINE_PAD_RIGHT = SP * 0.8;
             const formatterWidth = Math.max(
               40,
-              width - glyphOverhead - BARLINE_PAD * 2,
+              width - glyphOverhead - BARLINE_PAD_LEFT - BARLINE_PAD_RIGHT,
             );
             new Formatter().joinVoices([voice]).format([voice], formatterWidth);
 
@@ -1159,7 +1170,16 @@ export default function ScoreRenderer() {
                 const dist = Math.abs(x2 - x1);
                 const depth = depthFn(dist);
                 const bow = stemUp ? depth : -depth; // arc direction and height
-                const INS = 3; // inset so arc starts near notehead center
+                // Small inset from the passed-in x1/x2 anchors. Reduced
+                // from 3 to 1: x1/x2 are now VexFlow's own getTieRightX()/
+                // getTieLeftX() notehead-edge anchors (see the TIES/SLURS
+                // call sites), not a rough guess — so this only needs to
+                // supply a hairline of clearance, not pull back a large,
+                // separately-guessed offset on top of an already-guessed
+                // anchor. A curve that reaches all the way to (or just
+                // past) the notehead edge, the way real engraving software
+                // draws it, needs this to stay small.
+                const INS = 1;
                 const lx1 = x1 + INS;
                 const lx2 = x2 - INS;
                 // Outer arc control points (the "outside" of the lens)
@@ -1198,7 +1218,15 @@ export default function ScoreRenderer() {
               const vfN = vfNotes[ni];
               let nx, ny, stemUp;
               try {
-                nx = vfN.getAbsoluteX();
+                // getTieRightX() is VexFlow's OWN canonical "where a tie/
+                // slur should leave this notehead" anchor — it accounts
+                // for notehead displacement (seconds/dyads) and any
+                // modifier-context shift. The previous getAbsoluteX() +
+                // guessed pixel offset didn't know about either, so it
+                // landed short of (or past) the real notehead edge
+                // depending on that particular note's glyph width —
+                // exactly the "slur doesn't reach the note" symptom.
+                nx = vfN.getTieRightX();
                 ny = vfN.getYs()[0];
                 stemUp = vfN.getStemDirection() === 1;
               } catch (_) {
@@ -1214,7 +1242,9 @@ export default function ScoreRenderer() {
               let tx, ty;
               if (targetIdx >= 0) {
                 try {
-                  tx = vfNotes[targetIdx].getAbsoluteX();
+                  // getTieLeftX() — the mirrored canonical anchor for
+                  // where an incoming tie/slur should land on this note.
+                  tx = vfNotes[targetIdx].getTieLeftX();
                   ty = vfNotes[targetIdx].getYs()[0];
                 } catch (_) {
                   tx = nx + 60;
@@ -1226,9 +1256,7 @@ export default function ScoreRenderer() {
                 ty = ny;
               }
 
-              // Anchor: right edge of notehead → left edge of target notehead
-              // nx is getAbsoluteX() (left of notehead) so add ~6px for right edge
-              drawTieCanvas(nx + 6, ny, tx - 2, ty, stemUp);
+              drawTieCanvas(nx, ny, tx, ty, stemUp);
             });
 
             // Arriving arc removed — the departing arc from the previous bar
@@ -1279,7 +1307,10 @@ export default function ScoreRenderer() {
               const vfStart = vfNotes[ni];
               let nx, ny, stemUp;
               try {
-                nx = vfStart.getAbsoluteX();
+                // Same canonical anchor as the tie fix above — see that
+                // comment for why getAbsoluteX() + a guessed pixel offset
+                // was landing short of the real notehead edge.
+                nx = vfStart.getTieRightX();
                 ny = vfStart.getYs()[0];
                 stemUp = vfStart.getStemDirection() === 1;
               } catch (_) {
@@ -1292,20 +1323,20 @@ export default function ScoreRenderer() {
                 // No end note anywhere in this bar — the slur continues
                 // into the next measure. Draw only the departing half.
                 const tx = x + width - 8;
-                drawTieCanvas(nx + 6, ny, tx, ny, stemUp, slurCurveDepth);
+                drawTieCanvas(nx, ny, tx, ny, stemUp, slurCurveDepth);
                 return;
               }
 
               let tx, ty;
               try {
-                tx = vfNotes[endIdx].getAbsoluteX();
+                tx = vfNotes[endIdx].getTieLeftX();
                 ty = vfNotes[endIdx].getYs()[0];
               } catch (_) {
                 tx = nx + 60;
                 ty = ny;
               }
 
-              drawTieCanvas(nx + 6, ny, tx - 2, ty, stemUp, slurCurveDepth);
+              drawTieCanvas(nx, ny, tx, ty, stemUp, slurCurveDepth);
             });
 
             // Measure background zone — store actual note area X so cursor is accurate
