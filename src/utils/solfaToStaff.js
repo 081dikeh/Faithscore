@@ -189,9 +189,6 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
     // own case here (rather than letting the generic merge logic treat
     // those fractional durations as one long tied span) keeps a triplet a
     // real Score triplet instead of an approximated chain of tied notes.
-    // (A slur endpoint landing exactly inside a triplet isn't tracked for
-    // position lookup — a documented v1 scope limit, not a crash: the
-    // slur just silently won't resolve for that rare case.)
     if (events.length === 3 && events.every(e => Math.abs(e.duration - 4 / 3) < 0.01)) {
       flush()
       // Base duration = the Score note value for HALF of this beat's
@@ -199,7 +196,7 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
       // exactly (the standard "3 in the time of 2" triplet definition).
       const half = beatsToRest(qbPerSolfaBeat / 2)
       let lastPitch = null
-      events.forEach(ev => {
+      events.forEach((ev, ei) => {
         let pitch = null
         if (ev.type === 'note' && ev.syllable) {
           pitch = solfaToScorePitch(ev.syllable, ev.octave || 0, key, voiceId)
@@ -211,14 +208,22 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
           // just as valid as) three separate triplet pitches.
           pitch = lastPitch
         }
-        notes.push({
+        const tripletNote = {
           id: crypto.randomUUID(),
           isRest: !pitch,
           pitch,
           duration: half.duration, dots: half.dots,
           tuplet: { num: 3, den: 2 },
           lyric: (ev.type === 'note' && ev.lyric) ? ev.lyric : undefined,
-        })
+        }
+        // Unlike the general merge path, each triplet event maps 1:1 to
+        // exactly one Score note — no span-decomposition to worry about —
+        // so this can record its own position directly, closing the
+        // "slur into a triplet doesn't resolve" gap noted above.
+        if (positionToNoteId && measureIdx != null) {
+          positionToNoteId.set(`${measureIdx}:${bi}:${ei}`, tripletNote.id)
+        }
+        notes.push(tripletNote)
       })
       continue
     }
