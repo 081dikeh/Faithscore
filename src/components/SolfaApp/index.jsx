@@ -29,8 +29,21 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as Tone from "tone";
 import {
-  Download, Cloud, Mic, Music, Repeat, Metronome, SlidersHorizontal,
-  FileText, Ruler, ListMusic, PenLine, Volume2, Zap, UploadCloud, Music4,
+  Download,
+  Cloud,
+  Mic,
+  Music,
+  Repeat,
+  Metronome,
+  SlidersHorizontal,
+  FileText,
+  Ruler,
+  ListMusic,
+  PenLine,
+  Volume2,
+  Zap,
+  UploadCloud,
+  Music4,
   Info,
 } from "lucide-react";
 import PublishToFaithLibrary from "../PublishToFaithLibrary";
@@ -43,7 +56,11 @@ import {
 } from "../../store/solfaStore";
 import { PAGE_SIZES_MM } from "../../store/scoreStore";
 import { useSolfaPlayback, SOUND_PRESETS } from "../../hooks/useSolfaPlayback";
-import { exportSolfaPDF, exportSolfaAudio, solfaPrintTargetPx } from "../../utils/exportSolfa";
+import {
+  exportSolfaPDF,
+  exportSolfaAudio,
+  solfaPrintTargetPx,
+} from "../../utils/exportSolfa";
 import { supabase } from "../../lib/supabase";
 
 const SYLLABLES = ["d", "r", "m", "f", "s", "l", "t"];
@@ -122,7 +139,14 @@ function formatTime(sec) {
 // ~60fps beat updates during playback only re-render these small pieces —
 // not the whole SolfaApp tree (toolbar/sidebar/menu bar).
 
-function PlaybackSeekBar({ seekBarRef, onBeat, getCurrentSec, getTotalSecs, seekToBeat, displayTempo }) {
+function PlaybackSeekBar({
+  seekBarRef,
+  onBeat,
+  getCurrentSec,
+  getTotalSecs,
+  seekToBeat,
+  displayTempo,
+}) {
   const curLabelRef = useRef(null);
   const totLabelRef = useRef(null);
 
@@ -135,8 +159,10 @@ function PlaybackSeekBar({ seekBarRef, onBeat, getCurrentSec, getTotalSecs, seek
         seekBarRef.current.max = String(Math.max(tot, 1));
         seekBarRef.current.value = String(Math.min(cur, Math.max(tot, 1)));
       }
-      if (curLabelRef.current) curLabelRef.current.textContent = formatTime(cur);
-      if (totLabelRef.current) totLabelRef.current.textContent = formatTime(tot);
+      if (curLabelRef.current)
+        curLabelRef.current.textContent = formatTime(cur);
+      if (totLabelRef.current)
+        totLabelRef.current.textContent = formatTime(tot);
     };
     update();
     return onBeat(update);
@@ -146,7 +172,12 @@ function PlaybackSeekBar({ seekBarRef, onBeat, getCurrentSec, getTotalSecs, seek
     <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
       <span
         ref={curLabelRef}
-        style={{ fontSize: 10, color: "#9ca3af", minWidth: 36, fontFamily: "monospace" }}
+        style={{
+          fontSize: 10,
+          color: "#9ca3af",
+          minWidth: 36,
+          fontFamily: "monospace",
+        }}
       >
         0:00
       </span>
@@ -162,11 +193,21 @@ function PlaybackSeekBar({ seekBarRef, onBeat, getCurrentSec, getTotalSecs, seek
           const bpm = displayTempo;
           await seekToBeat(sec / (60 / bpm));
         }}
-        style={{ flex: 1, accentColor: "#22c55e", height: 4, cursor: "pointer" }}
+        style={{
+          flex: 1,
+          accentColor: "#22c55e",
+          height: 4,
+          cursor: "pointer",
+        }}
       />
       <span
         ref={totLabelRef}
-        style={{ fontSize: 10, color: "#9ca3af", minWidth: 36, fontFamily: "monospace" }}
+        style={{
+          fontSize: 10,
+          color: "#9ca3af",
+          minWidth: 36,
+          fontFamily: "monospace",
+        }}
       >
         0:00
       </span>
@@ -192,7 +233,13 @@ function PlaybackBeatReadout({ onBeat }) {
   return (
     <span
       ref={spanRef}
-      style={{ display: "none", fontSize: 10, color: "#6ee7b7", fontFamily: "monospace", minWidth: 60 }}
+      style={{
+        display: "none",
+        fontSize: 10,
+        color: "#6ee7b7",
+        fontFamily: "monospace",
+        minWidth: 60,
+      }}
     />
   );
 }
@@ -209,11 +256,11 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
 
   const setInputMode = useSolfaStore((s) => s.setInputMode);
   const setSelectedDuration = useSolfaStore((s) => s.setSelectedDuration);
-  const setTitle    = useSolfaStore((s) => s.setTitle);
+  const setTitle = useSolfaStore((s) => s.setTitle);
   const setComposer = useSolfaStore((s) => s.setComposer);
-  const setArranger  = useSolfaStore((s) => s.setArranger);
+  const setArranger = useSolfaStore((s) => s.setArranger);
   const setCopyright = useSolfaStore((s) => s.setCopyright);
-  const setCcli       = useSolfaStore((s) => s.setCcli);
+  const setCcli = useSolfaStore((s) => s.setCcli);
   const setPageSettings = useSolfaStore((s) => s.setPageSettings);
   const placeEvent = useSolfaStore((s) => s.placeEvent);
   const setEventInPlace = useSolfaStore((s) => s.setEventInPlace);
@@ -225,7 +272,9 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
   const undo = useSolfaStore((s) => s.undo);
   const selectEvent = useSolfaStore((s) => s.selectEvent);
   const navigateEvent = useSolfaStore((s) => s.navigateEvent);
-  const shiftSelectedEventChromatic = useSolfaStore((s) => s.shiftSelectedEventChromatic);
+  const shiftSelectedEventChromatic = useSolfaStore(
+    (s) => s.shiftSelectedEventChromatic,
+  );
   const slurStart = useSolfaStore((s) => s.slurStart);
   const clearSlurStart = useSolfaStore((s) => s.clearSlurStart);
   const insertTriplet = useSolfaStore((s) => s.insertTriplet);
@@ -310,16 +359,16 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Export state
-  const rendererRef   = useRef(null);
-  const [showExport,  setShowExport]  = useState(false);
+  const rendererRef = useRef(null);
+  const [showExport, setShowExport] = useState(false);
   const [showPublish, setShowPublish] = useState(false);
   const [showScoreInfo, setShowScoreInfo] = useState(false);
   const [showPageSettings, setShowPageSettings] = useState(false);
-  const [exportTab,   setExportTab]   = useState("pdf"); // "pdf" | "audio"
-  const [exportBpm,   setExportBpm]   = useState(score.tempo || 80);
-  const [exportBusy,  setExportBusy]  = useState(false);
-  const [exportProg,  setExportProg]  = useState(0);
-  const [exportStatus,setExportStatus]= useState("");
+  const [exportTab, setExportTab] = useState("pdf"); // "pdf" | "audio"
+  const [exportBpm, setExportBpm] = useState(score.tempo || 80);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportProg, setExportProg] = useState(0);
+  const [exportStatus, setExportStatus] = useState("");
 
   // ── Get current beat cursor offset ────────────────────────────────────────
   // The cursor within a beat = sum of durations of all events up to and
@@ -374,7 +423,12 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
   // selectedEventIdx (e.g. it's already 0) — which was silently causing
   // the very first triplet slot to miss its tuplet tag entirely.
   function getSelectedEvent() {
-    if (selectedPartId === null || selectedMeasureIdx === null || selectedBeatIdx === null || selectedEventIdx === null)
+    if (
+      selectedPartId === null ||
+      selectedMeasureIdx === null ||
+      selectedBeatIdx === null ||
+      selectedEventIdx === null
+    )
       return null;
     const freshScore = useSolfaStore.getState().score;
     const part = freshScore.parts.find((p) => p.id === selectedPartId);
@@ -392,7 +446,15 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
     const selEv = getSelectedEvent();
     if (selEv?.tuplet) {
       const st = useSolfaStore.getState();
-      setEventInPlace(selectedPartId, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx, 'note', syllable, st.selectedOctave);
+      setEventInPlace(
+        selectedPartId,
+        selectedMeasureIdx,
+        selectedBeatIdx,
+        selectedEventIdx,
+        "note",
+        syllable,
+        st.selectedOctave,
+      );
       setTimeout(() => navigateEvent("right"), 0);
       return;
     }
@@ -419,7 +481,15 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
       return;
     const selEv = getSelectedEvent();
     if (selEv?.tuplet) {
-      setEventInPlace(selectedPartId, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx, 'rest', null, 0);
+      setEventInPlace(
+        selectedPartId,
+        selectedMeasureIdx,
+        selectedBeatIdx,
+        selectedEventIdx,
+        "rest",
+        null,
+        0,
+      );
       setTimeout(() => navigateEvent("right"), 0);
       return;
     }
@@ -446,7 +516,15 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
       return;
     const selEv = getSelectedEvent();
     if (selEv?.tuplet) {
-      setEventInPlace(selectedPartId, selectedMeasureIdx, selectedBeatIdx, selectedEventIdx, 'sustain', null, 0);
+      setEventInPlace(
+        selectedPartId,
+        selectedMeasureIdx,
+        selectedBeatIdx,
+        selectedEventIdx,
+        "sustain",
+        null,
+        0,
+      );
       setTimeout(() => navigateEvent("right"), 0);
       return;
     }
@@ -668,7 +746,10 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
   async function saveToCloud() {
     if (!user) {
       try {
-        localStorage.setItem("faithscore_solfa_autosave", JSON.stringify({ ...score, _savedAt: Date.now() }));
+        localStorage.setItem(
+          "faithscore_solfa_autosave",
+          JSON.stringify({ ...score, _savedAt: Date.now() }),
+        );
         setSaveMsg("Saved ✓");
         useSolfaStore.getState().markSaved();
         setTimeout(() => setSaveMsg(""), 3000);
@@ -753,256 +834,264 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
     >
       {/* ── Sticky top chrome: menu bar + toolbar + playback bar, pinned as one unit ── */}
       <div style={{ position: "sticky", top: 0, zIndex: 50, flexShrink: 0 }}>
-      {/* ── Menu bar ── */}
-      <div
-        style={{
-          background: "white",
-          borderBottom: "1px solid #e5e7eb",
-          display: "flex",
-          alignItems: "center",
-          height: 42,
-          padding: "0 12px",
-          gap: 8,
-          flexShrink: 0,
-          boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-        }}
-      >
-        <button
-          onClick={onGoHome}
+        {/* ── Menu bar ── */}
+        <div
           style={{
+            background: "white",
+            borderBottom: "1px solid #e5e7eb",
             display: "flex",
             alignItems: "center",
-            gap: 6,
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: "3px 8px",
-            borderRadius: 5,
-            fontWeight: 700,
-            fontSize: 13,
-            color: "#2563eb",
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "#eff6ff")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-        >
-          <img
-            src="/FaithScore_logo.png"
-            alt=""
-            style={{ height: 20, width: "auto" }}
-          />
-          FaithScore
-        </button>
-
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            padding: "2px 8px",
-            borderRadius: 4,
-            background: "#fef3c7",
-            color: "#92400e",
-            letterSpacing: "0.05em",
+            height: 42,
+            padding: "0 12px",
+            gap: 8,
+            flexShrink: 0,
+            boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
           }}
         >
-          SOLFA · {comboInfo.label}
-        </span>
-        <Sep />
+          <button
+            onClick={onGoHome}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: "3px 8px",
+              borderRadius: 5,
+              fontWeight: 700,
+              fontSize: 13,
+              color: "#2563eb",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#eff6ff")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+          >
+            <img
+              src="/FaithScore_logo.png"
+              alt=""
+              style={{ height: 20, width: "auto" }}
+            />
+          </button>
 
-        <input
-          value={score.title}
-          onChange={(e) => setTitle(e.target.value)}
-          style={{
-            border: "none",
-            borderBottom: "1px solid #d1d5db",
-            outline: "none",
-            fontSize: 14,
-            fontWeight: 600,
-            color: "#1e2433",
-            width: 180,
-            background: "transparent",
-          }}
-          placeholder="Score title"
-        />
-
-        <input
-          value={score.composer || ""}
-          onChange={(e) => setComposer(e.target.value)}
-          style={{
-            border: "none",
-            borderBottom: "1px solid #e5e7eb",
-            outline: "none",
-            fontSize: 12,
-            fontStyle: "italic",
-            color: "#6b7280",
-            width: 140,
-            background: "transparent",
-          }}
-          placeholder="Composer name"
-        />
-
-        <button
-          onClick={() => setShowScoreInfo(true)}
-          title="Score info (arranger, copyright, CCLI song #)"
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            width: 24, height: 24, border: "none", borderRadius: 6,
-            background: "transparent", color: "#9ca3af", cursor: "pointer",
-          }}
-          onMouseEnter={e => { e.currentTarget.style.background = "#f3f4f6"; e.currentTarget.style.color = "#6b7280" }}
-          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#9ca3af" }}
-        >
-          <Info size={14} strokeWidth={2} />
-        </button>
-
-        <button
-          onClick={() => setShowPageSettings(true)}
-          title="Page settings (page size, margins)"
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            width: 24, height: 24, border: "none", borderRadius: 6,
-            background: "transparent", color: "#9ca3af", cursor: "pointer",
-          }}
-          onMouseEnter={e => { e.currentTarget.style.background = "#f3f4f6"; e.currentTarget.style.color = "#6b7280" }}
-          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#9ca3af" }}
-        >
-          <Ruler size={14} strokeWidth={2} />
-        </button>
-
-        <div style={{ flex: 1 }} />
-
-        {posDisp && (
           <span
             style={{
               fontSize: 10,
-              color: "#6b7280",
-              fontFamily: "monospace",
-              background: "#f3f4f6",
-              padding: "2px 7px",
-              borderRadius: 3,
+              fontWeight: 700,
+              padding: "2px 8px",
+              borderRadius: 4,
+              background: "#fef3c7",
+              color: "#92400e",
+              letterSpacing: "0.05em",
             }}
           >
-            {posDisp}
+            SOLFA · {comboInfo.label}
           </span>
-        )}
+          <Sep />
 
-        <button
-          onClick={undo}
-          title="Undo (Ctrl+Z)"
-          style={{
-            width: 28,
-            height: 28,
-            border: "1px solid #e5e7eb",
-            borderRadius: 5,
-            background: "white",
-            cursor: "pointer",
-            fontSize: 13,
-            color: "#6b7280",
-          }}
-        >
-          ↩
-        </button>
+          <input
+            value={score.title}
+            onChange={(e) => setTitle(e.target.value)}
+            style={{
+              border: "none",
+              borderBottom: "1px solid #d1d5db",
+              outline: "none",
+              fontSize: 14,
+              fontWeight: 600,
+              color: "#1e2433",
+              width: 180,
+              background: "transparent",
+            }}
+            placeholder="Score title"
+          />
 
-        <button
-          onClick={() => setZoom((z) => Math.max(0.5, z - 0.1))}
-          style={{
-            width: 24,
-            height: 24,
-            border: "1px solid #e5e7eb",
-            borderRadius: 4,
-            background: "white",
-            cursor: "pointer",
-            fontSize: 14,
-            color: "#6b7280",
-          }}
-        >
-          −
-        </button>
-        <span
-          style={{
-            fontSize: 11,
-            color: "#9ca3af",
-            minWidth: 32,
-            textAlign: "center",
-          }}
-        >
-          {Math.round(zoom * 100)}%
-        </span>
-        <button
-          onClick={() => setZoom((z) => Math.min(2, z + 0.1))}
-          style={{
-            width: 24,
-            height: 24,
-            border: "1px solid #e5e7eb",
-            borderRadius: 4,
-            background: "white",
-            cursor: "pointer",
-            fontSize: 14,
-            color: "#6b7280",
-          }}
-        >
-          +
-        </button>
-        <Sep />
+          <input
+            value={score.composer || ""}
+            onChange={(e) => setComposer(e.target.value)}
+            style={{
+              border: "none",
+              borderBottom: "1px solid #e5e7eb",
+              outline: "none",
+              fontSize: 12,
+              fontStyle: "italic",
+              color: "#6b7280",
+              width: 140,
+              background: "transparent",
+            }}
+            placeholder="Composer name"
+          />
 
-        {saveMsg && (
+          <button
+            onClick={() => setShowScoreInfo(true)}
+            title="Score info (arranger, copyright, CCLI song #)"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 24,
+              height: 24,
+              border: "none",
+              borderRadius: 6,
+              background: "transparent",
+              color: "#9ca3af",
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "#f3f4f6";
+              e.currentTarget.style.color = "#6b7280";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = "#9ca3af";
+            }}
+          >
+            <Info size={14} strokeWidth={2} />
+          </button>
+
+          <button
+            onClick={() => setShowPageSettings(true)}
+            title="Page settings (page size, margins)"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 24,
+              height: 24,
+              border: "none",
+              borderRadius: 6,
+              background: "transparent",
+              color: "#9ca3af",
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "#f3f4f6";
+              e.currentTarget.style.color = "#6b7280";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = "#9ca3af";
+            }}
+          >
+            <Ruler size={14} strokeWidth={2} />
+          </button>
+
+          <div style={{ flex: 1 }} />
+
+          {posDisp && (
+            <span
+              style={{
+                fontSize: 10,
+                color: "#6b7280",
+                fontFamily: "monospace",
+                background: "#f3f4f6",
+                padding: "2px 7px",
+                borderRadius: 3,
+              }}
+            >
+              {posDisp}
+            </span>
+          )}
+
+          <button
+            onClick={undo}
+            title="Undo (Ctrl+Z)"
+            style={{
+              width: 28,
+              height: 28,
+              border: "1px solid #e5e7eb",
+              borderRadius: 5,
+              background: "white",
+              cursor: "pointer",
+              fontSize: 13,
+              color: "#6b7280",
+            }}
+          >
+            ↩
+          </button>
+
+          <button
+            onClick={() => setZoom((z) => Math.max(0.5, z - 0.1))}
+            style={{
+              width: 24,
+              height: 24,
+              border: "1px solid #e5e7eb",
+              borderRadius: 4,
+              background: "white",
+              cursor: "pointer",
+              fontSize: 14,
+              color: "#6b7280",
+            }}
+          >
+            −
+          </button>
           <span
             style={{
               fontSize: 11,
-              color: saveMsg.includes("fail") ? "#dc2626" : "#16a34a",
+              color: "#9ca3af",
+              minWidth: 32,
+              textAlign: "center",
             }}
           >
-            {saveMsg}
+            {Math.round(zoom * 100)}%
           </span>
-        )}
-
-        {/* Publish button */}
-        <button
-          onClick={() => setShowPublish(true)}
-          title="Publish to FaithLibrary"
-          style={{
-            padding: "4px 12px",
-            fontSize: 12,
-            fontWeight: 600,
-            background: "#2563eb",
-            color: "white",
-            border: "none",
-            borderRadius: 6,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-          }}
-        >
-          <UploadCloud size={13} strokeWidth={2} />
-          Publish
-        </button>
-
-        {/* Export button */}
-        <button
-          onClick={() => { setExportBpm(score.tempo || 80); setExportStatus(""); setExportProg(0); setShowExport(true); }}
-          title="Download PDF or Audio"
-          style={{
-            padding: "4px 12px",
-            fontSize: 12,
-            fontWeight: 600,
-            background: "white",
-            color: "#374151",
-            border: "1px solid #d1d5db",
-            borderRadius: 6,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-          }}
-        >
-          <Download size={13} strokeWidth={2} /> Export
-        </button>
-
-        {/* Convert to Staff button */}
-        {onConvertToStaff && (
           <button
-            onClick={() => onConvertToStaff(score)}
-            title="Convert this sol-fa score to standard staff notation"
+            onClick={() => setZoom((z) => Math.min(2, z + 0.1))}
+            style={{
+              width: 24,
+              height: 24,
+              border: "1px solid #e5e7eb",
+              borderRadius: 4,
+              background: "white",
+              cursor: "pointer",
+              fontSize: 14,
+              color: "#6b7280",
+            }}
+          >
+            +
+          </button>
+          <Sep />
+
+          {saveMsg && (
+            <span
+              style={{
+                fontSize: 11,
+                color: saveMsg.includes("fail") ? "#dc2626" : "#16a34a",
+              }}
+            >
+              {saveMsg}
+            </span>
+          )}
+
+          {/* Publish button */}
+          <button
+            onClick={() => setShowPublish(true)}
+            title="Publish to FaithLibrary"
+            style={{
+              padding: "4px 12px",
+              fontSize: 12,
+              fontWeight: 600,
+              background: "#2563eb",
+              color: "white",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+          >
+            <UploadCloud size={13} strokeWidth={2} />
+            Publish
+          </button>
+
+          {/* Export button */}
+          <button
+            onClick={() => {
+              setExportBpm(score.tempo || 80);
+              setExportStatus("");
+              setExportProg(0);
+              setShowExport(true);
+            }}
+            title="Download PDF or Audio"
             style={{
               padding: "4px 12px",
               fontSize: 12,
@@ -1017,552 +1106,609 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
               gap: 4,
             }}
           >
-            <Music4 size={13} strokeWidth={2} /> Convert to Staff
+            <Download size={13} strokeWidth={2} /> Export
           </button>
-        )}
 
-        <button
-          onClick={saveToCloud}
-          disabled={saving || !user}
-          style={{
-            padding: "4px 14px",
-            fontSize: 12,
-            fontWeight: 600,
-            background: saving ? "#93c5fd" : "#2563eb",
-            color: "white",
-            border: "none",
-            borderRadius: 6,
-            cursor: saving || !user ? "not-allowed" : "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          {saving ? "Saving…" : <><Cloud size={13} strokeWidth={2} /> Save</>}
-        </button>
+          {/* Convert to Staff button */}
+          {onConvertToStaff && (
+            <button
+              onClick={() => onConvertToStaff(score)}
+              title="Convert this sol-fa score to standard staff notation"
+              style={{
+                padding: "4px 12px",
+                fontSize: 12,
+                fontWeight: 600,
+                background: "white",
+                color: "#374151",
+                border: "1px solid #d1d5db",
+                borderRadius: 6,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <Music4 size={13} strokeWidth={2} /> Convert to Staff
+            </button>
+          )}
 
-        {user && (
-          <div
+          <button
+            onClick={saveToCloud}
+            disabled={saving || !user}
             style={{
-              width: 26,
-              height: 26,
-              borderRadius: "50%",
-              background: "linear-gradient(135deg,#2563eb,#7c3aed)",
+              padding: "4px 14px",
+              fontSize: 12,
+              fontWeight: 600,
+              background: saving ? "#93c5fd" : "#2563eb",
+              color: "white",
+              border: "none",
+              borderRadius: 6,
+              cursor: saving || !user ? "not-allowed" : "pointer",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              fontSize: 11,
-              fontWeight: 700,
-              color: "white",
+              gap: 6,
             }}
           >
-            {(user.user_metadata?.full_name ||
-              user.email ||
-              "?")[0].toUpperCase()}
-          </div>
-        )}
-      </div>
+            {saving ? (
+              "Saving…"
+            ) : (
+              <>
+                <Cloud size={13} strokeWidth={2} /> Save
+              </>
+            )}
+          </button>
 
-      {/* ── Input toolbar ── */}
-      <div
-        style={{
-          background: "white",
-          borderBottom: "1px solid #e5e7eb",
-          padding: "5px 14px",
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: 6,
-          flexShrink: 0,
-        }}
-      >
-        {/* Mode */}
-        <div style={{ display: "flex", gap: 3 }}>
-          <button
-            style={abtn(inputMode === "select")}
-            onClick={() => setInputMode("select")}
-            title="Esc"
-          >
-            ○ Select
-          </button>
-          <button
-            style={abtn(inputMode === "note", "#16a34a")}
-            onClick={() => setInputMode("note")}
-            title="N"
-          >
-            ● Note
-          </button>
-          <button
-            style={abtn(inputMode === "slur", "#7c3aed")}
-            onClick={() => {
-              if (inputMode === "slur") {
-                setInputMode("select");
-                clearSlurStart();
-              } else {
-                setInputMode("slur");
-              }
-            }}
-            title="Draw a slur: click first note, then last note. Click slur to delete."
-          >
-            ⌒ Slur
-          </button>
-          <button
-            style={abtn(inputMode === "tie", "#0d9488")}
-            onClick={() => {
-              if (inputMode === "tie") {
-                setInputMode("select");
-                clearTieStart();
-              } else {
-                setInputMode("tie");
-              }
-            }}
-            title="Tie two notes of the SAME pitch: click the first, then the second. Click a tie to delete."
-          >
-            ⌣ Tie
-          </button>
-          <button
-            style={abtn(false, "#b45309")}
-            disabled={selectedBeatIdx === null}
-            onClick={() => {
-              if (selectedPartId != null && selectedMeasureIdx != null && selectedBeatIdx != null) {
-                insertTriplet(selectedPartId, selectedMeasureIdx, selectedBeatIdx);
-              }
-            }}
-            title="Triplet: select a beat, then click to split it into 3 equal parts (d'r'm)"
-          >
-            ³ Triplet
-          </button>
-        </div>
-        {inputMode === "slur" && (
-          <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 600, fontStyle: "italic" }}>
-            {slurStart ? "Click the ending note →" : "Click the starting note →"}
-          </span>
-        )}
-        {inputMode === "tie" && (
-          <span style={{ fontSize: 10, color: "#0d9488", fontWeight: 600, fontStyle: "italic" }}>
-            {tieStart ? "Click the SAME pitch to tie to →" : "Click the starting note →"}
-          </span>
-        )}
-        <Sep />
-
-        {/* Syllables */}
-        <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
-          {SYLLABLES.map((syl) => (
-            <button
-              key={syl}
-              onClick={() => doInsert(syl)}
-              title={`Insert ${syl} (key: ${syl})`}
+          {user && (
+            <div
               style={{
                 width: 26,
                 height: 26,
-                border: "1px solid #d1d5db",
-                borderRadius: 4,
-                cursor: "pointer",
-                background: "white",
-                fontSize: 14,
-                fontWeight: 600,
-                color: "#1e2433",
-                fontFamily: '"Times New Roman",serif',
+                borderRadius: "50%",
+                background: "linear-gradient(135deg,#2563eb,#7c3aed)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 11,
+                fontWeight: 700,
+                color: "white",
               }}
             >
-              {syl}
+              {(user.user_metadata?.full_name ||
+                user.email ||
+                "?")[0].toUpperCase()}
+            </div>
+          )}
+        </div>
+
+        {/* ── Input toolbar ── */}
+        <div
+          style={{
+            background: "white",
+            borderBottom: "1px solid #e5e7eb",
+            padding: "5px 14px",
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 6,
+            flexShrink: 0,
+          }}
+        >
+          {/* Mode */}
+          <div style={{ display: "flex", gap: 3 }}>
+            <button
+              style={abtn(inputMode === "select")}
+              onClick={() => setInputMode("select")}
+              title="Esc"
+            >
+              ○ Select
             </button>
-          ))}
-          <button
-            onClick={() => setShowChromatic((v) => !v)}
-            style={{
-              padding: "0 7px",
-              height: 26,
-              border: "1px solid #d1d5db",
-              borderRadius: 4,
-              cursor: "pointer",
-              background: showChromatic ? "#fef3c7" : "white",
-              fontSize: 10,
-              color: "#6b7280",
-            }}
-          >
-            ♯♭
-          </button>
-          {showChromatic &&
-            CHROMATIC.map((syl) => (
+            <button
+              style={abtn(inputMode === "note", "#16a34a")}
+              onClick={() => setInputMode("note")}
+              title="N"
+            >
+              ● Note
+            </button>
+            <button
+              style={abtn(inputMode === "slur", "#7c3aed")}
+              onClick={() => {
+                if (inputMode === "slur") {
+                  setInputMode("select");
+                  clearSlurStart();
+                } else {
+                  setInputMode("slur");
+                }
+              }}
+              title="Draw a slur: click first note, then last note. Click slur to delete."
+            >
+              ⌒ Slur
+            </button>
+            <button
+              style={abtn(inputMode === "tie", "#0d9488")}
+              onClick={() => {
+                if (inputMode === "tie") {
+                  setInputMode("select");
+                  clearTieStart();
+                } else {
+                  setInputMode("tie");
+                }
+              }}
+              title="Tie two notes of the SAME pitch: click the first, then the second. Click a tie to delete."
+            >
+              ⌣ Tie
+            </button>
+            <button
+              style={abtn(false, "#b45309")}
+              disabled={selectedBeatIdx === null}
+              onClick={() => {
+                if (
+                  selectedPartId != null &&
+                  selectedMeasureIdx != null &&
+                  selectedBeatIdx != null
+                ) {
+                  insertTriplet(
+                    selectedPartId,
+                    selectedMeasureIdx,
+                    selectedBeatIdx,
+                  );
+                }
+              }}
+              title="Triplet: select a beat, then click to split it into 3 equal parts (d'r'm)"
+            >
+              ³ Triplet
+            </button>
+          </div>
+          {inputMode === "slur" && (
+            <span
+              style={{
+                fontSize: 10,
+                color: "#7c3aed",
+                fontWeight: 600,
+                fontStyle: "italic",
+              }}
+            >
+              {slurStart
+                ? "Click the ending note →"
+                : "Click the starting note →"}
+            </span>
+          )}
+          {inputMode === "tie" && (
+            <span
+              style={{
+                fontSize: 10,
+                color: "#0d9488",
+                fontWeight: 600,
+                fontStyle: "italic",
+              }}
+            >
+              {tieStart
+                ? "Click the SAME pitch to tie to →"
+                : "Click the starting note →"}
+            </span>
+          )}
+          <Sep />
+
+          {/* Syllables */}
+          <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
+            {SYLLABLES.map((syl) => (
               <button
                 key={syl}
                 onClick={() => doInsert(syl)}
+                title={`Insert ${syl} (key: ${syl})`}
                 style={{
-                  padding: "0 7px",
+                  width: 26,
                   height: 26,
-                  border: "1px solid #fbbf24",
+                  border: "1px solid #d1d5db",
                   borderRadius: 4,
                   cursor: "pointer",
-                  background: "#fef3c7",
-                  fontSize: 12,
+                  background: "white",
+                  fontSize: 14,
                   fontWeight: 600,
-                  color: "#92400e",
+                  color: "#1e2433",
                   fontFamily: '"Times New Roman",serif',
                 }}
               >
                 {syl}
               </button>
             ))}
-        </div>
-        <Sep />
-
-        <button
-          onClick={doRest}
-          title="Rest — blank space (Space)"
-          style={{ ...abtn(false), padding: "3px 10px" }}
-        >
-          ○ Rest
-        </button>
-        <button
-          onClick={doSustain}
-          title="Hold/sustain dash (key –)"
-          style={{
-            ...abtn(false),
-            padding: "3px 10px",
-            fontFamily: '"Times New Roman",serif',
-          }}
-        >
-          – Hold
-        </button>
-        <Sep />
-
-        {/* Duration — this changes both new notes AND selected existing event */}
-        <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-          <span style={{ fontSize: 10, color: "#6b7280", fontWeight: 600 }}>
-            Duration:
-          </span>
-          {[4, 3, 2, 1].map((d) => {
-            const info = DUR_LABELS[d];
-            const active = dispDur === d;
-            return (
-              <button
-                key={d}
-                onClick={() => changeDur(d)}
-                title={`${info.desc} (key ${d})`}
-                style={{
-                  ...abtn(active),
-                  minWidth: 40,
-                  fontFamily: '"Times New Roman",serif',
-                  fontSize: 12,
-                }}
-              >
-                <span title={info.desc}>{info.sym}</span>
-              </button>
-            );
-          })}
-        </div>
-        <Sep />
-
-        {/* Octave */}
-        <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-          <span style={{ fontSize: 10, color: "#6b7280" }}>Oct:</span>
-          {OCTAVE_LEVELS.map((o) => (
             <button
-              key={o}
-              onClick={() => setOctave(o)}
+              onClick={() => setShowChromatic((v) => !v)}
               style={{
-                minWidth: 32,
-                height: 28,
-                padding: "0 4px",
-                border: `1px solid ${dispOct === o ? "#2563eb" : "#d1d5db"}`,
+                padding: "0 7px",
+                height: 26,
+                border: "1px solid #d1d5db",
                 borderRadius: 4,
                 cursor: "pointer",
-                background: dispOct === o ? "#eff6ff" : "white",
-                color: dispOct === o ? "#2563eb" : "#374151",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
+                background: showChromatic ? "#fef3c7" : "white",
+                fontSize: 10,
+                color: "#6b7280",
               }}
             >
-              <OctLabel o={o} />
+              ♯♭
             </button>
-          ))}
-        </div>
-        <Sep />
+            {showChromatic &&
+              CHROMATIC.map((syl) => (
+                <button
+                  key={syl}
+                  onClick={() => doInsert(syl)}
+                  style={{
+                    padding: "0 7px",
+                    height: 26,
+                    border: "1px solid #fbbf24",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                    background: "#fef3c7",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "#92400e",
+                    fontFamily: '"Times New Roman",serif',
+                  }}
+                >
+                  {syl}
+                </button>
+              ))}
+          </div>
+          <Sep />
 
-        {/* Key — read-only display of the score's starting key. Mid-score
+          <button
+            onClick={doRest}
+            title="Rest — blank space (Space)"
+            style={{ ...abtn(false), padding: "3px 10px" }}
+          >
+            ○ Rest
+          </button>
+          <button
+            onClick={doSustain}
+            title="Hold/sustain dash (key –)"
+            style={{
+              ...abtn(false),
+              padding: "3px 10px",
+              fontFamily: '"Times New Roman",serif',
+            }}
+          >
+            – Hold
+          </button>
+          <Sep />
+
+          {/* Duration — this changes both new notes AND selected existing event */}
+          <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+            <span style={{ fontSize: 10, color: "#6b7280", fontWeight: 600 }}>
+              Duration:
+            </span>
+            {[4, 3, 2, 1].map((d) => {
+              const info = DUR_LABELS[d];
+              const active = dispDur === d;
+              return (
+                <button
+                  key={d}
+                  onClick={() => changeDur(d)}
+                  title={`${info.desc} (key ${d})`}
+                  style={{
+                    ...abtn(active),
+                    minWidth: 40,
+                    fontFamily: '"Times New Roman",serif',
+                    fontSize: 12,
+                  }}
+                >
+                  <span title={info.desc}>{info.sym}</span>
+                </button>
+              );
+            })}
+          </div>
+          <Sep />
+
+          {/* Octave */}
+          <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+            <span style={{ fontSize: 10, color: "#6b7280" }}>Oct:</span>
+            {OCTAVE_LEVELS.map((o) => (
+              <button
+                key={o}
+                onClick={() => setOctave(o)}
+                style={{
+                  minWidth: 32,
+                  height: 28,
+                  padding: "0 4px",
+                  border: `1px solid ${dispOct === o ? "#2563eb" : "#d1d5db"}`,
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  background: dispOct === o ? "#eff6ff" : "white",
+                  color: dispOct === o ? "#2563eb" : "#374151",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <OctLabel o={o} />
+              </button>
+            ))}
+          </div>
+          <Sep />
+
+          {/* Key — read-only display of the score's starting key. Mid-score
             modulations are inserted per-bar via the sidebar (select a bar
             → Key Signature), not changed globally here. */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 10, color: "#6b7280", fontStyle: "italic" }}>
-            Doh=
-          </span>
-          <span
-            title="This is the score's starting key and can't be changed once composing has begun. To modulate partway through the piece, select the exact note where the modulation should pivot and use Key Signature in the sidebar."
-            style={{
-              fontSize: 12,
-              border: "1px solid #e5e7eb",
-              borderRadius: 5,
-              padding: "3px 8px",
-              background: "#f9fafb",
-              color: "#6b7280",
-              cursor: "default",
-            }}
-          >
-            {score.key || "C"}
-          </span>
-        </div>
-        <Sep />
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span
+              style={{ fontSize: 10, color: "#6b7280", fontStyle: "italic" }}
+            >
+              Doh=
+            </span>
+            <span
+              title="This is the score's starting key and can't be changed once composing has begun. To modulate partway through the piece, select the exact note where the modulation should pivot and use Key Signature in the sidebar."
+              style={{
+                fontSize: 12,
+                border: "1px solid #e5e7eb",
+                borderRadius: 5,
+                padding: "3px 8px",
+                background: "#f9fafb",
+                color: "#6b7280",
+                cursor: "default",
+              }}
+            >
+              {score.key || "C"}
+            </span>
+          </div>
+          <Sep />
 
-        {/* Time signature — read-only display of the score's starting
+          {/* Time signature — read-only display of the score's starting
             meter. Mid-score changes are inserted per-bar via the sidebar
             (select a bar → Time Signature), not changed globally here. */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 10, color: "#6b7280" }}>Time:</span>
-          <span
-            title="This is the score's starting time signature and can't be changed once composing has begun. To change the meter partway through the piece, select a bar and use Time Signature in the sidebar."
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: 10, color: "#6b7280" }}>Time:</span>
+            <span
+              title="This is the score's starting time signature and can't be changed once composing has begun. To change the meter partway through the piece, select a bar and use Time Signature in the sidebar."
+              style={{
+                fontSize: 12,
+                border: "1px solid #e5e7eb",
+                borderRadius: 5,
+                padding: "3px 8px",
+                background: "#f9fafb",
+                color: "#6b7280",
+                cursor: "default",
+              }}
+            >
+              {currentTS}
+            </span>
+          </div>
+          <Sep />
+
+          <button
+            onClick={addMeasure}
+            title="Add bar (M)"
+            style={{ ...abtn(false), padding: "3px 9px", fontSize: 11 }}
+          >
+            + Bar
+          </button>
+          <button
+            onClick={() => deleteMeasure()}
+            title="Delete selected bar (− Bar button always deletes bar, not note)"
             style={{
-              fontSize: 12,
-              border: "1px solid #e5e7eb",
+              padding: "3px 9px",
+              fontSize: 11,
+              fontWeight: 500,
+              border: "1px solid #fca5a5",
               borderRadius: 5,
-              padding: "3px 8px",
-              background: "#f9fafb",
-              color: "#6b7280",
-              cursor: "default",
+              background: "#fef2f2",
+              color: "#dc2626",
+              cursor: "pointer",
             }}
           >
-            {currentTS}
-          </span>
-        </div>
-        <Sep />
+            − Bar
+          </button>
+          <Sep />
 
-        <button
-          onClick={addMeasure}
-          title="Add bar (M)"
-          style={{ ...abtn(false), padding: "3px 9px", fontSize: 11 }}
-        >
-          + Bar
-        </button>
-        <button
-          onClick={() => deleteMeasure()}
-          title="Delete selected bar (− Bar button always deletes bar, not note)"
-          style={{
-            padding: "3px 9px",
-            fontSize: 11,
-            fontWeight: 500,
-            border: "1px solid #fca5a5",
-            borderRadius: 5,
-            background: "#fef2f2",
-            color: "#dc2626",
-            cursor: "pointer",
-          }}
-        >
-          − Bar
-        </button>
-        <Sep />
-
-        <button
-          onClick={() => setLyricsMode((v) => !v)}
-          title="Lyrics mode: show/hide the lyric underline"
-          style={{
-            padding: "3px 9px",
-            fontSize: 11,
-            fontWeight: 500,
-            border: lyricsMode ? "1px solid #2563eb" : "1px solid #d1d5db",
-            borderRadius: 5,
-            background: lyricsMode ? "#2563eb" : "white",
-            color: lyricsMode ? "white" : "#374151",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-          }}
-        >
-          <Mic size={13} strokeWidth={2} /> Lyrics Mode
-        </button>
-      </div>
-
-      {/* ── Transport / Playback bar (pinned directly below toolbar) ── */}
-      <div
-        style={{
-          background: "#1e2433",
-          padding: "6px 16px",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          flexShrink: 0,
-        }}
-      >
-        {/* Play / Pause / Stop */}
-        <button
-          onClick={() => {
-            isPlaying ? pause() : play();
-          }}
-          title={isPlaying ? "Pause (Space)" : "Play (Space)"}
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: "50%",
-            border: "none",
-            cursor: "pointer",
-            background: isPlaying ? "#f59e0b" : "#22c55e",
-            color: "white",
-            fontSize: 16,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          {isPlaying ? "⏸" : "▶"}
-        </button>
-
-        <button
-          onClick={stop}
-          title="Stop"
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: "50%",
-            border: "none",
-            cursor: "pointer",
-            background: "#374151",
-            color: "white",
-            fontSize: 14,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          ⏹
-        </button>
-
-        {/* Seek bar — isolated: updates live at ~60fps without re-rendering the rest of the app */}
-        <PlaybackSeekBar
-          seekBarRef={seekBarRef}
-          onBeat={onBeat}
-          getCurrentSec={getCurrentSec}
-          getTotalSecs={getTotalSecs}
-          seekToBeat={seekToBeat}
-          displayTempo={displayTempo}
-        />
-
-        {/* Tempo */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 10, color: "#9ca3af" }}>♩=</span>
-          <input
-            type="number"
-            min={20}
-            max={300}
-            value={tempoOverride || score.tempo || 80}
-            onChange={(e) => {
-              const v = e.target.value;
-              setTempoOverride(v);
-              const n = Number(v);
-              if (n >= 20 && n <= 300) setPbTempo(n);
-            }}
+          <button
+            onClick={() => setLyricsMode((v) => !v)}
+            title="Lyrics mode: show/hide the lyric underline"
             style={{
-              width: 48,
+              padding: "3px 9px",
+              fontSize: 11,
+              fontWeight: 500,
+              border: lyricsMode ? "1px solid #2563eb" : "1px solid #d1d5db",
+              borderRadius: 5,
+              background: lyricsMode ? "#2563eb" : "white",
+              color: lyricsMode ? "white" : "#374151",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+          >
+            <Mic size={13} strokeWidth={2} /> Lyrics Mode
+          </button>
+        </div>
+
+        {/* ── Transport / Playback bar (pinned directly below toolbar) ── */}
+        <div
+          style={{
+            background: "#1e2433",
+            padding: "6px 16px",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexShrink: 0,
+          }}
+        >
+          {/* Play / Pause / Stop */}
+          <button
+            onClick={() => {
+              isPlaying ? pause() : play();
+            }}
+            title={isPlaying ? "Pause (Space)" : "Play (Space)"}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: "50%",
+              border: "none",
+              cursor: "pointer",
+              background: isPlaying ? "#f59e0b" : "#22c55e",
+              color: "white",
+              fontSize: 16,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {isPlaying ? "⏸" : "▶"}
+          </button>
+
+          <button
+            onClick={stop}
+            title="Stop"
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: "50%",
+              border: "none",
+              cursor: "pointer",
+              background: "#374151",
+              color: "white",
+              fontSize: 14,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            ⏹
+          </button>
+
+          {/* Seek bar — isolated: updates live at ~60fps without re-rendering the rest of the app */}
+          <PlaybackSeekBar
+            seekBarRef={seekBarRef}
+            onBeat={onBeat}
+            getCurrentSec={getCurrentSec}
+            getTotalSecs={getTotalSecs}
+            seekToBeat={seekToBeat}
+            displayTempo={displayTempo}
+          />
+
+          {/* Tempo */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: 10, color: "#9ca3af" }}>♩=</span>
+            <input
+              type="number"
+              min={20}
+              max={300}
+              value={tempoOverride || score.tempo || 80}
+              onChange={(e) => {
+                const v = e.target.value;
+                setTempoOverride(v);
+                const n = Number(v);
+                if (n >= 20 && n <= 300) setPbTempo(n);
+              }}
+              style={{
+                width: 48,
+                background: "#374151",
+                border: "1px solid #4b5563",
+                borderRadius: 4,
+                color: "white",
+                fontSize: 11,
+                textAlign: "center",
+                padding: "2px 4px",
+                outline: "none",
+              }}
+            />
+          </div>
+
+          {/* Metronome */}
+          <button
+            onClick={() => {
+              const v = toggleMetronome();
+              setMetronomeOn(v);
+            }}
+            title="Toggle metronome"
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 6,
+              border: "none",
+              cursor: "pointer",
+              background: metronomeOn ? "#2563eb" : "#374151",
+              color: "white",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Metronome size={16} strokeWidth={1.75} />
+          </button>
+
+          {/* Loop */}
+          <button
+            onClick={() => {
+              const v = toggleLoop();
+              setLooping(v);
+            }}
+            title="Loop"
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 6,
+              border: "none",
+              cursor: "pointer",
+              background: looping ? "#2563eb" : "#374151",
+              color: "white",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Repeat size={15} strokeWidth={2} />
+          </button>
+
+          {/* Preset picker */}
+          <select
+            value={selectedPreset}
+            onChange={async (e) => {
+              const id = e.target.value;
+              setSelectedPreset(id);
+              await setPreset(id);
+            }}
+            title="Sound preset"
+            style={{
               background: "#374151",
               border: "1px solid #4b5563",
-              borderRadius: 4,
+              borderRadius: 5,
               color: "white",
               fontSize: 11,
-              textAlign: "center",
-              padding: "2px 4px",
+              padding: "3px 6px",
+              cursor: "pointer",
               outline: "none",
+              maxWidth: 160,
             }}
-          />
+          >
+            {SOUND_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+
+          {/* Mixer toggle */}
+          <button
+            onClick={() => setShowMixer((v) => !v)}
+            title="Part volume mixer"
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 6,
+              border: "none",
+              cursor: "pointer",
+              background: showMixer ? "#2563eb" : "#374151",
+              color: "white",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <SlidersHorizontal size={15} strokeWidth={1.75} />
+          </button>
+
+          {/* Beat position indicator — isolated, updates without re-rendering the app */}
+          <PlaybackBeatReadout onBeat={onBeat} />
         </div>
-
-        {/* Metronome */}
-        <button
-          onClick={() => {
-            const v = toggleMetronome();
-            setMetronomeOn(v);
-          }}
-          title="Toggle metronome"
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 6,
-            border: "none",
-            cursor: "pointer",
-            background: metronomeOn ? "#2563eb" : "#374151",
-            color: "white",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Metronome size={16} strokeWidth={1.75} />
-        </button>
-
-        {/* Loop */}
-        <button
-          onClick={() => {
-            const v = toggleLoop();
-            setLooping(v);
-          }}
-          title="Loop"
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 6,
-            border: "none",
-            cursor: "pointer",
-            background: looping ? "#2563eb" : "#374151",
-            color: "white",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Repeat size={15} strokeWidth={2} />
-        </button>
-
-        {/* Preset picker */}
-        <select
-          value={selectedPreset}
-          onChange={async (e) => {
-            const id = e.target.value;
-            setSelectedPreset(id);
-            await setPreset(id);
-          }}
-          title="Sound preset"
-          style={{
-            background: "#374151",
-            border: "1px solid #4b5563",
-            borderRadius: 5,
-            color: "white",
-            fontSize: 11,
-            padding: "3px 6px",
-            cursor: "pointer",
-            outline: "none",
-            maxWidth: 160,
-          }}
-        >
-          {SOUND_PRESETS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-
-        {/* Mixer toggle */}
-        <button
-          onClick={() => setShowMixer((v) => !v)}
-          title="Part volume mixer"
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 6,
-            border: "none",
-            cursor: "pointer",
-            background: showMixer ? "#2563eb" : "#374151",
-            color: "white",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <SlidersHorizontal size={15} strokeWidth={1.75} />
-        </button>
-
-        {/* Beat position indicator — isolated, updates without re-rendering the app */}
-        <PlaybackBeatReadout onBeat={onBeat} />
       </div>
-      </div>{/* end sticky top chrome */}
+      {/* end sticky top chrome */}
 
       {/* ── Info bar ── */}
       <div
@@ -1770,7 +1916,9 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
       )}
 
       {/* ── Main area: Sidebar + Score canvas ── */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden", minHeight: 0 }}>
+      <div
+        style={{ display: "flex", flex: 1, overflow: "hidden", minHeight: 0 }}
+      >
         {/* Sidebar — normal flow, fills height of this flex row */}
         <SolfaSidebar
           collapsed={sidebarCollapsed}
@@ -1862,45 +2010,108 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
       {showScoreInfo && (
         <div
           style={{
-            position: "fixed", inset: 0, zIndex: 200,
+            position: "fixed",
+            inset: 0,
+            zIndex: 200,
             background: "rgba(0,0,0,0.35)",
-            display: "flex", alignItems: "center", justifyContent: "center",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
           onClick={() => setShowScoreInfo(false)}
         >
           <div
             style={{
-              background: "white", borderRadius: 10, width: 360,
-              padding: "18px 20px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+              background: "white",
+              borderRadius: 10,
+              width: 360,
+              padding: "18px 20px 16px",
+              boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
             }}
-            onClick={e => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#111827", marginBottom: 14 }}>
+            <div
+              style={{
+                fontSize: 15,
+                fontWeight: 700,
+                color: "#111827",
+                marginBottom: 14,
+              }}
+            >
               Score info
             </div>
 
             {[
-              { label: "Arranger", key: "arranger", set: setArranger, placeholder: "e.g. Arr. Jane Doe" },
-              { label: "Copyright", key: "copyright", set: setCopyright, placeholder: "e.g. © 2026 Jane Doe. All rights reserved." },
-              { label: "CCLI Song #", key: "ccli", set: setCcli, placeholder: "e.g. 1234567" },
-            ].map(f => (
+              {
+                label: "Arranger",
+                key: "arranger",
+                set: setArranger,
+                placeholder: "e.g. Arr. Jane Doe",
+              },
+              {
+                label: "Copyright",
+                key: "copyright",
+                set: setCopyright,
+                placeholder: "e.g. © 2026 Jane Doe. All rights reserved.",
+              },
+              {
+                label: "CCLI Song #",
+                key: "ccli",
+                set: setCcli,
+                placeholder: "e.g. 1234567",
+              },
+            ].map((f) => (
               <div key={f.key} style={{ marginBottom: 12 }}>
-                <label style={{ display: "block", fontSize: 12.5, color: "#374151", marginBottom: 4, fontWeight: 600 }}>
+                <label
+                  style={{
+                    display: "block",
+                    fontSize: 12.5,
+                    color: "#374151",
+                    marginBottom: 4,
+                    fontWeight: 600,
+                  }}
+                >
                   {f.label}
                 </label>
                 <input
-                  type="text" value={score[f.key] || ""} placeholder={f.placeholder}
-                  onChange={e => f.set(e.target.value)}
-                  style={{ width: "100%", fontSize: 12.5, border: "1px solid #d1d5db", borderRadius: 6,
-                    padding: "6px 8px", color: "#111827", boxSizing: "border-box" }}
+                  type="text"
+                  value={score[f.key] || ""}
+                  placeholder={f.placeholder}
+                  onChange={(e) => f.set(e.target.value)}
+                  style={{
+                    width: "100%",
+                    fontSize: 12.5,
+                    border: "1px solid #d1d5db",
+                    borderRadius: 6,
+                    padding: "6px 8px",
+                    color: "#111827",
+                    boxSizing: "border-box",
+                  }}
                 />
               </div>
             ))}
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
-              <button onClick={() => setShowScoreInfo(false)}
-                style={{ fontSize: 12.5, fontWeight: 600, padding: "7px 16px", borderRadius: 7,
-                  border: "1px solid #2563eb", background: "#2563eb", color: "white", cursor: "pointer" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 8,
+                marginTop: 4,
+              }}
+            >
+              <button
+                onClick={() => setShowScoreInfo(false)}
+                style={{
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  padding: "7px 16px",
+                  borderRadius: 7,
+                  border: "1px solid #2563eb",
+                  background: "#2563eb",
+                  color: "white",
+                  cursor: "pointer",
+                }}
+              >
                 Done
               </button>
             </div>
@@ -1915,148 +2126,358 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
           separate score objects. Controls page size + margins used by both
           Print and the one-click Publish PDF (see resolvePageGeometry() in
           exportSolfa.js). */}
-      {showPageSettings && (() => {
-        const ps = score.pageSettings || { size: "A4", marginTop: 8, marginBottom: 8, marginSide: 10 };
-        const dims = PAGE_SIZES_MM[ps.size] || PAGE_SIZES_MM.A4;
-        const field = (label, key, min, max) => (
-          <label key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12.5, color: "#374151", marginBottom: 8 }}>
-            {label}
-            <input
-              type="number" min={min} max={max} step={1} value={ps[key]}
-              onChange={e => {
-                const v = Number(e.target.value);
-                if (!isNaN(v)) setPageSettings({ [key]: Math.max(min, Math.min(max, v)) });
+      {showPageSettings &&
+        (() => {
+          const ps = score.pageSettings || {
+            size: "A4",
+            marginTop: 8,
+            marginBottom: 8,
+            marginSide: 10,
+          };
+          const dims = PAGE_SIZES_MM[ps.size] || PAGE_SIZES_MM.A4;
+          const field = (label, key, min, max) => (
+            <label
+              key={key}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                fontSize: 12.5,
+                color: "#374151",
+                marginBottom: 8,
               }}
-              style={{ width: 70, fontSize: 12.5, border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", textAlign: "right" }}
-            />
-          </label>
-        );
-        return (
-          <div
-            onClick={() => setShowPageSettings(false)}
-            style={{
-              position: "fixed", inset: 0, zIndex: 200,
-              background: "rgba(0,0,0,0.35)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >
-            <div
-              onClick={e => e.stopPropagation()}
-              style={{ background: "white", borderRadius: 10, width: 340, padding: "18px 20px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.25)" }}
             >
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#111827", marginBottom: 14 }}>Page settings</div>
-
-              <label style={{ display: "block", fontSize: 12.5, color: "#374151", marginBottom: 6, fontWeight: 600 }}>
-                Page size
-              </label>
-              <select
-                value={ps.size}
-                onChange={e => setPageSettings({ size: e.target.value })}
-                style={{ width: "100%", fontSize: 12.5, border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", marginBottom: 14, color: "#111827" }}
+              {label}
+              <input
+                type="number"
+                min={min}
+                max={max}
+                step={1}
+                value={ps[key]}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (!isNaN(v))
+                    setPageSettings({ [key]: Math.max(min, Math.min(max, v)) });
+                }}
+                style={{
+                  width: 70,
+                  fontSize: 12.5,
+                  border: "1px solid #d1d5db",
+                  borderRadius: 6,
+                  padding: "4px 8px",
+                  textAlign: "right",
+                }}
+              />
+            </label>
+          );
+          return (
+            <div
+              onClick={() => setShowPageSettings(false)}
+              style={{
+                position: "fixed",
+                inset: 0,
+                zIndex: 200,
+                background: "rgba(0,0,0,0.35)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  background: "white",
+                  borderRadius: 10,
+                  width: 340,
+                  padding: "18px 20px 16px",
+                  boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+                }}
               >
-                {Object.keys(PAGE_SIZES_MM).map(k => (
-                  <option key={k} value={k}>{k} ({PAGE_SIZES_MM[k].w}×{PAGE_SIZES_MM[k].h}mm)</option>
-                ))}
-              </select>
+                <div
+                  style={{
+                    fontSize: 15,
+                    fontWeight: 700,
+                    color: "#111827",
+                    marginBottom: 14,
+                  }}
+                >
+                  Page settings
+                </div>
 
-              <div style={{ fontSize: 12.5, color: "#374151", marginBottom: 8, fontWeight: 600 }}>Density</div>
-              <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-                {[
-                  { label: "Compact", marginTop: 6, marginBottom: 6, marginSide: 6 },
-                  { label: "Normal", marginTop: 8, marginBottom: 8, marginSide: 10 },
-                  { label: "Spacious", marginTop: 14, marginBottom: 14, marginSide: 18 },
-                ].map(preset => {
-                  const isActive = ps.marginTop === preset.marginTop && ps.marginBottom === preset.marginBottom && ps.marginSide === preset.marginSide;
-                  return (
-                    <button
-                      key={preset.label}
-                      onClick={() => setPageSettings({ marginTop: preset.marginTop, marginBottom: preset.marginBottom, marginSide: preset.marginSide })}
-                      title={`Top/Bottom ${preset.marginTop}mm, Left/Right ${preset.marginSide}mm`}
-                      style={{
-                        flex: 1, fontSize: 11.5, fontWeight: 600, padding: "6px 0", borderRadius: 6, cursor: "pointer",
-                        border: isActive ? "1px solid #2563eb" : "1px solid #d1d5db",
-                        background: isActive ? "#eff6ff" : "white",
-                        color: isActive ? "#2563eb" : "#374151",
-                      }}
-                    >
-                      {preset.label}
-                    </button>
-                  );
-                })}
-              </div>
-              <div style={{ fontSize: 10.5, color: "#9ca3af", marginTop: -8, marginBottom: 14, lineHeight: 1.4 }}>
-                Presets set the margins below — more page taken up by margin
-                means fewer measures fit per line at the same note size, and
-                vice versa. Tune the individual numbers below for anything
-                in between.
-              </div>
+                <label
+                  style={{
+                    display: "block",
+                    fontSize: 12.5,
+                    color: "#374151",
+                    marginBottom: 6,
+                    fontWeight: 600,
+                  }}
+                >
+                  Page size
+                </label>
+                <select
+                  value={ps.size}
+                  onChange={(e) => setPageSettings({ size: e.target.value })}
+                  style={{
+                    width: "100%",
+                    fontSize: 12.5,
+                    border: "1px solid #d1d5db",
+                    borderRadius: 6,
+                    padding: "6px 8px",
+                    marginBottom: 14,
+                    color: "#111827",
+                  }}
+                >
+                  {Object.keys(PAGE_SIZES_MM).map((k) => (
+                    <option key={k} value={k}>
+                      {k} ({PAGE_SIZES_MM[k].w}×{PAGE_SIZES_MM[k].h}mm)
+                    </option>
+                  ))}
+                </select>
 
-              <div style={{ fontSize: 12.5, color: "#374151", marginBottom: 8, fontWeight: 600 }}>Margins (mm)</div>
-              {field("Top", "marginTop", 0, 50)}
-              {field("Bottom", "marginBottom", 0, 50)}
-              {field("Left / Right", "marginSide", 0, 50)}
+                <div
+                  style={{
+                    fontSize: 12.5,
+                    color: "#374151",
+                    marginBottom: 8,
+                    fontWeight: 600,
+                  }}
+                >
+                  Density
+                </div>
+                <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+                  {[
+                    {
+                      label: "Compact",
+                      marginTop: 6,
+                      marginBottom: 6,
+                      marginSide: 6,
+                    },
+                    {
+                      label: "Normal",
+                      marginTop: 8,
+                      marginBottom: 8,
+                      marginSide: 10,
+                    },
+                    {
+                      label: "Spacious",
+                      marginTop: 14,
+                      marginBottom: 14,
+                      marginSide: 18,
+                    },
+                  ].map((preset) => {
+                    const isActive =
+                      ps.marginTop === preset.marginTop &&
+                      ps.marginBottom === preset.marginBottom &&
+                      ps.marginSide === preset.marginSide;
+                    return (
+                      <button
+                        key={preset.label}
+                        onClick={() =>
+                          setPageSettings({
+                            marginTop: preset.marginTop,
+                            marginBottom: preset.marginBottom,
+                            marginSide: preset.marginSide,
+                          })
+                        }
+                        title={`Top/Bottom ${preset.marginTop}mm, Left/Right ${preset.marginSide}mm`}
+                        style={{
+                          flex: 1,
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                          padding: "6px 0",
+                          borderRadius: 6,
+                          cursor: "pointer",
+                          border: isActive
+                            ? "1px solid #2563eb"
+                            : "1px solid #d1d5db",
+                          background: isActive ? "#eff6ff" : "white",
+                          color: isActive ? "#2563eb" : "#374151",
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    color: "#9ca3af",
+                    marginTop: -8,
+                    marginBottom: 14,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  Presets set the margins below — more page taken up by margin
+                  means fewer measures fit per line at the same note size, and
+                  vice versa. Tune the individual numbers below for anything in
+                  between.
+                </div>
 
-              <div style={{ fontSize: 10.5, color: "#9ca3af", margin: "10px 0 16px", lineHeight: 1.4 }}>
-                Usable print area: {Math.max(0, dims.w - ps.marginSide * 2).toFixed(0)} ×{" "}
-                {Math.max(0, dims.h - ps.marginTop - ps.marginBottom).toFixed(0)} mm. Applies to Print and Publish PDF.
-              </div>
+                <div
+                  style={{
+                    fontSize: 12.5,
+                    color: "#374151",
+                    marginBottom: 8,
+                    fontWeight: 600,
+                  }}
+                >
+                  Margins (mm)
+                </div>
+                {field("Top", "marginTop", 0, 50)}
+                {field("Bottom", "marginBottom", 0, 50)}
+                {field("Left / Right", "marginSide", 0, 50)}
 
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                <button onClick={() => setShowPageSettings(false)}
-                  style={{ fontSize: 12.5, fontWeight: 600, padding: "7px 16px", borderRadius: 7, border: "1px solid #2563eb", background: "#2563eb", color: "white", cursor: "pointer" }}>
-                  Done
-                </button>
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    color: "#9ca3af",
+                    margin: "10px 0 16px",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  Usable print area:{" "}
+                  {Math.max(0, dims.w - ps.marginSide * 2).toFixed(0)} ×{" "}
+                  {Math.max(0, dims.h - ps.marginTop - ps.marginBottom).toFixed(
+                    0,
+                  )}{" "}
+                  mm. Applies to Print and Publish PDF.
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    gap: 8,
+                  }}
+                >
+                  <button
+                    onClick={() => setShowPageSettings(false)}
+                    style={{
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      padding: "7px 16px",
+                      borderRadius: 7,
+                      border: "1px solid #2563eb",
+                      background: "#2563eb",
+                      color: "white",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Done
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        );
-      })()}
+          );
+        })()}
 
       {/* ── Export Modal ── */}
       {showExport && (
         <div
           style={{
-            position: "fixed", inset: 0, zIndex: 200,
+            position: "fixed",
+            inset: 0,
+            zIndex: 200,
             background: "rgba(0,0,0,0.45)",
-            display: "flex", alignItems: "center", justifyContent: "center",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
-          onClick={() => { if (!exportBusy) setShowExport(false) }}
+          onClick={() => {
+            if (!exportBusy) setShowExport(false);
+          }}
         >
           <div
             style={{
-              background: "white", borderRadius: 12, width: 420,
+              background: "white",
+              borderRadius: 12,
+              width: 420,
               boxShadow: "0 8px 40px rgba(0,0,0,0.28)",
               overflow: "hidden",
             }}
-            onClick={e => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div style={{ background: "#1e2433", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ color: "white", fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 7 }}>
+            <div
+              style={{
+                background: "#1e2433",
+                padding: "14px 20px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span
+                style={{
+                  color: "white",
+                  fontWeight: 700,
+                  fontSize: 15,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                }}
+              >
                 <Download size={15} strokeWidth={2} /> Export Score
               </span>
               {!exportBusy && (
-                <button onClick={() => setShowExport(false)}
-                  style={{ background: "none", border: "none", color: "#9ca3af", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>×</button>
+                <button
+                  onClick={() => setShowExport(false)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#9ca3af",
+                    fontSize: 18,
+                    cursor: "pointer",
+                    lineHeight: 1,
+                  }}
+                >
+                  ×
+                </button>
               )}
             </div>
 
             {/* Tabs */}
             <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb" }}>
               {[
-                { id: "pdf", label: "Print / PDF", icon: <FileText size={13} strokeWidth={2} /> },
-                { id: "audio", label: "Audio (WAV)", icon: <Music size={13} strokeWidth={2} /> },
-              ].map(tab => (
-                <button key={tab.id} onClick={() => !exportBusy && setExportTab(tab.id)}
+                {
+                  id: "pdf",
+                  label: "Print / PDF",
+                  icon: <FileText size={13} strokeWidth={2} />,
+                },
+                {
+                  id: "audio",
+                  label: "Audio (WAV)",
+                  icon: <Music size={13} strokeWidth={2} />,
+                },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => !exportBusy && setExportTab(tab.id)}
                   style={{
-                    flex:1, padding:"10px 0", fontSize:13, fontWeight: exportTab===tab.id ? 700 : 400,
-                    border:"none", borderBottom: exportTab===tab.id ? "2px solid #2563eb" : "2px solid transparent",
-                    background: exportTab===tab.id ? "#eff6ff" : "white",
-                    color: exportTab===tab.id ? "#2563eb" : "#6b7280",
+                    flex: 1,
+                    padding: "10px 0",
+                    fontSize: 13,
+                    fontWeight: exportTab === tab.id ? 700 : 400,
+                    border: "none",
+                    borderBottom:
+                      exportTab === tab.id
+                        ? "2px solid #2563eb"
+                        : "2px solid transparent",
+                    background: exportTab === tab.id ? "#eff6ff" : "white",
+                    color: exportTab === tab.id ? "#2563eb" : "#6b7280",
                     cursor: exportBusy ? "not-allowed" : "pointer",
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
                   }}
-                >{tab.icon}{tab.label}</button>
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
               ))}
             </div>
 
@@ -2064,14 +2485,51 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
             <div style={{ padding: "20px 24px 24px" }}>
               {exportTab === "pdf" ? (
                 <div>
-                  <p style={{ fontSize: 13, color: "#374151", marginBottom: 16, lineHeight: 1.5 }}>
-                    Opens a print-ready page with your solfa score laid out on A4.
-                    Use <strong>File → Print</strong> or <strong>Save as PDF</strong> in the print dialog.
+                  <p
+                    style={{
+                      fontSize: 13,
+                      color: "#374151",
+                      marginBottom: 16,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Opens a print-ready page with your solfa score laid out on
+                    A4. Use <strong>File → Print</strong> or{" "}
+                    <strong>Save as PDF</strong> in the print dialog.
                   </p>
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", marginBottom: 18, fontSize: 12, color: "#64748b", display: "flex", flexDirection: "column", gap: 5 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Ruler size={13} strokeWidth={1.75} /> {(score.pageSettings?.size || "A4")} portrait — use the ruler icon above to change</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><ListMusic size={13} strokeWidth={1.75} /> Includes title, key, time signature &amp; tempo</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><PenLine size={13} strokeWidth={1.75} /> All voice parts included</div>
+                  <div
+                    style={{
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      padding: "10px 14px",
+                      marginBottom: 18,
+                      fontSize: 12,
+                      color: "#64748b",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 5,
+                    }}
+                  >
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 7 }}
+                    >
+                      <Ruler size={13} strokeWidth={1.75} />{" "}
+                      {score.pageSettings?.size || "A4"} portrait — use the
+                      ruler icon above to change
+                    </div>
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 7 }}
+                    >
+                      <ListMusic size={13} strokeWidth={1.75} /> Includes title,
+                      key, time signature &amp; tempo
+                    </div>
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 7 }}
+                    >
+                      <PenLine size={13} strokeWidth={1.75} /> All voice parts
+                      included
+                    </div>
                   </div>
                   <button
                     onClick={async () => {
@@ -2080,13 +2538,21 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                       // exportAtWidth() in SolfaRenderer for why this fixes
                       // "notes too small to read" regardless of how wide
                       // the editor window happens to be.
-                      const svgEl = await rendererRef.current?.exportAtWidth(solfaPrintTargetPx(score))
-                      exportSolfaPDF(score, svgEl)
+                      const svgEl = await rendererRef.current?.exportAtWidth(
+                        solfaPrintTargetPx(score),
+                      );
+                      exportSolfaPDF(score, svgEl);
                     }}
                     style={{
-                      width: "100%", padding: "11px 0", fontSize: 14, fontWeight: 700,
-                      background: "#2563eb", color: "white", border: "none",
-                      borderRadius: 8, cursor: "pointer",
+                      width: "100%",
+                      padding: "11px 0",
+                      fontSize: 14,
+                      fontWeight: 700,
+                      background: "#2563eb",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 8,
+                      cursor: "pointer",
                     }}
                   >
                     Open Print Preview →
@@ -2094,45 +2560,151 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                 </div>
               ) : (
                 <div>
-                  <p style={{ fontSize: 13, color: "#374151", marginBottom: 14, lineHeight: 1.5 }}>
-                    Renders your score to a <strong>WAV audio file</strong> using the choir sampler,
-                    at any BPM you choose.
+                  <p
+                    style={{
+                      fontSize: 13,
+                      color: "#374151",
+                      marginBottom: 14,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Renders your score to a <strong>WAV audio file</strong>{" "}
+                    using the choir sampler, at any BPM you choose.
                   </p>
 
                   {/* BPM picker */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
-                    <label style={{ fontSize: 12, color: "#6b7280", minWidth: 60 }}>♩ = BPM</label>
-                    <input type="range" min={20} max={240} value={exportBpm}
-                      onChange={e => setExportBpm(Number(e.target.value))}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      marginBottom: 18,
+                    }}
+                  >
+                    <label
+                      style={{ fontSize: 12, color: "#6b7280", minWidth: 60 }}
+                    >
+                      ♩ = BPM
+                    </label>
+                    <input
+                      type="range"
+                      min={20}
+                      max={240}
+                      value={exportBpm}
+                      onChange={(e) => setExportBpm(Number(e.target.value))}
                       disabled={exportBusy}
                       style={{ flex: 1, accentColor: "#2563eb" }}
                     />
-                    <input type="number" min={20} max={240} value={exportBpm}
-                      onChange={e => setExportBpm(Math.max(20, Math.min(240, Number(e.target.value))))}
+                    <input
+                      type="number"
+                      min={20}
+                      max={240}
+                      value={exportBpm}
+                      onChange={(e) =>
+                        setExportBpm(
+                          Math.max(20, Math.min(240, Number(e.target.value))),
+                        )
+                      }
                       disabled={exportBusy}
-                      style={{ width: 56, padding: "3px 6px", fontSize: 13, border: "1px solid #d1d5db", borderRadius: 5, textAlign: "center" }}
+                      style={{
+                        width: 56,
+                        padding: "3px 6px",
+                        fontSize: 13,
+                        border: "1px solid #d1d5db",
+                        borderRadius: 5,
+                        textAlign: "center",
+                      }}
                     />
                   </div>
 
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", marginBottom: 18, fontSize: 12, color: "#64748b", display: "flex", flexDirection: "column", gap: 5 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Mic size={13} strokeWidth={1.75} /> FluidR3 Choir Aahs sampler — all SATB parts</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Volume2 size={13} strokeWidth={1.75} /> 44.1 kHz stereo WAV with reverb</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}><Zap size={13} strokeWidth={1.75} /> Rendered offline (faster than real-time)</div>
+                  <div
+                    style={{
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      padding: "10px 14px",
+                      marginBottom: 18,
+                      fontSize: 12,
+                      color: "#64748b",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 5,
+                    }}
+                  >
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 7 }}
+                    >
+                      <Mic size={13} strokeWidth={1.75} /> FluidR3 Choir Aahs
+                      sampler — all SATB parts
+                    </div>
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 7 }}
+                    >
+                      <Volume2 size={13} strokeWidth={1.75} /> 44.1 kHz stereo
+                      WAV with reverb
+                    </div>
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 7 }}
+                    >
+                      <Zap size={13} strokeWidth={1.75} /> Rendered offline
+                      (faster than real-time)
+                    </div>
                   </div>
 
                   {/* Progress */}
                   {exportBusy && (
                     <div style={{ marginBottom: 14 }}>
-                      <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>{exportStatus}</div>
-                      <div style={{ height: 6, background: "#e5e7eb", borderRadius: 3, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: `${Math.round(exportProg * 100)}%`, background: "#2563eb", borderRadius: 3, transition: "width 0.2s" }} />
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#6b7280",
+                          marginBottom: 6,
+                        }}
+                      >
+                        {exportStatus}
                       </div>
-                      <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4, textAlign: "right" }}>{Math.round(exportProg * 100)}%</div>
+                      <div
+                        style={{
+                          height: 6,
+                          background: "#e5e7eb",
+                          borderRadius: 3,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: "100%",
+                            width: `${Math.round(exportProg * 100)}%`,
+                            background: "#2563eb",
+                            borderRadius: 3,
+                            transition: "width 0.2s",
+                          }}
+                        />
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "#9ca3af",
+                          marginTop: 4,
+                          textAlign: "right",
+                        }}
+                      >
+                        {Math.round(exportProg * 100)}%
+                      </div>
                     </div>
                   )}
 
                   {exportStatus && !exportBusy && (
-                    <div style={{ fontSize: 13, color: exportStatus.includes("✓") ? "#16a34a" : "#dc2626", marginBottom: 12, fontWeight: 600 }}>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: exportStatus.includes("✓")
+                          ? "#16a34a"
+                          : "#dc2626",
+                        marginBottom: 12,
+                        fontWeight: 600,
+                      }}
+                    >
                       {exportStatus}
                     </div>
                   )}
@@ -2140,29 +2712,45 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                   <button
                     disabled={exportBusy}
                     onClick={async () => {
-                      setExportBusy(true)
-                      setExportProg(0)
-                      setExportStatus("")
+                      setExportBusy(true);
+                      setExportProg(0);
+                      setExportStatus("");
                       try {
                         await exportSolfaAudio(score, {
                           tempo: exportBpm,
-                          onProgress: p => setExportProg(p),
-                          onStatus:   s => setExportStatus(s),
-                        })
-                      } catch(err) {
-                        setExportStatus("Export failed: " + (err?.message || err))
+                          onProgress: (p) => setExportProg(p),
+                          onStatus: (s) => setExportStatus(s),
+                        });
+                      } catch (err) {
+                        setExportStatus(
+                          "Export failed: " + (err?.message || err),
+                        );
                       }
-                      setExportBusy(false)
+                      setExportBusy(false);
                     }}
                     style={{
-                      width: "100%", padding: "11px 0", fontSize: 14, fontWeight: 700,
-                      background: exportBusy ? "#93c5fd" : "#2563eb", color: "white",
-                      border: "none", borderRadius: 8,
+                      width: "100%",
+                      padding: "11px 0",
+                      fontSize: 14,
+                      fontWeight: 700,
+                      background: exportBusy ? "#93c5fd" : "#2563eb",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 8,
                       cursor: exportBusy ? "not-allowed" : "pointer",
-                      display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 7,
                     }}
                   >
-                    {exportBusy ? "Rendering…" : <><Download size={15} strokeWidth={2} /> Download WAV</>}
+                    {exportBusy ? (
+                      "Rendering…"
+                    ) : (
+                      <>
+                        <Download size={15} strokeWidth={2} /> Download WAV
+                      </>
+                    )}
                   </button>
                 </div>
               )}
@@ -2175,7 +2763,9 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
         <PublishToFaithLibrary
           score={score}
           mode="solfa"
-          getSvgElement={() => rendererRef.current?.exportAtWidth(solfaPrintTargetPx(score))}
+          getSvgElement={() =>
+            rendererRef.current?.exportAtWidth(solfaPrintTargetPx(score))
+          }
           onClose={() => setShowPublish(false)}
         />
       )}
