@@ -320,6 +320,13 @@ export const EMPTY_SCORE = {
     size: 'A4',              // 'A4' | 'Letter' | 'Legal' | 'A5'
     marginTop: 8, marginBottom: 8, marginSide: 14, // mm
   },
+  // Mixed notation — shows the sung tonic sol-fa syllable above each note
+  // in the staff view, the way real printed choir scores in this
+  // tradition already do (sol-fa line above the staff, notation, lyrics
+  // below). Purely a display overlay — doesn't touch the underlying note
+  // data, just annotates it at render time using the same pitch→syllable
+  // math staffToSolfa.js already uses for actual conversion.
+  showSolfaAbove: false,
 }
 
 export const PAGE_SIZES_MM = {
@@ -369,6 +376,7 @@ export const useScoreStore = create((set, get) => ({
       dynamics: [], hairpins: [], rehearsalMarks: [], staffTexts: [], barlines: [], octaveLines: [],
       ...saved,
       pageSettings: { ...EMPTY_SCORE.pageSettings, ...(saved.pageSettings || {}) },
+      showSolfaAbove: saved.showSolfaAbove ?? false,
       parts: migratedParts,
     }
   })(),
@@ -454,6 +462,10 @@ export const useScoreStore = create((set, get) => ({
   setPageSettings: (patch) => {
     get()._snapshot()
     set(s => ({ score: { ...s.score, pageSettings: { ...(s.score.pageSettings||EMPTY_SCORE.pageSettings), ...patch } } }))
+  },
+  toggleSolfaAbove: () => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, showSolfaAbove: !s.score.showSolfaAbove } }))
   },
 
   // ── Unsaved-changes tracking ────────────────────────────────────────────

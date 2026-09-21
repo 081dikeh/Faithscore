@@ -21,6 +21,12 @@ import {
   measureCapacity,
   keySignatureAccidentals,
 } from "../../store/scoreStore";
+import {
+  scorePitchToMidi,
+  midiToSolfaForVoice,
+  keySignatureToSolfaKey,
+  NAME_TO_VOICE_ID,
+} from "../../utils/staffToSolfa";
 
 const MEASURES_PER_LINE = 5;
 
@@ -1338,6 +1344,67 @@ export default function ScoreRenderer() {
 
               drawTieCanvas(nx, ny, tx, ty, stemUp, slurCurveDepth);
             });
+
+            // ── MIXED NOTATION: sol-fa syllable above each note ────────────────
+            // Purely a read-only display overlay — draws the sung tonic sol-fa
+            // syllable above each note's attack, matching how real printed
+            // choir scores in this tradition already look (sol-fa line above
+            // the staff, notation, lyrics below). Reuses the EXACT
+            // pitch→syllable math staffToSolfa.js uses for actual Score→Solfa
+            // conversion, not a separate/simplified implementation, so what's
+            // shown here always agrees with what a real conversion produces.
+            if (score.showSolfaAbove) {
+              const voiceId = NAME_TO_VOICE_ID[(part.name || "").trim().toLowerCase()] || "solo";
+              const solfaKey = keySignatureToSolfaKey(measure.keySignature ?? 0);
+              const solfaY = partY - SP * 1.3;
+
+              let prevNote = null;
+              renderSeq.forEach((n, ni) => {
+                // A tied continuation isn't a new attack — showing the
+                // syllable again would misrepresent it as a fresh sung
+                // note. Skip it, leaving the gap silent, same as the
+                // printed scores this is modeled on.
+                const isTieContinuation =
+                  prevNote?.tieStart && !n.isRest && samePitch(prevNote.pitch, n.pitch);
+                prevNote = n;
+                if (n.isRest || isTieContinuation || !n.pitch) return;
+
+                let nx;
+                try {
+                  nx = vfNotes[ni].getAbsoluteX();
+                } catch (_) {
+                  return;
+                }
+
+                const midi = scorePitchToMidi(n.pitch);
+                const { syllable, octave } = midiToSolfaForVoice(midi, solfaKey, voiceId);
+
+                try {
+                  ctx.save();
+                  ctx.font = `600 ${SP * 0.85}px Georgia, serif`;
+                  ctx.fillStyle = "#1a1a1a";
+                  ctx.textAlign = "center";
+                  ctx.textBaseline = "alphabetic";
+                  ctx.fillText(syllable, nx, solfaY);
+
+                  // Octave dot(s) — traditional tonic sol-fa convention: a
+                  // dot ABOVE the syllable for each octave higher, BELOW
+                  // for each octave lower.
+                  if (octave !== 0) {
+                    const dotR = Math.max(1, SP * 0.06);
+                    const dotGap = SP * 0.28;
+                    const dir = octave > 0 ? -1 : 1;
+                    const baseOffset = octave > 0 ? -(SP * 0.95) : SP * 0.32;
+                    for (let i = 0; i < Math.abs(octave); i++) {
+                      ctx.beginPath();
+                      ctx.arc(nx, solfaY + baseOffset + dir * i * dotGap, dotR, 0, Math.PI * 2);
+                      ctx.fill();
+                    }
+                  }
+                  ctx.restore();
+                } catch (_) {}
+              });
+            }
 
             // Measure background zone — store actual note area X so cursor is accurate
             // VexFlow formats notes starting after the clef/key/time glyphs.

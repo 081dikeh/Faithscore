@@ -321,7 +321,7 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, w
 // s, Alto → a, Tenor → t, Bass → b, Piano → piano), falling back to
 // positional matching against the closest-sized voice combo.
 
-const NAME_TO_VOICE_ID = {
+export const NAME_TO_VOICE_ID = {
   soprano: 's', alto: 'a', tenor: 't', bass: 'b', piano: 'piano', solo: 'solo', voice: 'solo',
 }
 
