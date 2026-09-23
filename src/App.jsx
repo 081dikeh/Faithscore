@@ -2201,6 +2201,11 @@ export default function App() {
                   onClick={() => setShowPageSettings(true)}
                 />
                 <CheckItem
+                  label="Show sol-fa above staff"
+                  checked={!!score.showSolfaAbove}
+                  onClick={() => useScoreStore.getState().toggleSolfaAbove()}
+                />
+                <CheckItem
                   label="Automatic layout (fit to width)"
                   checked={useScoreStore.getState().autoLayout}
                   onClick={() => useScoreStore.getState().setAutoLayout(true)}
