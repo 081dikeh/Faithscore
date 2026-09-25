@@ -1356,18 +1356,118 @@ export default function ScoreRenderer() {
             if (score.showSolfaAbove) {
               const voiceId = NAME_TO_VOICE_ID[(part.name || "").trim().toLowerCase()] || "solo";
               const solfaKey = keySignatureToSolfaKey(measure.keySignature ?? 0);
-              const solfaY = partY - SP * 1.3;
 
+              // ── Vertical clearance ────────────────────────────────────────────────────────────────
+              // A fixed offset from the staff's own top line (the old
+              // approach) collides with any stem or beam that extends
+              // above that line — which is most beamed eighth-note groups
+              // and any note on/near the top line. getBoundingBox() already
+              // reflects each note's real stem length post-formatting, so
+              // measuring it directly beats guessing a constant that would
+              // only be safe for the shortest possible stem.
+              let topExtent = partY;
+              vfNotes.forEach((vfn) => {
+                if (!vfn) return;
+                try {
+                  const bb = vfn.getBoundingBox();
+                  if (bb) topExtent = Math.min(topExtent, bb.getY());
+                } catch (_) {}
+              });
+              const solfaY = topExtent - SP * 0.9;
+              // Bumped from 0.85 → 1.1 (letters) per request — legible at
+              // a glance instead of squinting. Rhythm marks (bar/beat/
+              // suffix) stay a touch smaller, matching how printed sol-fa
+              // scores keep the letters as the visually dominant element.
+              const solfaFont = `600 ${SP * 1.1}px Georgia, serif`;
+              const rhythmFont = `600 ${SP * 0.95}px Georgia, serif`;
+
+              const beatType = measure.timeSignature?.beatType || 4;
+              const numBeats = measure.timeSignature?.beats || 4;
+
+              const drawChar = (ch, cx, font, color) => {
+                if (cx == null) return;
+                try {
+                  ctx.save();
+                  ctx.font = font;
+                  ctx.fillStyle = color;
+                  ctx.textAlign = "center";
+                  ctx.textBaseline = "alphabetic";
+                  ctx.fillText(ch, cx, solfaY);
+                  ctx.restore();
+                } catch (_) {}
+              };
+
+              // ── Pass 1: an X anchor for every beat boundary ───────────────
+              // Usually a note/rest starts exactly on a beat, so its own X
+              // is the anchor. When a longer event spans straight through a
+              // boundary with nothing starting there, interpolate between
+              // the nearest set anchors either side rather than skip the
+              // beat mark entirely.
+              const beatAnchorX = new Array(numBeats).fill(null);
+              {
+                let cum = 0;
+                renderSeq.forEach((n, ni) => {
+                  const durQU = Math.max(1, Math.round(noteDuration(n) * beatType));
+                  const startBeat = Math.floor(cum / 4 + 1e-6);
+                  if (startBeat < numBeats && beatAnchorX[startBeat] == null) {
+                    try {
+                      beatAnchorX[startBeat] = vfNotes[ni].getAbsoluteX();
+                    } catch (_) {}
+                  }
+                  cum += durQU;
+                });
+                const rightEdge = x + width - 8;
+                for (let b = 0; b < numBeats; b++) {
+                  if (beatAnchorX[b] != null) continue;
+                  let before = null, after = null;
+                  for (let k = b - 1; k >= 0; k--) { if (beatAnchorX[k] != null) { before = beatAnchorX[k]; break; } }
+                  for (let k = b + 1; k < numBeats; k++) { if (beatAnchorX[k] != null) { after = beatAnchorX[k]; break; } }
+                  if (before != null && after != null) beatAnchorX[b] = before + (after - before) * 0.5;
+                  else if (before != null) beatAnchorX[b] = before + (rightEdge - before) * 0.3;
+                  else beatAnchorX[b] = x + 20;
+                }
+              }
+
+              // Opening bar mark — printed sol-fa carries its own "|" at
+              // every bar, independent of the staff's barline below it.
+              drawChar("|", x + 2, rhythmFont, "#1a1a1a");
+
+              // ── Pass 2: syllables, rhythm suffixes, beat colons, dashes ─
+              // durQU/offsetInBeat/beatsSpanned all use the SAME “1 beat =
+              // 4 quarter-units” convention the Solfa app’s own beat/event
+              // model uses (see solfaStore.js header comment) — so a bare
+              // “d”, “d.”, “d :” etc. here means exactly what it means
+              // there. noteDuration() (already used elsewhere for measure-
+              // capacity checks) gives quarter-NOTE beats; multiplying by
+              // beatType converts that to this measure’s own beat unit.
+              let cumulativeQU = 0;
+              let lastBeatDrawn = 0;
               let prevNote = null;
+
               renderSeq.forEach((n, ni) => {
-                // A tied continuation isn't a new attack — showing the
-                // syllable again would misrepresent it as a fresh sung
-                // note. Skip it, leaving the gap silent, same as the
-                // printed scores this is modeled on.
                 const isTieContinuation =
-                  prevNote?.tieStart && !n.isRest && samePitch(prevNote.pitch, n.pitch);
+                  prevNote?.tieStart && !n.isRest && samePitch(prevNote, n);
+
+                const durQU = Math.max(1, Math.round(noteDuration(n) * beatType));
+                const startQU = cumulativeQU;
+                const startBeat = Math.floor(startQU / 4 + 1e-6);
+                const offsetInBeat = startQU - startBeat * 4;
+                cumulativeQU += durQU;
+                // Beats fully spanned AFTER the start beat (0 for anything
+                // that fits inside the beat it starts in).
+                const beatsSpanned = Math.ceil((offsetInBeat + durQU) / 4 - 1e-6) - 1;
+
+                // Beat separators for every boundary this event's START
+                // reaches — covers a rest, or a held note, spanning one or
+                // more whole beats, since every renderSeq entry (rests
+                // included) walks through here.
+                for (let b = lastBeatDrawn + 1; b <= startBeat && b < numBeats; b++) {
+                  drawChar(":", beatAnchorX[b], rhythmFont, "#4b5563");
+                }
+                lastBeatDrawn = Math.max(lastBeatDrawn, startBeat);
                 prevNote = n;
-                if (n.isRest || isTieContinuation || !n.pitch) return;
+
+                if (n.isRest) return; // REST → blank, matches printed convention
 
                 let nx;
                 try {
@@ -1376,12 +1476,28 @@ export default function ScoreRenderer() {
                   return;
                 }
 
+                if (isTieContinuation) {
+                  // Not a new attack — shown as a held beat (dash) at its
+                  // own position, then one more dash at each further beat
+                  // boundary it sustains through, exactly like the Solfa
+                  // app's own SUSTAIN events (“–”).
+                  drawChar("-", nx, solfaFont, "#1a1a1a");
+                  for (let k = 1; k <= beatsSpanned; k++) {
+                    const b = startBeat + k;
+                    if (b < numBeats) drawChar("-", beatAnchorX[b], solfaFont, "#1a1a1a");
+                  }
+                  lastBeatDrawn = Math.max(lastBeatDrawn, startBeat + beatsSpanned);
+                  return;
+                }
+
+                if (!n.pitch) return;
+
                 const midi = scorePitchToMidi(n.pitch);
                 const { syllable, octave } = midiToSolfaForVoice(midi, solfaKey, voiceId);
 
                 try {
                   ctx.save();
-                  ctx.font = `600 ${SP * 0.85}px Georgia, serif`;
+                  ctx.font = solfaFont;
                   ctx.fillStyle = "#1a1a1a";
                   ctx.textAlign = "center";
                   ctx.textBaseline = "alphabetic";
@@ -1394,7 +1510,7 @@ export default function ScoreRenderer() {
                     const dotR = Math.max(1, SP * 0.06);
                     const dotGap = SP * 0.28;
                     const dir = octave > 0 ? -1 : 1;
-                    const baseOffset = octave > 0 ? -(SP * 0.95) : SP * 0.32;
+                    const baseOffset = octave > 0 ? -(SP * 1.05) : SP * 0.36;
                     for (let i = 0; i < Math.abs(octave); i++) {
                       ctx.beginPath();
                       ctx.arc(nx, solfaY + baseOffset + dir * i * dotGap, dotR, 0, Math.PI * 2);
@@ -1403,6 +1519,59 @@ export default function ScoreRenderer() {
                   }
                   ctx.restore();
                 } catch (_) {}
+
+                // Sustain dashes for any FURTHER beat this same (untied)
+                // note spans — e.g. a half or whole note, as opposed to a
+                // tie into a separate note object (handled above).
+                for (let k = 1; k <= beatsSpanned; k++) {
+                  const b = startBeat + k;
+                  if (b < numBeats) drawChar("-", beatAnchorX[b], solfaFont, "#1a1a1a");
+                }
+                lastBeatDrawn = Math.max(lastBeatDrawn, startBeat + beatsSpanned);
+
+                // Suffix ("." / ",") when the note ends mid-beat rather
+                // than exactly on the next boundary — same grammar as the
+                // Solfa app's own beat notation (getSuffix() in
+                // SolfaRenderer/index.jsx), reimplemented here so this file
+                // carries no dependency on the Solfa app's module. Only
+                // meaningful when the note fits inside its OWN start beat
+                // (beatsSpanned===0) — a note spanning into further beats
+                // is already shown via the dash continuations above.
+                if (beatsSpanned === 0) {
+                  const endQU = startQU + durQU;
+                  const endOffsetInBeat = endQU - Math.floor(endQU / 4 + 1e-6) * 4;
+                  const isLastInMeasure = ni === renderSeq.length - 1;
+                  if (endOffsetInBeat !== 0 && !isLastInMeasure) {
+                    let suf = "";
+                    if (durQU === 3) suf = ".,";
+                    else if (durQU === 2) suf = ".";
+                    else if (durQU === 1) suf = ",";
+                    if (suf) drawChar(suf, nx + SP * 0.75, rhythmFont, "#4b5563");
+                  }
+                }
+              });
+
+              // ── Slurs, shown as a phrase arc above the sol-fa row too ──
+              // Ties are already represented by the dash convention above
+              // — that IS how tonic sol-fa itself marks a held note, no
+              // separate mark needed. A slur phrases together notes of
+              // DIFFERENT pitch, which dashes can't show, so it gets its
+              // own arc — the same bezier-lens shape as the staff's own
+              // tie/slur (drawTieCanvas, defined above), one row higher.
+              renderSeq.forEach((seqNote, ni) => {
+                if (!seqNote.slurStart) return;
+                let endIdx = renderSeq.findIndex((nn, i) => i > ni && nn.slurEnd);
+                if (endIdx < 0) endIdx = renderSeq.findIndex((nn, i) => i > ni && !nn.isRest);
+                if (endIdx < 0 || endIdx <= ni) return; // crosses barline — skip here
+                let sx, ex;
+                try {
+                  sx = vfNotes[ni].getAbsoluteX();
+                  ex = vfNotes[endIdx].getAbsoluteX();
+                } catch (_) {
+                  return;
+                }
+                const arcY = solfaY - SP * 0.9;
+                drawTieCanvas(sx, arcY, ex, arcY, false, () => SP * 0.6);
               });
             }
 
