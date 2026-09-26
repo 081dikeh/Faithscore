@@ -1372,8 +1372,38 @@ export default function ScoreRenderer() {
                   const bb = vfn.getBoundingBox();
                   if (bb) topExtent = Math.min(topExtent, bb.getY());
                 } catch (_) {}
+                // getBoundingBox() alone does not reliably include the
+                // stem/flag reach on a StaveNote — getStemExtents() is
+                // VexFlow's own purpose-built API for that, and is what
+                // actually clears beamed groups and notes near the top
+                // line. Notes with no stem (whole notes, rests) simply
+                // don't have this method return anything useful, so the
+                // bounding-box check above still covers those.
+                try {
+                  if (typeof vfn.getStemExtents === "function") {
+                    const se = vfn.getStemExtents();
+                    if (se) {
+                      if (typeof se.topY === "number") topExtent = Math.min(topExtent, se.topY);
+                      if (typeof se.baseY === "number") topExtent = Math.min(topExtent, se.baseY);
+                    }
+                  }
+                } catch (_) {}
               });
-              const solfaY = topExtent - SP * 0.9;
+              // A row height computed purely from "this measure's tallest
+              // stem" looks wrong in both directions: a measure of short,
+              // low notes (nothing to clear) sits right at notehead height,
+              // while a measure with one tall beamed group floats far
+              // higher than it needs to. Real engraving keeps the row at a
+              // steady, comfortable height above the staff by default, and
+              // only lifts further when something genuinely tall would
+              // otherwise collide. So: a constant baseline above the
+              // staff's own top line, only overridden upward (smaller Y)
+              // when a note/beam actually reaches past it — and with a
+              // tighter gap in that override case, since a beam's outer
+              // edge doesn't need as much breathing room as a flat line.
+              const baselineY = partY - SP * 2.0;
+              const clearedY = topExtent - SP * 0.5;
+              const solfaY = Math.min(baselineY, clearedY);
               // Bumped from 0.85 → 1.1 (letters) per request — legible at
               // a glance instead of squinting. Rhythm marks (bar/beat/
               // suffix) stay a touch smaller, matching how printed sol-fa
