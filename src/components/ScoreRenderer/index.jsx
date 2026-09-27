@@ -1404,6 +1404,11 @@ export default function ScoreRenderer() {
               const baselineY = partY - SP * 2.0;
               const clearedY = topExtent - SP * 0.5;
               const solfaY = Math.min(baselineY, clearedY);
+              // TEMPORARY DEBUG MARKER — remove once we confirm the
+              // browser is actually running this file. If this doesn't
+              // show up in your DevTools console, the browser is serving
+              // a cached/old bundle, not this file.
+              console.log("SOLFA_DEBUG_v4", { part: part.name, partY, topExtent, baselineY, clearedY, solfaY });
               // Bumped from 0.85 → 1.1 (letters) per request — legible at
               // a glance instead of squinting. Rhythm marks (bar/beat/
               // suffix) stay a touch smaller, matching how printed sol-fa
