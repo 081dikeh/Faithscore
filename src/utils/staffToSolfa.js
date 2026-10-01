@@ -183,7 +183,7 @@ function mergeTiedSpans(notes) {
 // line, and companions never carry slurStart/slurEnd in the first place
 // (see addChordNote in scoreStore.js), so this is really just filtering
 // out notes that could never match anyway.
-function resolveScoreSlurs(scorePart) {
+export function resolveScoreSlurs(scorePart) {
   const seq = []
   scorePart.measures.forEach(m => {
     m.notes.filter(n => !n.chordWith).forEach(n => seq.push(n))
