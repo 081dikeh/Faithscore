@@ -199,7 +199,14 @@ function stemDir(note, chordExtras, clef) {
   return 1;
 }
 
-function buildVfNote(n, clef, isSelected, chordExtras = [], keySigAccidentals = {}, accidentalState = {}) {
+function buildVfNote(
+  n,
+  clef,
+  isSelected,
+  chordExtras = [],
+  keySigAccidentals = {},
+  accidentalState = {},
+) {
   const restKeyMap = REST_KEYS[clef] || REST_KEYS.treble;
   const restKey = restKeyMap[n.duration] || restKeyMap["8"]; // per-duration position
   const clefOpt = clef === "bass" ? { clef: "bass" } : {};
@@ -253,7 +260,10 @@ function buildVfNote(n, clef, isSelected, chordExtras = [], keySigAccidentals = 
     // accidental on the SAME pitch this bar (accidentals only carry within
     // one bar and don't cross octaves), or — if nothing's overridden it
     // yet — whatever the key signature itself implies for that letter.
-    const implied = Object.prototype.hasOwnProperty.call(accidentalState, stateKey)
+    const implied = Object.prototype.hasOwnProperty.call(
+      accidentalState,
+      stateKey,
+    )
       ? accidentalState[stateKey]
       : keySigAccidentals[letter] || null;
     if (actual !== implied) {
@@ -358,7 +368,7 @@ export default function ScoreRenderer() {
     // collides with the previous part's lyric line. Only grown when the
     // feature is actually in use, so normal scores keep the compact
     // spacing they already had.
-    const PART_HEIGHT = score.showSolfaAbove ? SP * 11 : SP * 9;
+    const PART_HEIGHT = score.showSolfaAbove ? SP * 12 : SP * 9;
     const SYSTEM_GAP = SP * 5;
     // The very first system has no earlier system's content above it to
     // share space with, so its own top margin has to fit the sol-fa
@@ -440,7 +450,8 @@ export default function ScoreRenderer() {
       const prevTs = score.parts[0]?.measures[colIdx - 1]?.timeSignature;
       const thisTs = score.parts[0]?.measures[colIdx]?.timeSignature;
       const tsChanged =
-        prevTs && thisTs &&
+        prevTs &&
+        thisTs &&
         (prevTs.beats !== thisTs.beats || prevTs.beatType !== thisTs.beatType);
       const prevKs = score.parts[0]?.measures[colIdx - 1]?.keySignature ?? 0;
       const thisKs = score.parts[0]?.measures[colIdx]?.keySignature ?? 0;
@@ -564,17 +575,29 @@ export default function ScoreRenderer() {
     const solfaByPart = new Map();
     if (score.showSolfaAbove) {
       score.parts.forEach((part) => {
-        const voiceId = NAME_TO_VOICE_ID[(part.name || "").trim().toLowerCase()] || "solo";
+        const voiceId =
+          NAME_TO_VOICE_ID[(part.name || "").trim().toLowerCase()] || "solo";
         const notePositions = new Map();
         const measuresBeats = [];
         let carryPitch;
         for (let mi = 0; mi < part.measures.length; mi++) {
           const measure = part.measures[mi];
-          const ts = measure.timeSignature || score.parts[0]?.measures[0]?.timeSignature || { beats: 4, beatType: 4 };
+          const ts = measure.timeSignature ||
+            score.parts[0]?.measures[0]?.timeSignature || {
+              beats: 4,
+              beatType: 4,
+            };
           const keySig = measure.keySignature ?? 0;
           const key = keySignatureToSolfaKey(keySig);
           const { beats, endOpenPitch } = convertMeasureToSolfaBeats(
-            measure.notes, ts, key, voiceId, [], carryPitch, mi, notePositions,
+            measure.notes,
+            ts,
+            key,
+            voiceId,
+            [],
+            carryPitch,
+            mi,
+            notePositions,
           );
           measuresBeats.push(beats);
           carryPitch = endOpenPitch;
@@ -662,7 +685,9 @@ export default function ScoreRenderer() {
               prevKeyAtLineStart !== (measure.keySignature ?? 0);
             stave.addKeySignature(
               keyNumToVexflow(measure.keySignature ?? 0),
-              openingKeyChanged ? keyNumToVexflow(prevKeyAtLineStart) : undefined,
+              openingKeyChanged
+                ? keyNumToVexflow(prevKeyAtLineStart)
+                : undefined,
             );
             stave.addTimeSignature(
               `${measure.timeSignature.beats}/${measure.timeSignature.beatType}`,
@@ -770,7 +795,9 @@ export default function ScoreRenderer() {
             // Fresh per-measure accidental tracking — an accidental only
             // stays "in effect" for the rest of THIS bar, so this must
             // reset every measure, not persist across the piece.
-            const keySigAccidentals = keySignatureAccidentals(measure.keySignature ?? 0);
+            const keySigAccidentals = keySignatureAccidentals(
+              measure.keySignature ?? 0,
+            );
             const accidentalState = {};
             const vfNotes = renderSeq.map((n) =>
               buildVfNote(
@@ -1159,15 +1186,17 @@ export default function ScoreRenderer() {
             try {
               const tupletGroups = {};
               renderSeq.forEach((seqNote, ni) => {
-                const groupId = seqNote.tripletGroupId || seqNote.tuplet?.groupId;
+                const groupId =
+                  seqNote.tripletGroupId || seqNote.tuplet?.groupId;
                 if (!groupId) return;
                 if (!tupletGroups[groupId]) tupletGroups[groupId] = [];
                 tupletGroups[groupId].push({ note: vfNotes[ni], seqNote });
               });
               Object.values(tupletGroups).forEach((group) => {
-                const expected = group[0].seqNote.tripletOf
-                  || group[0].seqNote.tuplet?.num
-                  || 3;
+                const expected =
+                  group[0].seqNote.tripletOf ||
+                  group[0].seqNote.tuplet?.num ||
+                  3;
                 if (group.length < expected) return; // incomplete group — skip rather than draw a broken bracket
                 const ratio = group[0].seqNote.tuplet || { num: 3, den: 2 };
                 const tupletNotes = group.map((g) => g.note);
@@ -1184,7 +1213,9 @@ export default function ScoreRenderer() {
                   notes_occupied: ratio.den,
                   ratioed: false,
                   bracketed: true,
-                  location: stemUp ? Tuplet.LOCATION_TOP : Tuplet.LOCATION_BOTTOM,
+                  location: stemUp
+                    ? Tuplet.LOCATION_TOP
+                    : Tuplet.LOCATION_BOTTOM,
                 });
                 tuplet.setContext(ctx).draw();
               });
@@ -1219,7 +1250,14 @@ export default function ScoreRenderer() {
             // hardcoded, letting both reuse the exact same clearance/inset
             // geometry instead of two separately-tuned (and previously
             // inconsistent) drawing paths.
-            const drawTieCanvas = (x1, y1, x2, y2, stemUp, depthFn = tieCurveDepth) => {
+            const drawTieCanvas = (
+              x1,
+              y1,
+              x2,
+              y2,
+              stemUp,
+              depthFn = tieCurveDepth,
+            ) => {
               try {
                 ctx.save();
                 // Depth scales gently with distance between the two
@@ -1418,9 +1456,9 @@ export default function ScoreRenderer() {
               const notePositions = partSolfa?.notePositions;
 
               if (beats && notePositions) {
-                const solfaY = partY - SP * 4.5;
-                const solfaFont = `600 ${SP * 1.1}px Georgia, serif`;
-                const rhythmFont = `600 ${SP * 0.95}px Georgia, serif`;
+                const solfaY = partY - SP * -0.5;
+                const solfaFont = `600 ${SP * 1.4}px Georgia, serif`;
+                const rhythmFont = `600 ${SP * 1.1}px Georgia, serif`;
                 const numBeats = beats.length;
 
                 const drawChar = (ch, cx, font, color) => {
@@ -1445,7 +1483,10 @@ export default function ScoreRenderer() {
                   const pos = notePositions.get(n.id);
                   if (!pos || pos.measureIdx !== col) return;
                   try {
-                    eventX.set(`${pos.beatIdx}-${pos.eventIdx}`, vfNotes[ni].getAbsoluteX());
+                    eventX.set(
+                      `${pos.beatIdx}-${pos.eventIdx}`,
+                      vfNotes[ni].getAbsoluteX(),
+                    );
                   } catch (_) {}
                 });
 
@@ -1464,11 +1505,24 @@ export default function ScoreRenderer() {
                   const rightEdge = x + width - 8;
                   for (let b = 0; b < numBeats; b++) {
                     if (beatAnchorX[b] != null) continue;
-                    let before = null, after = null;
-                    for (let k = b - 1; k >= 0; k--) { if (beatAnchorX[k] != null) { before = beatAnchorX[k]; break; } }
-                    for (let k = b + 1; k < numBeats; k++) { if (beatAnchorX[k] != null) { after = beatAnchorX[k]; break; } }
-                    if (before != null && after != null) beatAnchorX[b] = before + (after - before) * 0.5;
-                    else if (before != null) beatAnchorX[b] = before + (rightEdge - before) * 0.3;
+                    let before = null,
+                      after = null;
+                    for (let k = b - 1; k >= 0; k--) {
+                      if (beatAnchorX[k] != null) {
+                        before = beatAnchorX[k];
+                        break;
+                      }
+                    }
+                    for (let k = b + 1; k < numBeats; k++) {
+                      if (beatAnchorX[k] != null) {
+                        after = beatAnchorX[k];
+                        break;
+                      }
+                    }
+                    if (before != null && after != null)
+                      beatAnchorX[b] = before + (after - before) * 0.5;
+                    else if (before != null)
+                      beatAnchorX[b] = before + (rightEdge - before) * 0.3;
                     else beatAnchorX[b] = x + 20;
                   }
                 }
@@ -1483,7 +1537,13 @@ export default function ScoreRenderer() {
                   // bug here) overlaps the letter instead of sitting just
                   // before it, the way the reference notation always shows
                   // a small gap: "m :- | - :r .m".
-                  if (bi > 0) drawChar(":", beatAnchorX[bi] - SP * 0.9, rhythmFont, "#4b5563");
+                  if (bi > 0)
+                    drawChar(
+                      ":",
+                      beatAnchorX[bi] - SP * 0.9,
+                      rhythmFont,
+                      "#4b5563",
+                    );
                   let offset = 0;
                   beat.events.forEach((ev, ei) => {
                     const isLast = ei === beat.events.length - 1;
@@ -1491,8 +1551,11 @@ export default function ScoreRenderer() {
                     if (cx == null) {
                       // No Score note of its own (a continuation piece) —
                       // interpolate within the beat from its anchor.
-                      const nextAnchor = bi + 1 < numBeats ? beatAnchorX[bi + 1] : (x + width - 8);
-                      cx = beatAnchorX[bi] + (nextAnchor - beatAnchorX[bi]) * (offset / 4);
+                      const nextAnchor =
+                        bi + 1 < numBeats ? beatAnchorX[bi + 1] : x + width - 8;
+                      cx =
+                        beatAnchorX[bi] +
+                        (nextAnchor - beatAnchorX[bi]) * (offset / 4);
                     }
                     if (ev.type === "note") {
                       try {
@@ -1509,10 +1572,17 @@ export default function ScoreRenderer() {
                           const dotR = Math.max(1, SP * 0.06);
                           const dotGap = SP * 0.28;
                           const dir = ev.octave > 0 ? -1 : 1;
-                          const baseOffset = ev.octave > 0 ? -(SP * 1.05) : SP * 0.36;
+                          const baseOffset =
+                            ev.octave > 0 ? -(SP * 1.05) : SP * 0.36;
                           for (let i = 0; i < Math.abs(ev.octave); i++) {
                             ctx.beginPath();
-                            ctx.arc(cx, solfaY + baseOffset + dir * i * dotGap, dotR, 0, Math.PI * 2);
+                            ctx.arc(
+                              cx,
+                              solfaY + baseOffset + dir * i * dotGap,
+                              dotR,
+                              0,
+                              Math.PI * 2,
+                            );
                             ctx.fill();
                           }
                         }
@@ -1529,7 +1599,8 @@ export default function ScoreRenderer() {
                         if (ev.duration === 3) suf = ".,";
                         else if (ev.duration === 2) suf = ".";
                         else if (ev.duration === 1) suf = ",";
-                        if (suf) drawChar(suf, cx + SP * 0.75, rhythmFont, "#4b5563");
+                        if (suf)
+                          drawChar(suf, cx + SP * 0.75, rhythmFont, "#4b5563");
                       }
                     } else if (ev.type === "sustain") {
                       drawChar("-", cx, solfaFont, "#1a1a1a");
@@ -1548,9 +1619,14 @@ export default function ScoreRenderer() {
                 // across two measures worth of canvas, which this
                 // per-measure pass does not attempt yet.
                 for (const { startPos, endPos } of partSolfa.slurs) {
-                  if (startPos.measureIdx !== col || endPos.measureIdx !== col) continue;
-                  const sx = eventX.get(`${startPos.beatIdx}-${startPos.eventIdx}`) ?? beatAnchorX[startPos.beatIdx];
-                  const ex = eventX.get(`${endPos.beatIdx}-${endPos.eventIdx}`) ?? beatAnchorX[endPos.beatIdx];
+                  if (startPos.measureIdx !== col || endPos.measureIdx !== col)
+                    continue;
+                  const sx =
+                    eventX.get(`${startPos.beatIdx}-${startPos.eventIdx}`) ??
+                    beatAnchorX[startPos.beatIdx];
+                  const ex =
+                    eventX.get(`${endPos.beatIdx}-${endPos.eventIdx}`) ??
+                    beatAnchorX[endPos.beatIdx];
                   if (sx == null || ex == null || ex <= sx) continue;
                   const arcY = solfaY - SP * 0.9;
                   drawTieCanvas(sx, arcY, ex, arcY, false, () => SP * 0.6);
