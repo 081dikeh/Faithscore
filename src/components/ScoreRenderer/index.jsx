@@ -1456,7 +1456,7 @@ export default function ScoreRenderer() {
               const notePositions = partSolfa?.notePositions;
 
               if (beats && notePositions) {
-                const solfaY = partY - SP * -0.5;
+                const solfaY = partY - SP * -0.6;
                 const solfaFont = `600 ${SP * 1.4}px Georgia, serif`;
                 const rhythmFont = `600 ${SP * 1.1}px Georgia, serif`;
                 const numBeats = beats.length;
