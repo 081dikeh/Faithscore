@@ -1,4 +1,4 @@
-// src/components/ScoreRenderer/index.jsx
+      // src/components/ScoreRenderer/index.jsx
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   Renderer,
