@@ -1,4 +1,4 @@
-      // src/components/ScoreRenderer/index.jsx
+// src/components/ScoreRenderer/index.jsx
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   Renderer,
@@ -1453,13 +1453,15 @@ export default function ScoreRenderer() {
               // not like an approximation of it.
               const partSolfa = solfaByPart.get(part);
               const beats = partSolfa?.measuresBeats?.[col];
-              const notePositions = partSolfa?.notePositions;
 
-              if (beats && notePositions) {
-                const solfaY = partY - SP * -0.6;
+              if (beats) {
+                const solfaY = partY - SP * -0.5;
                 const solfaFont = `600 ${SP * 1.4}px Georgia, serif`;
                 const rhythmFont = `600 ${SP * 1.1}px Georgia, serif`;
-                const numBeats = beats.length;
+                // Octave number — sized relative to the main syllable the
+                // same way SolfaRenderer sizes its own OCT_SZ relative to
+                // its NOTE_SZ (8/14 of the main glyph).
+                const octFont = `700 ${SP * 1.4 * (8 / 14)}px Georgia, serif`;
 
                 const drawChar = (ch, cx, font, color) => {
                   if (cx == null) return;
@@ -1474,159 +1476,137 @@ export default function ScoreRenderer() {
                   } catch (_) {}
                 };
 
-                // Map (beatIdx, eventIdx) -> the exact X of the Score note
-                // that produced it, wherever one exists — this is what
-                // keeps every syllable/dash lined up with its own
-                // notehead rather than an approximated grid position.
-                const eventX = new Map();
-                renderSeq.forEach((n, ni) => {
-                  const pos = notePositions.get(n.id);
-                  if (!pos || pos.measureIdx !== col) return;
-                  try {
-                    eventX.set(
-                      `${pos.beatIdx}-${pos.eventIdx}`,
-                      vfNotes[ni].getAbsoluteX(),
-                    );
-                  } catch (_) {}
+                // ── Layout: a proportional grid, not note positions ──────
+                // This mirrors SolfaRenderer's OWN layout algorithm exactly
+                // (QW px per quarter-unit of duration, a beat separator of
+                // fixed width, syllable centered within its own event's
+                // width) rather than snapping each syllable to wherever
+                // VexFlow happened to place the corresponding notehead.
+                // That note-position approach was the earlier version of
+                // this block — it produced visibly uneven spacing within a
+                // beat whenever VexFlow's own optical spacing wasn't even,
+                // which it usually isn't. Pass A below measures the row's
+                // natural (unscaled) width the exact way SolfaRenderer's
+                // own measureWidth() does; Pass B scales that to fit this
+                // measure's real rendered width and draws left-to-right.
+                const k = SP / 10; // same base-10 reference every other
+                                   // SP-scaled constant in this file uses
+                const QW_B = 9 * k, SEP_W_B = 10 * k, SYM_W_B = 5 * k, PAD_B = 8 * k;
+
+                const sufFor = (ev, offset, duration, isLast) => {
+                  if (ev?.tuplet) {
+                    const end = offset + duration;
+                    return end >= 4 - 0.01 || isLast ? "" : ",";
+                  }
+                  const end = offset + duration;
+                  if (end >= 4 || isLast) return "";
+                  if (duration === 3) return ".,";
+                  if (duration === 2) return ".";
+                  if (duration === 1) return ",";
+                  return "";
+                };
+
+                // Pass A — intrinsic width at the base pixel scale.
+                let intrinsicW = PAD_B * 2;
+                beats.forEach((beat, bi) => {
+                  const events = beat?.events || [];
+                  let beatW = 0, offset = 0;
+                  events.forEach((ev, ei) => {
+                    const isRest = ev.type === "rest";
+                    const isLast = ei === events.length - 1;
+                    const suf = isRest ? "" : sufFor(ev, offset, ev.duration, ei === events.length - 1 ? true : isLast);
+                    beatW += ev.duration * QW_B + suf.length * SYM_W_B;
+                    offset += ev.duration;
+                  });
+                  if (beatW === 0) beatW = QW_B * 4;
+                  intrinsicW += beatW;
+                  if (bi < beats.length - 1) intrinsicW += SEP_W_B;
                 });
 
-                // A beat anchor for its OWN leading colon/bar mark, and as
-                // a fallback for any event this measure's own notes don't
-                // directly place (a sustain/rest piece that is itself the
-                // continuation of an earlier beat's note or rest, so it
-                // has no Score note/X of its own) — interpolated between
-                // the nearest real anchors either side when needed.
-                const beatAnchorX = new Array(numBeats).fill(null);
-                for (let b = 0; b < numBeats; b++) {
-                  const first = eventX.get(`${b}-0`);
-                  if (first != null) beatAnchorX[b] = first;
-                }
-                {
-                  const rightEdge = x + width - 8;
-                  for (let b = 0; b < numBeats; b++) {
-                    if (beatAnchorX[b] != null) continue;
-                    let before = null,
-                      after = null;
-                    for (let k = b - 1; k >= 0; k--) {
-                      if (beatAnchorX[k] != null) {
-                        before = beatAnchorX[k];
-                        break;
-                      }
-                    }
-                    for (let k = b + 1; k < numBeats; k++) {
-                      if (beatAnchorX[k] != null) {
-                        after = beatAnchorX[k];
-                        break;
-                      }
-                    }
-                    if (before != null && after != null)
-                      beatAnchorX[b] = before + (after - before) * 0.5;
-                    else if (before != null)
-                      beatAnchorX[b] = before + (rightEdge - before) * 0.3;
-                    else beatAnchorX[b] = x + 20;
-                  }
-                }
+                const scale = Math.max(0.4, Math.min(3, (width - 6) / Math.max(intrinsicW, 1)));
+                const QWs = QW_B * scale, SEPs = SEP_W_B * scale, SYMs = SYM_W_B * scale, PADs = PAD_B * scale;
 
-                // Opening bar mark — printed sol-fa carries its own "|" at
-                // every bar, independent of the staff's barline below it.
-                drawChar("|", x + 2, rhythmFont, "#1a1a1a");
+                // Opening bar mark — an actual drawn line, matching how
+                // SolfaRenderer itself draws bar lines (a stroke, not a
+                // text "|" glyph, so it stays crisp at any size).
+                try {
+                  ctx.save();
+                  ctx.strokeStyle = "#1a1a1a";
+                  ctx.lineWidth = Math.max(1, SP * 0.08);
+                  ctx.beginPath();
+                  ctx.moveTo(x, solfaY - SP * 1.3);
+                  ctx.lineTo(x, solfaY + SP * 0.5);
+                  ctx.stroke();
+                  ctx.restore();
+                } catch (_) {}
+
+                // Pass B — draw left-to-right from the measure's own X,
+                // recording each event's center X for slurs afterward.
+                let curX = x + PADs;
+                const posCX = new Map();
 
                 beats.forEach((beat, bi) => {
-                  // Offset left of the beat's own note/anchor X — drawing
-                  // it at the exact same X as the syllable (the original
-                  // bug here) overlaps the letter instead of sitting just
-                  // before it, the way the reference notation always shows
-                  // a small gap: "m :- | - :r .m".
-                  if (bi > 0)
-                    drawChar(
-                      ":",
-                      beatAnchorX[bi] - SP * 0.9,
-                      rhythmFont,
-                      "#4b5563",
-                    );
+                  if (bi > 0) {
+                    drawChar(":", curX + SEPs / 2, rhythmFont, "#4b5563");
+                    curX += SEPs;
+                  }
                   let offset = 0;
-                  beat.events.forEach((ev, ei) => {
-                    const isLast = ei === beat.events.length - 1;
-                    let cx = eventX.get(`${bi}-${ei}`);
-                    if (cx == null) {
-                      // No Score note of its own (a continuation piece) —
-                      // interpolate within the beat from its anchor.
-                      const nextAnchor =
-                        bi + 1 < numBeats ? beatAnchorX[bi + 1] : x + width - 8;
-                      cx =
-                        beatAnchorX[bi] +
-                        (nextAnchor - beatAnchorX[bi]) * (offset / 4);
-                    }
+                  const events = beat?.events || [];
+                  events.forEach((ev, ei) => {
+                    const isLast = ei === events.length - 1;
+                    const isRest = ev.type === "rest";
+                    const suf = isRest ? "" : sufFor(ev, offset, ev.duration, isLast);
+                    const bodyW = ev.duration * QWs;
+                    const noteX = curX;
+                    const noteCX = noteX + bodyW / 2;
+                    posCX.set(`${bi}-${ei}`, noteCX);
+
                     if (ev.type === "note") {
-                      try {
-                        ctx.save();
-                        ctx.font = solfaFont;
-                        ctx.fillStyle = "#1a1a1a";
-                        ctx.textAlign = "center";
-                        ctx.textBaseline = "alphabetic";
-                        ctx.fillText(ev.syllable, cx, solfaY);
-                        // Octave dot(s) — traditional tonic sol-fa
-                        // convention: a dot ABOVE for each octave higher,
-                        // BELOW for each octave lower.
-                        if (ev.octave) {
-                          const dotR = Math.max(1, SP * 0.06);
-                          const dotGap = SP * 0.28;
-                          const dir = ev.octave > 0 ? -1 : 1;
-                          const baseOffset =
-                            ev.octave > 0 ? -(SP * 1.05) : SP * 0.36;
-                          for (let i = 0; i < Math.abs(ev.octave); i++) {
-                            ctx.beginPath();
-                            ctx.arc(
-                              cx,
-                              solfaY + baseOffset + dir * i * dotGap,
-                              dotR,
-                              0,
-                              Math.PI * 2,
-                            );
-                            ctx.fill();
-                          }
-                        }
-                        ctx.restore();
-                      } catch (_) {}
-                      // Suffix ("." / ",") when it doesn't fill to the
-                      // beat's end — identical grammar/values to
-                      // SolfaRenderer's own getSuffix(), since this comes
-                      // from the same conversion output that function
-                      // reads for the standalone Solfa view.
-                      const end = offset + ev.duration;
-                      if (end < 4 && !isLast) {
-                        let suf = "";
-                        if (ev.duration === 3) suf = ".,";
-                        else if (ev.duration === 2) suf = ".";
-                        else if (ev.duration === 1) suf = ",";
-                        if (suf)
-                          drawChar(suf, cx + SP * 0.75, rhythmFont, "#4b5563");
+                      drawChar(ev.syllable || "?", noteCX, solfaFont, "#1a1a1a");
+                      // Octave NUMBER (not a dot) placed just after the
+                      // letter's own width — superscript above the row
+                      // for a higher octave, subscript below for a lower
+                      // one. This is SolfaRenderer's exact convention
+                      // (a digit counting how many octaves, not a dot
+                      // per octave) — matches "s₁", "l₁", "t₁" etc. in
+                      // the reference, not a stack of dots.
+                      if (ev.octave) {
+                        try {
+                          ctx.save();
+                          ctx.font = octFont;
+                          ctx.fillStyle = "#1a1a1a";
+                          ctx.textAlign = "left";
+                          ctx.textBaseline = ev.octave > 0 ? "alphabetic" : "hanging";
+                          const octY = ev.octave > 0 ? solfaY - SP * 0.55 : solfaY + SP * 0.1;
+                          ctx.fillText(String(Math.abs(ev.octave)), noteX + bodyW, octY);
+                          ctx.restore();
+                        } catch (_) {}
                       }
                     } else if (ev.type === "sustain") {
-                      drawChar("-", cx, solfaFont, "#1a1a1a");
+                      drawChar("–", noteCX, solfaFont, "#1a1a1a");
                     }
-                    // type === "rest" -> blank, matches printed convention.
+                    // type === "rest" → blank, matches printed convention.
+
+                    if (suf) {
+                      drawChar(suf, noteX + bodyW + (suf.length * SYMs) / 2, rhythmFont, "#4b5563");
+                    }
+
+                    curX += bodyW + suf.length * SYMs;
                     offset += ev.duration;
                   });
                 });
 
-                // -- Slurs, shown as a phrase arc above the row too --------
-                // Ties are already the dash convention above -- that IS
+                // ── Slurs, shown as a phrase arc above the row too ──────
+                // Ties are already the dash convention above — that IS
                 // how tonic sol-fa marks a held note. A slur phrases
                 // together notes of DIFFERENT pitch, so it gets its own
-                // arc. Only drawn when both ends fall in this same
-                // measure; a slur crossing a barline would need to paint
-                // across two measures worth of canvas, which this
-                // per-measure pass does not attempt yet.
+                // arc. Positions now come from the grid above (posCX),
+                // not Score note X positions. Only drawn when both ends
+                // fall in this same measure.
                 for (const { startPos, endPos } of partSolfa.slurs) {
-                  if (startPos.measureIdx !== col || endPos.measureIdx !== col)
-                    continue;
-                  const sx =
-                    eventX.get(`${startPos.beatIdx}-${startPos.eventIdx}`) ??
-                    beatAnchorX[startPos.beatIdx];
-                  const ex =
-                    eventX.get(`${endPos.beatIdx}-${endPos.eventIdx}`) ??
-                    beatAnchorX[endPos.beatIdx];
+                  if (startPos.measureIdx !== col || endPos.measureIdx !== col) continue;
+                  const sx = posCX.get(`${startPos.beatIdx}-${startPos.eventIdx}`);
+                  const ex = posCX.get(`${endPos.beatIdx}-${endPos.eventIdx}`);
                   if (sx == null || ex == null || ex <= sx) continue;
                   const arcY = solfaY - SP * 0.9;
                   drawTieCanvas(sx, arcY, ex, arcY, false, () => SP * 0.6);
