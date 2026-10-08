@@ -3,7 +3,7 @@
 // Export utilities: MusicXML, MIDI (via binary), Print/PDF
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { DURATION_BEATS, noteDuration, measureCapacity, normalizeMeasure, PAGE_SIZES_MM } from '../store/scoreStore'
+import { DURATION_BEATS, noteDuration, measureCapacity, normalizeMeasure, PAGE_SIZES_MM, useScoreStore } from '../store/scoreStore'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function xml(tag, attrs, ...children) {
@@ -603,7 +603,16 @@ function headerHeightMmFor(arranger) {
 // ScoreRenderer draws each system's starting measure number as text at a
 // fixed x=24, y = systemTopY - 10 (see ScoreRenderer's `ctx.fillText(String(startCol+1), 24, sysY-10)`).
 // We use those labels purely as position markers — they're on-page anyway.
-function findSystemTops(svg) {
+//
+// topMargin: when the sol-fa-above-staff overlay is on, each system's own
+// sol-fa row is drawn ABOVE that system's nominal top (sysY) — the measure-
+// number label position used here as the "top" marker does NOT account for
+// that row. Without correcting for it, a page crop that starts exactly at
+// sysY clips the row's top off, and because the row overhangs into what the
+// PREVIOUS page's slice treats as its own bottom boundary, the same content
+// can bleed onto both pages at once. topMargin shifts every detected top
+// upward by that overhang so the crop actually starts above the row.
+function findSystemTops(svg, topMargin = 0) {
   const markers = Array.from(svg.querySelectorAll('text'))
     .map(t => ({
       y: parseFloat(t.getAttribute('y')),
@@ -613,7 +622,19 @@ function findSystemTops(svg) {
     .filter(m => /^\d+$/.test(m.text) && !isNaN(m.y) && !isNaN(m.x) && Math.abs(m.x - 24) < 2)
     .sort((a, b) => a.y - b.y)
   if (markers.length < 2) return null
-  return markers.map(m => m.y + 10) // undo the "-10" offset used when drawing
+  return markers.map(m => Math.max(0, m.y + 10 - topMargin)) // undo the "-10" offset used when drawing, then reserve room for the sol-fa row above it
+}
+
+// How far above a system's nominal top (sysY) the sol-fa row can actually
+// reach, in the SVG's own coordinate units. Mirrors the extra headroom
+// ScoreRenderer itself reserves for the overlay (STAVE_TOP grows by 2
+// staff-spaces specifically for this — see its own PART_HEIGHT/STAVE_TOP
+// comments), plus a little slack for font ascent and the octave-number
+// marks, which reach a bit further up than the main glyph body.
+function solfaTopMarginFor(score) {
+  if (!score?.showSolfaAbove) return 0
+  const staffSize = useScoreStore.getState().staffSize || 10
+  return staffSize * 2.5
 }
 
 // Groups system top-positions into page-sized chunks (in the SVG's own
@@ -705,7 +726,7 @@ export function printScore(score) {
     const usableFirstUnits = (USABLE_H_MM - headerMm) * scaleUnitsPerMm
     const usableRestUnits  = USABLE_H_MM * scaleUnitsPerMm
 
-    const sysTops = findSystemTops(svg)
+    const sysTops = findSystemTops(svg, solfaTopMarginFor(score))
     const slices = sysTops
       ? paginateSystems(sysTops, totalH, Math.max(usableFirstUnits, 1), Math.max(usableRestUnits, 1))
       : [{ y: 0, height: totalH }] // couldn't detect systems — fall back to one uncut block
@@ -860,7 +881,7 @@ export async function exportScorePdfBlob(score) {
     const usableFirstUnits = (USABLE_H_MM - headerMm) * scaleUnitsPerMm
     const usableRestUnits  = USABLE_H_MM * scaleUnitsPerMm
 
-    const sysTops = findSystemTops(svg)
+    const sysTops = findSystemTops(svg, solfaTopMarginFor(score))
     const slices = sysTops
       ? paginateSystems(sysTops, totalH, Math.max(usableFirstUnits, 1), Math.max(usableRestUnits, 1))
       : [{ y: 0, height: totalH }]
