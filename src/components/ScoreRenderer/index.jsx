@@ -1515,7 +1515,8 @@ export default function ScoreRenderer() {
                     const isRest = ev.type === "rest";
                     const isLast = ei === events.length - 1;
                     const suf = isRest ? "" : sufFor(ev, offset, ev.duration, ei === events.length - 1 ? true : isLast);
-                    beatW += ev.duration * QW_B + suf.length * SYM_W_B;
+                    const octW = ev.type === "note" && ev.octave ? SYM_W_B * 1.1 : 0;
+                    beatW += ev.duration * QW_B + octW + suf.length * SYM_W_B;
                     offset += ev.duration;
                   });
                   if (beatW === 0) beatW = QW_B * 4;
@@ -1561,6 +1562,15 @@ export default function ScoreRenderer() {
                     const noteCX = noteX + bodyW / 2;
                     posCX.set(`${bi}-${ei}`, noteCX);
 
+                    // Extra width reserved to the right of the note when
+                    // it carries an octave digit — without this, a suffix
+                    // "." or the next event starts at noteX+bodyW exactly,
+                    // which is where the digit ITSELF sits, so the dot
+                    // lands jammed against (or under) the digit instead of
+                    // after it. One digit's width is close enough for the
+                    // single-digit octave counts this ever shows.
+                    const octW = ev.type === "note" && ev.octave ? SYMs * 1.1 : 0;
+
                     if (ev.type === "note") {
                       drawChar(ev.syllable || "?", noteCX, solfaFont, "#1a1a1a");
                       // Octave NUMBER (not a dot) placed just after the
@@ -1588,10 +1598,10 @@ export default function ScoreRenderer() {
                     // type === "rest" → blank, matches printed convention.
 
                     if (suf) {
-                      drawChar(suf, noteX + bodyW + (suf.length * SYMs) / 2, rhythmFont, "#4b5563");
+                      drawChar(suf, noteX + bodyW + octW + (suf.length * SYMs) / 2, rhythmFont, "#4b5563");
                     }
 
-                    curX += bodyW + suf.length * SYMs;
+                    curX += bodyW + octW + suf.length * SYMs;
                     offset += ev.duration;
                   });
                 });
