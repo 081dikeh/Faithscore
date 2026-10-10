@@ -550,12 +550,25 @@ export function useSolfaPlayback() {
       await new Promise(r => setTimeout(r, 100))
       attempts++
     }
+    // graphReadyRef flips true the instant buildGraph() constructs the
+    // Sampler objects — NOT once their samples have actually loaded (that's
+    // samplesLoadedRef, polled below). So no fixed delay belongs here: it
+    // was a blind guess at how long construction takes, on every single
+    // first play, regardless of whether it was actually still in progress.
     if (!graphReadyRef.current) {
       buildGraph(presetRef.current)
-      await new Promise(r => setTimeout(r, 600))
     }
+    // Real sample loading (fetch + decode, per voice part) is what
+    // actually gates playback, and it can genuinely take several seconds
+    // on a cold cache for a full SATB graph. The previous ~4.6s budget
+    // (600ms + 40×100ms) was shorter than that in practice, so this loop
+    // gave up and let playback start against a half-loaded instrument —
+    // some notes silent or wrong — which is exactly why the first attempt
+    // sounded broken and a retry (after loading finished in the
+    // background) sounded fine. 20s matches the timeout the Staff side's
+    // sampler already uses for the same real-world load time.
     let sWait = 0
-    while (!samplesLoadedRef.current && sWait < 40) {
+    while (!samplesLoadedRef.current && sWait < 200) {
       await new Promise(r => setTimeout(r, 100))
       sWait++
     }

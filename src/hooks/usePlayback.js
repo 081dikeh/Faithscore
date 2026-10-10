@@ -246,6 +246,10 @@ export function usePlayback() {
   const setPlaybackBeat = useScoreStore(s => s.setPlaybackBeat)
 
   const instrumentRef  = useRef(null)
+  const loadingRef     = useRef(null) // in-flight getInstrument() promise, so a second
+                                       // play click while the sampler is still loading
+                                       // awaits the SAME load instead of starting a
+                                       // redundant one from scratch
   const fxChainRef     = useRef(null)
   const samplerReady   = useRef(false)
   const rafRef         = useRef(null)
@@ -314,10 +318,25 @@ export function usePlayback() {
 
   async function getInstrument() {
     if (instrumentRef.current) return instrumentRef.current
-    getEffectsChain()
-    const sampler = await buildSampler()
-    instrumentRef.current = sampler || buildFMSynth()
-    return instrumentRef.current
+    // A second call that lands while the first is still loading (the user
+    // clicking play again because the first click looked like it did
+    // nothing) must await that SAME in-flight load — without this guard,
+    // each call built its own Tone.Sampler and re-fetched every sample
+    // file from scratch, which is exactly what made the first couple of
+    // attempts feel stuck: the "lag" was N redundant full sample loads
+    // racing each other, not one slow one.
+    if (loadingRef.current) return loadingRef.current
+    loadingRef.current = (async () => {
+      getEffectsChain()
+      const sampler = await buildSampler()
+      instrumentRef.current = sampler || buildFMSynth()
+      return instrumentRef.current
+    })()
+    try {
+      return await loadingRef.current
+    } finally {
+      loadingRef.current = null
+    }
   }
 
   // ── Cursor RAF loop ───────────────────────────────────────────────────────
