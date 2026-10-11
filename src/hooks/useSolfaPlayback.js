@@ -572,6 +572,15 @@ export function useSolfaPlayback() {
       await new Promise(r => setTimeout(r, 100))
       sWait++
     }
+    // Tone.Reverb generates its impulse response asynchronously (per
+    // Tone.js's own docs, nothing should play through it before `.ready`
+    // resolves) and this was never awaited here either. It's normally
+    // fast enough that the sample-load wait above already covers it
+    // incidentally, but that's luck, not a guarantee — awaiting it
+    // directly removes the gap instead of relying on it.
+    if (reverbRef.current?.ready) {
+      await reverbRef.current.ready
+    }
   }
 
   // ── Cursor RAF ─────────────────────────────────────────────────────────────
