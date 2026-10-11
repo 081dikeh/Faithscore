@@ -327,8 +327,18 @@ export function usePlayback() {
     // racing each other, not one slow one.
     if (loadingRef.current) return loadingRef.current
     loadingRef.current = (async () => {
-      getEffectsChain()
-      const sampler = await buildSampler()
+      const { reverb } = getEffectsChain()
+      const [sampler] = await Promise.all([
+        buildSampler(),
+        // Tone.Reverb generates its impulse response asynchronously —
+        // per Tone.js's own docs, nothing should play through it until
+        // `.ready` resolves, or the first notes go out through a
+        // convolver that isn't actually ready yet (silent/dull/clicky).
+        // This was never awaited anywhere, so whichever finished first —
+        // the sampler or the reverb — decided whether the first attempt
+        // sounded right, and the sampler usually won that race here.
+        reverb.ready,
+      ])
       instrumentRef.current = sampler || buildFMSynth()
       return instrumentRef.current
     })()
