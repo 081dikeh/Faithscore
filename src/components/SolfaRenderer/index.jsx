@@ -72,7 +72,7 @@ const C = {
   label: "#1e3a8a",
   lyric: "#374151",
   lyricRul: "#b0b8c8",
-  voiceSep: "#1f2937",
+  voiceSep: "#e5e7eb",
   sep: "#4b5563",
   slash: "#9ca3af",
   sym: "#374151",
@@ -544,7 +544,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
           y1={lineTop}
           x2={systemRight}
           y2={lineTop}
-          stroke={C.voiceSep}
+          stroke={C.barline}
           strokeWidth={1.5}
         />,
       );
@@ -1141,7 +1141,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
               x2={systemRight}
               y2={sepY}
               stroke={C.voiceSep}
-              strokeWidth={1.5}
+              strokeWidth={0.6}
             />,
           );
         }
@@ -1154,7 +1154,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
           y1={lineBottom}
           x2={systemRight}
           y2={lineBottom}
-          stroke={C.voiceSep}
+          stroke={C.barline}
           strokeWidth={1.5}
         />,
       );
