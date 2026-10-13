@@ -8,7 +8,7 @@
 // couple of animation frames), not a synchronous DOM node, so it must be
 // awaited — see the "await getSvgElement" call below.
 import { useEffect, useRef, useState } from 'react'
-import { X, Eye, EyeOff, UploadCloud, CheckCircle2, ExternalLink } from 'lucide-react'
+import { X, Eye, EyeOff, UploadCloud, CheckCircle2, ExternalLink, Music, Trash2, AlertCircle } from 'lucide-react'
 import { faithlibrary, getFaithLibrarySession } from '../../lib/faithlibrary'
 import { exportScorePdfBlob } from '../../utils/exportScore'
 import { exportSolfaPdfBlob } from '../../utils/exportSolfa'
@@ -22,6 +22,16 @@ const LICENSE_OPTIONS = [
   { value: 'original',      label: 'Original Composition', hint: 'You wrote or arranged this yourself' },
   { value: 'unknown',       label: 'Unknown / Not Sure', hint: "You're not certain of the copyright status" },
 ]
+
+// Mirrors FaithLibrary's lib/validation.ts audio rules (isMp3File,
+// MAX_AUDIO_BYTES and its two error messages) so a file that passes here
+// is one FaithLibrary's own upload form would also accept.
+const MAX_AUDIO_BYTES = 20 * 1024 * 1024
+const AUDIO_TYPE_ERROR = 'Only MP3 files are accepted for audio.'
+const AUDIO_SIZE_ERROR = 'Audio files must be 20MB or smaller.'
+const isMp3File = (f) =>
+  f.name.toLowerCase().endsWith('.mp3') &&
+  (!f.type || ['audio/mpeg', 'audio/mp3'].includes(f.type))
 
 export default function PublishToFaithLibrary({ score, mode, getSvgElement, onClose }) {
   const [session, setSession]     = useState(undefined) // undefined = checking, null = not connected
@@ -40,6 +50,12 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState('')
   const [published, setPublished] = useState(null) // { id } on success
+
+  // Optional MP3 recording to publish alongside the score's PDF.
+  const audioInputRef = useRef(null)
+  const [audioFile, setAudioFile]       = useState(null)
+  const [audioError, setAudioError]     = useState('')
+  const [audioWarning, setAudioWarning] = useState('') // set if the score published but the audio didn't
 
   useEffect(() => {
     getFaithLibrarySession().then(setSession)
@@ -120,8 +136,16 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
     }
   }
 
+  const acceptAudioFile = (f) => {
+    setAudioError('')
+    if (!isMp3File(f)) { setAudioError(AUDIO_TYPE_ERROR); return }
+    if (f.size > MAX_AUDIO_BYTES) { setAudioError(AUDIO_SIZE_ERROR); return }
+    setAudioFile(f)
+  }
+
   const publish = async () => {
     setPublishError('')
+    setAudioWarning('')
     setPublishing(true)
     try {
       const fresh = await getFaithLibrarySession()
@@ -152,17 +176,35 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
         .from('faithlibrary-files')
         .getPublicUrl(storagePath)
 
+      // Audio is optional. Same rule as FaithLibrary's own upload form: if
+      // it fails, the score still publishes and the person is told they can
+      // add it later from the edit page, rather than losing the whole publish.
+      let audioUrl = null
+      if (audioFile) {
+        const audioPath = `${fresh.user.id}/audio/${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`
+        const { error: audioErr } = await faithlibrary.storage
+          .from('faithlibrary-files')
+          .upload(audioPath, audioFile, { contentType: 'audio/mpeg', cacheControl: '3600' })
+        if (audioErr) {
+          setAudioWarning(`The score published fine, but the audio file failed to upload: ${audioErr.message}. You can add it later from the edit page on FaithLibrary.`)
+        } else {
+          audioUrl = faithlibrary.storage.from('faithlibrary-files').getPublicUrl(audioPath).data.publicUrl
+        }
+      }
+
       const { data: fileRecord, error: dbError } = await faithlibrary
         .from('files')
         .insert({
           user_id: fresh.user.id,
           title: cleanTitle,
+          composer: composer.trim() || null,
           description: description.trim() || null,
           category: 'score',
           tags: [],
           is_public: isPublic,
           license_status: license,
           file_url: publicUrl,
+          audio_url: audioUrl,
           source: 'notation_app',
         })
         .select()
@@ -295,6 +337,50 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
                     {LICENSE_OPTIONS.find(o => o.value === license)?.hint}
                   </p>
                 </div>
+                <div>
+                  <label style={label}>Audio recording (optional)</label>
+                  <input ref={audioInputRef} type="file" accept=".mp3,audio/mpeg"
+                    aria-label="Choose an MP3 recording"
+                    style={{ display: 'none' }}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) acceptAudioFile(f); e.target.value = '' }} />
+                  {audioFile ? (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                      border: '1px solid #d1d5db', borderRadius: 7, background: '#f9fafb',
+                    }}>
+                      <Music size={15} color="#2563eb" style={{ flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {audioFile.name}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: '#9ca3af' }}>
+                          {(audioFile.size / 1024 / 1024).toFixed(2)} MB
+                        </div>
+                      </div>
+                      <button type="button" onClick={() => { setAudioFile(null); setAudioError('') }}
+                        aria-label="Remove audio recording"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', display: 'flex', padding: 4 }}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => audioInputRef.current?.click()} style={{
+                      width: '100%', padding: '9px 12px', fontSize: 13, color: '#374151',
+                      background: 'white', border: '1px dashed #d1d5db', borderRadius: 7, cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    }}>
+                      <Music size={14} /> Attach an MP3
+                    </button>
+                  )}
+                  {audioError && (
+                    <p style={{ marginTop: 5, fontSize: 11.5, color: '#dc2626' }}>{audioError}</p>
+                  )}
+                  {!audioError && !audioFile && (
+                    <p style={{ marginTop: 5, fontSize: 11.5, color: '#9ca3af' }}>
+                      MP3 only, up to 20MB. Plays on the score's page in FaithLibrary.
+                    </p>
+                  )}
+                </div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer' }}>
                   <input type="checkbox" checked={isPublic} onChange={e => setIsPublic(e.target.checked)} />
                   Make this score public on FaithLibrary
@@ -316,7 +402,16 @@ export default function PublishToFaithLibrary({ score, mode, getSvgElement, onCl
             <div style={{ textAlign: 'center', padding: '10px 0' }}>
               <CheckCircle2 size={36} color="#16a34a" style={{ marginBottom: 10 }} />
               <p style={{ fontSize: 14, fontWeight: 600, color: '#111', marginBottom: 4 }}>Published!</p>
-              <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 18 }}>Your score is now live on FaithLibrary.</p>
+              <p style={{ fontSize: 13, color: '#6b7280', marginBottom: audioWarning ? 12 : 18 }}>Your score is now live on FaithLibrary.</p>
+              {audioWarning && (
+                <div role="alert" style={{
+                  background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8,
+                  padding: '10px 14px', marginBottom: 16, fontSize: 12.5, color: '#92400e',
+                  textAlign: 'left', display: 'flex', gap: 8, lineHeight: 1.5,
+                }}>
+                  <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} /> {audioWarning}
+                </div>
+              )}
               <a href={`https://faith-library.vercel.app/view/${published.id}`} target="_blank" rel="noreferrer"
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600,
