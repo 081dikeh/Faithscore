@@ -471,36 +471,10 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
         colXs.push(cxPos);
         cxPos += rawMWs[c] * sc2;
       });
+      const systemRight = cxPos;
 
       const lineTop = sysY - NOTE_SZ - 4;
       const lineBottom = sysY + (parts.length - 1) * VOICE_H + LYRIC_H + 4;
-      const systemW = lineCols.reduce((s, c) => s + rawMWs[c] * sc2, 0);
-
-      // Top and bottom caps — the vertical bar lines already box in every
-      // bar left and right (lineTop to lineBottom), but nothing ever
-      // closed off the top (above Soprano) or bottom (below Bass), so the
-      // grid was open on two sides. Same weight/color as the bar lines
-      // themselves, not the much fainter inter-voice separator below.
-      elems.push(
-        <line
-          key={`htop-${lineIdx}`}
-          x1={leftEdge}
-          y1={lineTop}
-          x2={leftEdge + systemW}
-          y2={lineTop}
-          stroke={C.barline}
-          strokeWidth={1.5}
-        />,
-        <line
-          key={`hbot-${lineIdx}`}
-          x1={leftEdge}
-          y1={lineBottom}
-          x2={leftEdge + systemW}
-          y2={lineBottom}
-          stroke={C.barline}
-          strokeWidth={1.5}
-        />,
-      );
 
       elems.push(
         <g key={`brk-${lineIdx}`}>
@@ -562,6 +536,18 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
       lineCols.forEach((col) => {
         systemBoundsMap.current[col] = { top: lineTop, bottom: lineBottom };
       });
+
+      elems.push(
+        <line
+          key={`vsep-top-${lineIdx}`}
+          x1={leftEdge}
+          y1={lineTop}
+          x2={systemRight}
+          y2={lineTop}
+          stroke={C.barline}
+          strokeWidth={1.5}
+        />,
+      );
 
       parts.forEach((part, pIdx) => {
         const rowY = sysY + pIdx * VOICE_H;
@@ -1143,11 +1129,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
           });
         });
 
-        // Voice separator — sits below lyric zone, above next voice's note
-        // area. Same color/weight as the bar lines and the new top/bottom
-        // caps now, not the old near-invisible hairline — the point was
-        // separation between voices, same as separation between bars, so
-        // it should read with the same weight.
+        // Voice separator — sits below lyric zone, above next voice's note area
         if (pIdx < parts.length - 1) {
           // rowY + 4 (lyricZoneY) + LYRIC_H + 3 = bottom of lyric + small gap
           const sepY = rowY + 4 + LYRIC_H + 3;
@@ -1156,14 +1138,26 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
               key={`vsep-${lineIdx}-${pIdx}`}
               x1={leftEdge}
               y1={sepY}
-              x2={leftEdge + systemW}
+              x2={systemRight}
               y2={sepY}
-              stroke={C.barline}
-              strokeWidth={1.5}
+              stroke={C.voiceSep}
+              strokeWidth={0.6}
             />,
           );
         }
       });
+
+      elems.push(
+        <line
+          key={`vsep-bottom-${lineIdx}`}
+          x1={leftEdge}
+          y1={lineBottom}
+          x2={systemRight}
+          y2={lineBottom}
+          stroke={C.barline}
+          strokeWidth={1.5}
+        />,
+      );
 
       lineCols.forEach((col, ci) => {
         const bx = colXs[ci] + rawMWs[col] * sc2;
