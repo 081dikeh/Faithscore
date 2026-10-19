@@ -506,6 +506,12 @@ const MARKER_TYPES = [
   { id:'repeat-to-refrain',  label:'D.S. → Refrain',            needsLabel:false },
   { id:'fine',               label:'Fine',                      needsLabel:false },
   { id:'dc',                 label:'D.C.',                      needsLabel:false },
+  { id:'segno',              label:'𝄋 Segno',                   needsLabel:false },
+  { id:'ds',                 label:'D.S.',                      needsLabel:false },
+  { id:'ds-al-fine',         label:'D.S. al Fine',              needsLabel:false },
+  { id:'ds-al-coda',         label:'D.S. al Coda',              needsLabel:false },
+  { id:'to-coda',            label:'To Coda',                   needsLabel:false },
+  { id:'coda',               label:'𝄌 Coda',                    needsLabel:false },
 ]
 
 function MarkersTab() {
@@ -521,7 +527,11 @@ function MarkersTab() {
 
   const handleAdd = () => {
     if (selectedMeasureIdx === null) return
-    const defaultLabels = { 'repeat-to-refrain':'D.S. → Refrain', fine:'Fine', dc:'D.C.' }
+    const defaultLabels = {
+      'repeat-to-refrain':'D.S. → Refrain', fine:'Fine', dc:'D.C.',
+      segno:'𝄋', ds:'D.S.', 'ds-al-fine':'D.S. al Fine', 'ds-al-coda':'D.S. al Coda',
+      'to-coda':'To Coda', coda:'𝄌',
+    }
     const label = typeInfo.needsLabel ? (labelText || '1.') : defaultLabels[markerType]
     addNavigationMarker(markerType, selectedMeasureIdx, label)
   }

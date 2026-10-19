@@ -284,6 +284,9 @@ function PalettesTab({ search }) {
         { symbol:'𝄋', label:'Segno',     onClick:()=>handleText('𝄋'),   disabled:!hasSelection },
         { symbol:'𝄌', label:'Coda',      onClick:()=>handleText('𝄌'),   disabled:!hasSelection },
         { symbol:'⁋', label:'Fine',      onClick:()=>handleText('Fine'), disabled:!hasSelection },
+        { symbol:'D.S.al Fine', label:'D.S. al Fine', onClick:()=>handleText('D.S. al Fine'), disabled:!hasSelection },
+        { symbol:'D.S.al Coda', label:'D.S. al Coda', onClick:()=>handleText('D.S. al Coda'), disabled:!hasSelection },
+        { symbol:'To 𝄌', label:'To Coda', onClick:()=>handleText('To Coda'), disabled:!hasSelection },
       ]
     },
     {
