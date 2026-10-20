@@ -1193,6 +1193,46 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
         if (ci === -1) return;
         const mx = colXs[ci] + 4;
         const isVerseTag = mk.type === "verse-label";
+
+        // Segno / Coda are drawn as vector symbols above the system, not as
+        // text: U+1D10B / U+1D10C aren't in the score's serif font, so as
+        // <text> they render as nothing at all.
+        if (mk.type === "segno" || mk.type === "coda") {
+          const gy = lineTop - 22; // top of a ~18px-tall symbol box
+          elems.push(
+            <g
+              key={`navmk-${mk.id}`}
+              transform={`translate(${mx + 2}, ${gy})`}
+              style={{ cursor: "pointer" }}
+              onClick={(e) => {
+                e.stopPropagation();
+                removeNavigationMarker(mk.id);
+              }}
+            >
+              <title>{mk.type === "segno" ? "Segno" : "Coda"} (click to remove)</title>
+              <rect x={-2} y={-2} width={20} height={22} fill="transparent" />
+              {mk.type === "segno" ? (
+                <g fill="none" stroke="#1d4ed8" strokeLinecap="round">
+                  <path
+                    d="M 11,2.5 C 11,-0.5 4,-0.5 4,4 C 4,8.5 11,9.5 11,14 C 11,18.5 3.5,18.5 3.5,15.5"
+                    strokeWidth={1.7}
+                  />
+                  <line x1={13} y1={1} x2={2} y2={17} strokeWidth={1.3} />
+                  <circle cx={1.8} cy={5.5} r={1.1} fill="#1d4ed8" stroke="none" />
+                  <circle cx={13.2} cy={12.5} r={1.1} fill="#1d4ed8" stroke="none" />
+                </g>
+              ) : (
+                <g fill="none" stroke="#1d4ed8" strokeWidth={1.5} strokeLinecap="round">
+                  <circle cx={8} cy={9} r={5.2} />
+                  <line x1={8} y1={0} x2={8} y2={18} />
+                  <line x1={-1} y1={9} x2={17} y2={9} />
+                </g>
+              )}
+            </g>,
+          );
+          return;
+        }
+
         elems.push(
           <text
             key={`navmk-${mk.id}`}

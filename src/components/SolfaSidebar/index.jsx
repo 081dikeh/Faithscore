@@ -32,6 +32,28 @@ const TEMPO_MARKS = ['Largo','Lento','Adagio','Andante','Moderato','Allegretto',
 const DYNAMICS = ['ppp','pp','p','mp','mf','f','ff','fff','sfz']
 const EXPRESSION = ['D.C.','D.S.','Fine','Coda','rall.']
 
+// Segno / Coda drawn as vector icons — the U+1D10B / U+1D10C glyphs depend on
+// the user's installed fonts, so they can show up blank.
+function SegnoIcon({ size = 18, color = 'currentColor' }) {
+  return (
+    <svg width={size} height={size} viewBox="-2 -2 20 22" fill="none" stroke={color} strokeLinecap="round">
+      <path d="M 11,2.5 C 11,-0.5 4,-0.5 4,4 C 4,8.5 11,9.5 11,14 C 11,18.5 3.5,18.5 3.5,15.5" strokeWidth={1.7}/>
+      <line x1={13} y1={1} x2={2} y2={17} strokeWidth={1.3}/>
+      <circle cx={1.8} cy={5.5} r={1.1} fill={color} stroke="none"/>
+      <circle cx={13.2} cy={12.5} r={1.1} fill={color} stroke="none"/>
+    </svg>
+  )
+}
+function CodaIcon({ size = 18, color = 'currentColor' }) {
+  return (
+    <svg width={size} height={size} viewBox="-2 -2 20 22" fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round">
+      <circle cx={8} cy={9} r={5.2}/>
+      <line x1={8} y1={0} x2={8} y2={18}/>
+      <line x1={-1} y1={9} x2={17} y2={9}/>
+    </svg>
+  )
+}
+
 // ── Palette item ─────────────────────────────────────────────────────────────
 function PaletteItem({ label, onClick, symbol, disabled, active, disabledHint }) {
   return (
@@ -103,6 +125,7 @@ function PalettesTab({ search }) {
   const changeKeyAt          = useSolfaStore(s => s.changeKeyAt)
   const removeKeyChangeAt    = useSolfaStore(s => s.removeKeyChangeAt)
   const addMark               = useSolfaStore(s => s.addMark)
+  const addNavigationMarker   = useSolfaStore(s => s.addNavigationMarker)
 
   const hasSelection = selectedPartId !== null && selectedMeasureIdx !== null && selectedBeatIdx !== null
   // Time signature only needs a BAR selected (not a specific beat) — it's
@@ -132,7 +155,31 @@ function PalettesTab({ search }) {
   const handleDynamic   = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'dynamic')
   const handleExpr      = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'text')
 
+  // Navigation markers attach to the selected BAR (no note needed) and drive
+  // playback order — see utils/segnoNavigation.js.
+  const addNav = (type, label) => {
+    if (!hasBarSelection) return
+    const exists = (score.navigationMarkers || []).some(m => m.type === type && m.atMeasure === selectedMeasureIdx)
+    if (!exists) addNavigationMarker(type, selectedMeasureIdx, label)
+  }
+  const navItem = (type, label, symbol, markerLabel) => ({
+    symbol, label, disabled: !hasBarSelection, disabledHint: 'Select a bar first',
+    onClick: () => addNav(type, markerLabel ?? label),
+  })
+
   const allPalettes = [
+    {
+      title:'Navigation', defaultOpen:true, items: [
+        navItem('segno',      'Segno',        <SegnoIcon />, '𝄋'),
+        navItem('coda',       'Coda',         <CodaIcon />,  '𝄌'),
+        navItem('to-coda',    'To Coda',      'To ⊕'),
+        navItem('ds',         'D.S.',         'D.S.'),
+        navItem('ds-al-fine', 'D.S. al Fine', 'D.S.'),
+        navItem('ds-al-coda', 'D.S. al Coda', 'D.S.'),
+        navItem('dc',         'D.C.',         'D.C.'),
+        navItem('fine',       'Fine',         'Fine'),
+      ],
+    },
     {
       title:'Key Signature', items: [
         ...KEYS.map(k => ({
@@ -207,7 +254,7 @@ function PalettesTab({ search }) {
         {hasSelection && `Applying to bar ${selectedMeasureIdx+1}, beat ${selectedBeatIdx+1}. Key Signature will modulate starting at this exact note; Time Signature will insert a change at bar ${selectedMeasureIdx+1}.`}
       </div>
       {filtered.map((p, i) => (
-        <PaletteSection key={p.title} title={p.title}>
+        <PaletteSection key={p.title} title={p.title} defaultOpen={!!p.defaultOpen}>
           {p.items.map(item => (
             <PaletteItem key={item.label} {...item} />
           ))}
@@ -506,12 +553,12 @@ const MARKER_TYPES = [
   { id:'repeat-to-refrain',  label:'D.S. → Refrain',            needsLabel:false },
   { id:'fine',               label:'Fine',                      needsLabel:false },
   { id:'dc',                 label:'D.C.',                      needsLabel:false },
-  { id:'segno',              label:'𝄋 Segno',                   needsLabel:false },
+  { id:'segno',              label:'Segno',                     needsLabel:false },
   { id:'ds',                 label:'D.S.',                      needsLabel:false },
   { id:'ds-al-fine',         label:'D.S. al Fine',              needsLabel:false },
   { id:'ds-al-coda',         label:'D.S. al Coda',              needsLabel:false },
   { id:'to-coda',            label:'To Coda',                   needsLabel:false },
-  { id:'coda',               label:'𝄌 Coda',                    needsLabel:false },
+  { id:'coda',               label:'Coda',                      needsLabel:false },
 ]
 
 function MarkersTab() {
@@ -544,6 +591,22 @@ function MarkersTab() {
       <div style={{ fontSize:10.5, color: selectedMeasureIdx===null ? '#9a5b13' : '#1d4ed8',
         marginBottom:8, lineHeight:1.4 }}>
         {selectedMeasureIdx === null ? 'Select a bar on the score first.' : `Will attach to bar ${selectedMeasureIdx+1}.`}
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6, marginBottom:8 }}>
+        {[['segno','Segno'], ['coda','Coda'], ['ds-al-coda','D.S. al Coda'], ['to-coda','To Coda']].map(([id, name]) => (
+          <button key={id}
+            disabled={selectedMeasureIdx === null}
+            onClick={() => {
+              const labels = { segno:'𝄋', coda:'𝄌', 'ds-al-coda':'D.S. al Coda', 'to-coda':'To Coda' }
+              addNavigationMarker(id, selectedMeasureIdx, labels[id])
+            }}
+            style={{
+              fontSize:11.5, fontWeight:600, padding:'6px 0', borderRadius:6,
+              border:'1px solid #d1d5db', background: selectedMeasureIdx===null ? '#f3f4f6' : 'white',
+              color: selectedMeasureIdx===null ? '#9ca3af' : '#1d4ed8',
+              cursor: selectedMeasureIdx===null ? 'not-allowed' : 'pointer',
+            }}>{name}</button>
+        ))}
       </div>
       <select value={markerType} onChange={e => setMarkerType(e.target.value)}
         style={{ width:'100%', fontSize:12, border:'1px solid #d1d5db', borderRadius:6,
@@ -582,7 +645,9 @@ function MarkersTab() {
           padding:'5px 8px', marginBottom:4, borderRadius:6, background:'#f9fafb',
           border:'1px solid #e5e7eb' }}>
           <span style={{ fontSize:10, color:'#9ca3af', minWidth:34 }}>bar {mk.atMeasure+1}</span>
-          <span style={{ flex:1, fontSize:11.5, fontWeight:600, color:'#1e2433' }}>{mk.label}</span>
+          <span style={{ flex:1, fontSize:11.5, fontWeight:600, color:'#1e2433' }}>
+            {mk.type === 'segno' ? 'Segno' : mk.type === 'coda' ? 'Coda' : mk.label}
+          </span>
           <button onClick={() => removeNavigationMarker(mk.id)}
             style={{ border:'none', background:'none', color:'#9ca3af', cursor:'pointer', fontSize:13 }}>×</button>
         </div>
