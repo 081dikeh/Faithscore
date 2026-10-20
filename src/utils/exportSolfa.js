@@ -299,36 +299,32 @@ function findSolfaSystemTops(svg) {
   return marks.length >= 2 ? marks : null
 }
 
+// How far above a system's top barline a page slice starts, so things drawn
+// just above the staff (Segno/Coda symbols, measure numbers, verse labels)
+// are not cut off. The gap between systems is ~60 units; the previous
+// system's below-staff text (To Coda, D.S. al Coda, Fine ...) needs ~20, so
+// the boundary between two systems is placed this far above the next one.
+const SOLFA_SLICE_PAD = 26
+
 // Groups system top-positions into page-sized chunks (SVG coordinate units).
 function paginateSolfaSystems(sysTops, totalH, usableFirstUnits, usableRestUnits) {
   const n = sysTops.length
-  const bottoms = sysTops.slice(1).concat([totalH])
+  // starts[i] = where system i's slice begins. The very first one begins at
+  // y=0 so the real "Doh is X" / time-signature caption above it is included.
+  const starts = sysTops.map((t, i) => (i === 0 ? 0 : Math.max(0, t - SOLFA_SLICE_PAD)))
+  const ends = starts.slice(1).concat([totalH])
   const slices = []
   let pageStart = 0
   let usable = usableFirstUnits
   for (let i = 0; i < n; i++) {
-    const heightIfIncluded = bottoms[i] - sysTops[pageStart]
+    const heightIfIncluded = ends[i] - starts[pageStart]
     if (heightIfIncluded > usable && i > pageStart) {
-      slices.push({ y: sysTops[pageStart], height: bottoms[i - 1] - sysTops[pageStart] })
+      slices.push({ y: starts[pageStart], height: ends[i - 1] - starts[pageStart] })
       pageStart = i
       usable = usableRestUnits
     }
   }
-  slices.push({ y: sysTops[pageStart], height: bottoms[n - 1] - sysTops[pageStart] })
-
-  // The very first page's crop should start at y=0, not at the first
-  // system's y. SolfaRenderer draws the real "Doh is X" / time-signature
-  // caption just above the first system (see HDR_H in SolfaRenderer) — that
-  // text is genuinely part of the SVG, already correctly styled and
-  // positioned. Starting the crop exactly at the first system's top was
-  // silently slicing that caption out of every export, which is why a
-  // separate, differently-worded, differently-styled caption had to be
-  // synthesized to compensate instead of just including the real one.
-  if (slices.length > 0) {
-    const firstBottom = slices[0].y + slices[0].height
-    slices[0] = { y: 0, height: firstBottom }
-  }
-
+  slices.push({ y: starts[pageStart], height: ends[n - 1] - starts[pageStart] })
   return slices
 }
 
@@ -391,6 +387,28 @@ export function exportSolfaPDF(score, svgElement) {
   const usableFirstUnits = (usableHmm - headerMm) * scaleUnitsPerMm
   const usableRestUnits  = usableHmm * scaleUnitsPerMm
 
+  // ── The score itself ─────────────────────────────────────────────────────
+  // Slice the SVG at system boundaries into page-sized rows (same math the
+  // Publish PDF uses), one row per printed page. Without these rows the
+  // print root contains only the header — i.e. a page with just the title.
+  const sysTops = findSolfaSystemTops(svgElement)
+  const slices = sysTops
+    ? paginateSolfaSystems(sysTops, totalH, Math.max(usableFirstUnits, 1), Math.max(usableRestUnits, 1))
+    : [{ y: 0, height: totalH }] // couldn't detect systems — one uncut block
+
+  slices.forEach((slice, i) => {
+    const row = document.createElement('div')
+    row.className = 'sf-print-row'
+    row.appendChild(cropSolfaSvg(svgElement, totalW, slice.y, slice.height))
+    if (i < slices.length - 1) {
+      row.style.breakAfter = 'page'
+      row.style.pageBreakAfter = 'always'
+    }
+    row.style.breakInside = 'avoid'
+    row.style.pageBreakInside = 'avoid'
+    pageEl.appendChild(row)
+  })
+
   // Footer — copyright/CCLI only, deliberately WITHOUT a per-page number.
   // See the matching (much longer) comment in exportScore.js's printScore()
   // for why: a fixed-height-per-page "slot" sized against an estimated or
@@ -429,7 +447,7 @@ export function exportSolfaPDF(score, svgElement) {
     }
     .sf-print-header .sf-print-meta em { font-style: italic; }
     .sf-print-row { width: 100%; }
-    .sf-print-row svg { width: 100% !important; height: auto !important; display: block; overflow: visible; }
+    .sf-print-row svg { width: 100% !important; height: auto !important; display: block; overflow: hidden; }
     .sf-print-footer {
       position: fixed; left: ${marginSide}mm; right: ${marginSide}mm; bottom: ${Math.max(2, marginBot - 4)}mm;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
