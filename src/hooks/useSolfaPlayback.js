@@ -31,6 +31,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import * as Tone from 'tone'
 import { useSolfaStore, solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
+import { buildMeasureOrder, markersFromNavigationMarkers } from '../utils/segnoNavigation'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SAMPLE MAPS
@@ -177,10 +178,25 @@ function buildSchedule(score, tempo, partMutes) {
   const secPerBeat  = 60 / bpm
   const secPerQUnit = secPerBeat / 4
   const events      = []
+  const segments    = []   // one per played measure: { playStartSec, scoreStartBeat, beats }
   let globalSec     = 0
 
   const parts = score.parts || []
   const numM  = Math.max(...parts.map(p => p.measures.length), 0)
+
+  // Score-position beat at the start of each measure (for cursor mapping).
+  const measureBeatStart = []
+  {
+    let cum = 0
+    for (let i = 0; i < numM; i++) {
+      measureBeatStart.push(cum)
+      cum += migrateMeasure(parts[0]?.measures[i])?.timeSignature?.beats || 4
+    }
+  }
+
+  // Dal Segno navigation: the order measures are actually played in. With no
+  // Segno/D.S. markers this is just 0..numM-1, so behaviour is unchanged.
+  const playOrder = buildMeasureOrder(markersFromNavigationMarkers(score.navigationMarkers), numM)
 
   // Per-part "open note" carry state — a note whose sustain (`-`) chain ran
   // off the end of a measure without hitting a new note/rest. Cross-barline
@@ -195,9 +211,17 @@ function buildSchedule(score, tempo, partMutes) {
   // extend its `dur` in place instead of losing the sustain.
   const openNoteByPart = {}
 
-  for (let mIdx = 0; mIdx < numM; mIdx++) {
+  for (let k = 0; k < playOrder.length; k++) {
+    const mIdx = playOrder[k]
+    // A jump (D.S., To Coda) breaks continuity — a sustain running out of
+    // the previous measure must not extend into the measure jumped to.
+    if (k > 0 && mIdx !== playOrder[k - 1] + 1) {
+      for (const id of Object.keys(openNoteByPart)) openNoteByPart[id] = null
+    }
+
     const refM     = migrateMeasure(parts[0]?.measures[mIdx])
     const numBeats = refM?.timeSignature?.beats || 4
+    segments.push({ playStartSec: globalSec, scoreStartBeat: measureBeatStart[mIdx] ?? 0, beats: numBeats })
 
     for (const part of parts) {
       if (partMutes?.[part.id]) continue
@@ -305,7 +329,28 @@ function buildSchedule(score, tempo, partMutes) {
   }
 
   events.sort((a, b) => a.time - b.time)
-  return { events, totalSecs: globalSec, tempo: bpm }
+  return { events, totalSecs: globalSec, tempo: bpm, segments }
+}
+
+// ── Playback time <-> score position ─────────────────────────────────────────
+// With Dal Segno navigation, elapsed playback time no longer equals position
+// in the score, so the cursor / seeking convert through the played segments.
+function secToScoreBeat(segments, sec, secPerBeat) {
+  if (!segments || segments.length === 0) return Math.max(0, sec / secPerBeat)
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (sec >= segments[i].playStartSec - 1e-6) {
+      const within = Math.min(segments[i].beats, (sec - segments[i].playStartSec) / secPerBeat)
+      return segments[i].scoreStartBeat + Math.max(0, within)
+    }
+  }
+  return 0
+}
+
+function scoreBeatToSec(segments, beat, secPerBeat) {
+  if (!segments || segments.length === 0) return Math.max(0, beat * secPerBeat)
+  const seg = segments.find(sg => beat >= sg.scoreStartBeat - 1e-6 && beat < sg.scoreStartBeat + sg.beats)
+  if (!seg) return Math.max(0, beat * secPerBeat)
+  return seg.playStartSec + (beat - seg.scoreStartBeat) * secPerBeat
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -471,6 +516,7 @@ export function useSolfaPlayback() {
   const transportStart  = useRef(0)
   const seekOffsetRef   = useRef(0)
   const totalSecsRef    = useRef(0)
+  const segmentsRef     = useRef(null)  // played-measure segments of the last built schedule
   const tempoRef        = useRef(80)
   const userTempoRef    = useRef(null)
   const loopRef         = useRef(false)
@@ -610,7 +656,7 @@ export function useSolfaPlayback() {
         return
       }
 
-      notifyBeat(Math.max(0, pos / (60 / tempoRef.current)))
+      notifyBeat(secToScoreBeat(segmentsRef.current, pos, 60 / tempoRef.current))
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
@@ -635,6 +681,7 @@ export function useSolfaPlayback() {
     const effectiveTempo  = userTempoRef.current || score.tempo || 80
     const schedule        = buildSchedule(score, effectiveTempo, partMutesRef.current)
     totalSecsRef.current  = schedule.totalSecs
+    segmentsRef.current   = schedule.segments
     tempoRef.current      = effectiveTempo
     seekOffsetRef.current = startSec
 
@@ -735,7 +782,9 @@ export function useSolfaPlayback() {
 
   const seekToBeat = useCallback(async (beat) => {
     await Tone.start()
-    const sec = Math.max(0, beat * (60 / (userTempoRef.current || score.tempo || 80)))
+    const effTempo = userTempoRef.current || score.tempo || 80
+    // Score beat -> playback time (first pass through that measure).
+    const sec = scoreBeatToSec(buildSchedule(score, effTempo, partMutesRef.current).segments, beat, 60 / effTempo)
     notifyBeat(beat)
     if (isPlayingRef.current || isPausedRef.current) await scheduleAndPlay(sec)
     else seekOffsetRef.current = sec

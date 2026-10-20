@@ -5,6 +5,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import * as Tone from 'tone'
 import { useScoreStore, noteDuration, measureCapacity } from '../store/scoreStore'
+import { buildMeasureOrder, markersFromStaffTexts } from '../utils/segnoNavigation'
 
 // ── SAMPLER CONFIG ────────────────────────────────────────────────────────────
 const SAMPLE_BASE_URL = 'https://tonejs.github.io/audio/salamander/'
@@ -63,7 +64,8 @@ function buildSchedule(score, tempo) {
   const bpm        = tempo || score.tempo || 120
   const secPerBeat = 60 / bpm
   const events     = []
-  const beatMap    = []   // one entry per measure: { measureIndex, startSec, beats }
+  const beatMap    = []   // one entry per PLAYED measure: { measureIndex, startSec, beats }
+  const segments   = []   // one per played measure: { playStartSec, scoreStartBeat, beats }
   let   globalSec  = 0
 
   const numMeasures = Math.max(...score.parts.map(p => p.measures.length), 0)
@@ -143,13 +145,24 @@ function buildSchedule(score, tempo) {
   // continuous sound", not "two notes" — until this fix every tied note
   // was scheduled as its own independent triggerAttackRelease, so tied
   // pairs re-attacked audibly instead of sustaining through.
-  const openTieByPart = {}
+  let openTieByPart = {}
 
-  for (let mIdx = 0; mIdx < numMeasures; mIdx++) {
+  // Dal Segno navigation: the order measures are actually played in. For a
+  // score with no Segno/D.S. markers this is just 0..numMeasures-1, so
+  // behaviour is unchanged.
+  const playOrder = buildMeasureOrder(markersFromStaffTexts(score.staffTexts), numMeasures)
+
+  for (let k = 0; k < playOrder.length; k++) {
+    const mIdx = playOrder[k]
+    // A jump (D.S., To Coda) breaks continuity — a note sustaining out of
+    // the previous measure must not carry into the measure we jump to.
+    if (k > 0 && mIdx !== playOrder[k - 1] + 1) openTieByPart = {}
+
     const refM     = score.parts[0]?.measures[mIdx]
     const maxBeats = measureCapacity(refM?.timeSignature)
 
     beatMap.push({ measureIndex: mIdx, startSec: globalSec, beats: maxBeats })
+    segments.push({ playStartSec: globalSec, scoreStartBeat: measureBeatStart[mIdx] ?? 0, beats: maxBeats })
 
     for (const part of score.parts) {
       const measure = part.measures[mIdx]
@@ -194,7 +207,7 @@ function buildSchedule(score, tempo) {
               notes:        companionTones,
               velocity,
               partId:       part.id,
-              beatPosition: globalSec / secPerBeat + beatCursor,
+              beatPosition: (measureBeatStart[mIdx] ?? 0) + beatCursor,
               measureIndex: mIdx,
             })
           }
@@ -217,7 +230,7 @@ function buildSchedule(score, tempo) {
               notes:        toneNotes,
               velocity,
               partId:       part.id,
-              beatPosition: globalSec / secPerBeat + beatCursor,  // absolute beat
+              beatPosition: (measureBeatStart[mIdx] ?? 0) + beatCursor,  // score-position beat
               measureIndex: mIdx,
             }
             events.push(scheduled)
@@ -236,7 +249,30 @@ function buildSchedule(score, tempo) {
     globalSec += maxBeats * secPerBeat
   }
 
-  return { events, totalSecs: globalSec, tempo: bpm, beatMap }
+  return { events, totalSecs: globalSec, tempo: bpm, beatMap, segments }
+}
+
+// ── Playback time <-> score position ─────────────────────────────────────────
+// With Dal Segno navigation, elapsed playback time no longer equals position
+// in the score, so the cursor / seeking convert through the played segments.
+function secToScoreBeat(schedule, sec, secPerBeat) {
+  const segs = schedule?.segments
+  if (!segs || segs.length === 0) return Math.max(0, sec / secPerBeat)
+  for (let i = segs.length - 1; i >= 0; i--) {
+    if (sec >= segs[i].playStartSec - 1e-6) {
+      const within = Math.min(segs[i].beats, (sec - segs[i].playStartSec) / secPerBeat)
+      return segs[i].scoreStartBeat + Math.max(0, within)
+    }
+  }
+  return 0
+}
+
+function scoreBeatToSec(schedule, beat, secPerBeat) {
+  const segs = schedule?.segments
+  if (!segs || segs.length === 0) return Math.max(0, beat * secPerBeat)
+  const seg = segs.find(sg => beat >= sg.scoreStartBeat - 1e-6 && beat < sg.scoreStartBeat + sg.beats)
+  if (!seg) return Math.max(0, beat * secPerBeat)
+  return seg.playStartSec + (beat - seg.scoreStartBeat) * secPerBeat
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
@@ -371,7 +407,7 @@ export function usePlayback() {
         setPlaybackBeat(null)
         return
       }
-      setPlaybackBeat(Math.max(0, positionSec / secPerBeat))
+      setPlaybackBeat(secToScoreBeat(scheduleRef.current, positionSec, secPerBeat))
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
@@ -495,7 +531,8 @@ export function usePlayback() {
     await Tone.start()
     const effectiveTempo = userTempoRef.current || score.tempo || 120
     const secPerBeat     = 60 / effectiveTempo
-    const targetSec      = Math.max(0, beat * secPerBeat)
+    // Score beat -> playback time (first pass through that measure).
+    const targetSec      = scoreBeatToSec(buildSchedule(score, effectiveTempo), beat, secPerBeat)
     setPlaybackBeat(beat)
     if (isPlayingRef.current || isPausedRef.current) {
       await scheduleAndPlay(targetSec)
