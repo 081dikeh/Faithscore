@@ -143,6 +143,56 @@ function measureWidth(measure, slashSet) {
   return w;
 }
 
+// ── Lyric-aware bar widths ────────────────────────────────────────────────
+// A bar used to be sized purely from its notes, so a long word under a short
+// note just spilled over its neighbours. Each note's cell is now at least as
+// wide as its lyric, and a bar grows to fit (the system then wraps sooner).
+const LYRIC_GAP = 6; // min breathing room between neighbouring lyric words
+let _lyricCtx;
+const _lyricWCache = new Map();
+function lyricTextWidth(text) {
+  const t = String(text || "");
+  if (!t) return 0;
+  const hit = _lyricWCache.get(t);
+  if (hit != null) return hit;
+  let w;
+  try {
+    if (!_lyricCtx && typeof document !== "undefined") {
+      _lyricCtx = document.createElement("canvas").getContext("2d");
+      _lyricCtx.font = `${LYR_SZ}px ${FONT}`;
+    }
+    w = _lyricCtx ? _lyricCtx.measureText(t).width : t.length * LYR_SZ * 0.5;
+  } catch (_) {
+    w = t.length * LYR_SZ * 0.5;
+  }
+  if (_lyricWCache.size > 2000) _lyricWCache.clear();
+  _lyricWCache.set(t, w);
+  return w;
+}
+
+// Natural (unscaled) cell widths of one beat's events. `lyricNeed(ev)` is how
+// wide that event's lyric wants its cell to be (0 if none / not shown); any
+// shortfall is added to the note body so the glyph stays centred under it.
+function beatCells(beat, lyricNeed) {
+  const events = beat?.events || [];
+  let offset = 0;
+  return events.map((ev, ei) => {
+    const isRest = ev.type === "rest";
+    const isLast = ei === events.length - 1;
+    const pre = isRest ? "" : getPrefix(offset);
+    const suf = isRest ? "" : getEventSuffix(ev, offset, ev.duration, isLast);
+    const preN = pre.length * SYM_W;
+    const sufN = suf.length * SYM_W;
+    let bodyN = ev.duration * QW;
+    const need = lyricNeed ? lyricNeed(ev) : 0;
+    const nat = preN + bodyN + sufN;
+    if (need > nat) bodyN += need - nat;
+    offset += ev.duration;
+    return { preN, bodyN, sufN, dur: ev.duration };
+  });
+}
+const cellsWidth = (cells) => cells.reduce((a, c) => a + c.preN + c.bodyN + c.sufN, 0);
+
 function InlineLyricEditor({ x, y, w, value, onCommit, onCancel }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -355,14 +405,53 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
       return lyricDuplication === "per-voice-copy" ? true : pIdx === 0;
     }
 
-    const rawMWs = Array.from({ length: numM }, (_, i) => {
-      const m = migrateMeasure(parts[0]?.measures[i]);
-      // Each bar's beat-separator ("/" vs ":") grouping follows ITS OWN
-      // time signature, not the score's starting one — matters once a
-      // score has a mid-score meter change.
-      const mTs = m.timeSignature || { beats: topNum, beatType: botNum };
-      return measureWidth(m, slashPositions(mTs.beats, mTs.beatType));
+    // Width a lyric wants for an event in part pIdx, bar col (0 when the
+    // event has no lyric, isn't a note, or lyrics aren't shown for that part).
+    const lyricNeedFor = (pIdx, col) => (ev) =>
+      ev.type === "note" &&
+      ev.lyric &&
+      showLyricForPart(pIdx) &&
+      !instrumentalSet.has(col)
+        ? lyricTextWidth(ev.lyric) + LYRIC_GAP
+        : 0;
+
+    // Per-bar layout shared by ALL parts, so voices stay vertically aligned:
+    //  - a beat is as wide as the widest any part needs it (notes + lyrics)
+    //  - where every part has the same rhythm in the beat, each note cell is
+    //    the widest of that cell across parts (exact vertical alignment)
+    const colLayout = Array.from({ length: numM }, (_, col) => {
+      const refM = migrateMeasure(parts[0]?.measures[col]);
+      const nb = refM?.beats?.length || 0;
+      if (!nb) {
+        return { beatW: [], cells: [], raw: PAD * 2 + QW * 4 * 4 + SEP_W * 3 };
+      }
+      const partMeasures = parts.map((p) => migrateMeasure(p.measures[col]));
+      const beatW = [];
+      const cells = [];
+      for (let bi = 0; bi < nb; bi++) {
+        const per = partMeasures.map((m, pIdx) =>
+          beatCells(m?.beats?.[bi], lyricNeedFor(pIdx, col)),
+        );
+        const sig = (cs) => cs.map((c) => c.dur).join(",");
+        const aligned = per.length > 0 && per.every((cs) => sig(cs) === sig(per[0]));
+        if (aligned && per[0].length) {
+          const shared = per[0].map((_, ei) => ({
+            dur: per[0][ei].dur,
+            preN: Math.max(...per.map((cs) => cs[ei].preN)),
+            bodyN: Math.max(...per.map((cs) => cs[ei].bodyN)),
+            sufN: Math.max(...per.map((cs) => cs[ei].sufN)),
+          }));
+          cells.push(shared);
+          beatW.push(cellsWidth(shared));
+        } else {
+          cells.push(null);
+          beatW.push(Math.max(QW * 4, ...per.map(cellsWidth)));
+        }
+      }
+      const raw = PAD * 2 + beatW.reduce((a, b) => a + b, 0) + SEP_W * (nb - 1);
+      return { beatW, cells, raw };
     });
+    const rawMWs = colLayout.map((c) => c.raw);
 
     const leftEdge = PAGE_L + BRAK_W + LABEL_W;
     const available = svgW - leftEdge - PAGE_R;
@@ -571,8 +660,8 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
           const mTs = measure.timeSignature || { beats: topNum, beatType: botNum };
           const colSlashSet = slashPositions(mTs.beats, mTs.beatType);
           const scaledMW = rawMWs[col] * sc2;
-          const rawW = measureWidth(measure, colSlashSet);
-          const sc3 = rawW > 0 ? scaledMW / rawW : 1;
+          const lay = colLayout[col];
+          const needFn = lyricNeedFor(pIdx, col);
 
           // Mid-score meter change marker — drawn once, above the top part
           // only, exactly at the bar where the time signature changes
@@ -618,15 +707,23 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
             );
           }
 
-          let x = colXs[ci] + PAD * sc3;
+          let x = colXs[ci] + PAD * sc2;
 
           measure.beats.forEach((beat, bi) => {
             const events = beat?.events || [];
 
+            // This beat's cells and its scale. The beat's width is shared by
+            // every part (so a long lyric in ANY voice widens the beat for
+            // all of them); each part spreads its own notes across it.
+            const scaledBeatW = (lay.beatW[bi] ?? QW * 4) * sc2;
+            const beatCellList = lay.cells[bi] || beatCells(beat, needFn);
+            const ownBeatW = cellsWidth(beatCellList) || QW * 4;
+            const sc3 = scaledBeatW / ownBeatW; // per-beat scale (name kept for the drawing code below)
+
             // Beat separator
             if (bi > 0) {
               const isSlash = colSlashSet.has(bi - 1);
-              const sw = SEP_W * sc3;
+              const sw = SEP_W * sc2;
               elems.push(
                 <text
                   key={`sep-${lineIdx}-${pIdx}-${col}-${bi}`}
@@ -664,9 +761,10 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
               const suf = isRest
                 ? ""
                 : getEventSuffix(ev, offset, ev.duration, isLastEv);
-              const preW = pre.length * SYM_W * sc3;
-              const bodyW = ev.duration * QW * sc3;
-              const sufW = suf.length * SYM_W * sc3;
+              const cell = beatCellList[ei];
+              const preW = cell.preN * sc3;
+              const bodyW = cell.bodyN * sc3;
+              const sufW = cell.sufN * sc3;
               const totalW = preW + bodyW + sufW;
 
               const noteX = x + preW;
@@ -1126,6 +1224,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
               x += totalW;
               offset += ev.duration;
             });
+            if (events.length === 0) x += scaledBeatW;
           });
         });
 

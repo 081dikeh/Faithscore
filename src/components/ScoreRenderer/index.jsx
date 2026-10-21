@@ -283,6 +283,35 @@ function buildVfNote(
   return sn;
 }
 
+// Rendered width (px) of a lyric syllable as it is actually drawn:
+// ctx.setFont("Times New Roman", 11, ...) is 11 POINTS in VexFlow 5, i.e.
+// 11 * 4/3 = 14.67 CSS px. Measured with a canvas (cached) so bar widths and
+// note spacing reflect the real text, not a characters-times-constant guess.
+const LYRIC_FONT_PX = (11 * 4) / 3;
+let _lyricMeasureCtx;
+const _lyricMeasureCache = new Map();
+function measureLyricPx(text) {
+  const t = String(text || "");
+  if (!t) return 0;
+  const hit = _lyricMeasureCache.get(t);
+  if (hit != null) return hit;
+  let w;
+  try {
+    if (!_lyricMeasureCtx && typeof document !== "undefined") {
+      _lyricMeasureCtx = document.createElement("canvas").getContext("2d");
+      _lyricMeasureCtx.font = `${LYRIC_FONT_PX}px "Times New Roman", Times, serif`;
+    }
+    w = _lyricMeasureCtx
+      ? _lyricMeasureCtx.measureText(t).width
+      : t.length * LYRIC_FONT_PX * 0.5;
+  } catch (_) {
+    w = t.length * LYRIC_FONT_PX * 0.5;
+  }
+  if (_lyricMeasureCache.size > 2000) _lyricMeasureCache.clear();
+  _lyricMeasureCache.set(t, w);
+  return w;
+}
+
 export default function ScoreRenderer() {
   const containerRef = useRef(null);
   const [zones, setZones] = useState([]);
@@ -404,32 +433,30 @@ export default function ScoreRenderer() {
         const m = part.measures[colIdx];
         if (!m) continue;
         const nonChord = m.notes.filter((n) => !n.chordWith);
-        const notePx = nonChord.reduce((sum, n) => {
+        // A note's slot has to be wide enough for its lyric as well: lyrics
+        // are centred on their notes, so two neighbours need their centres
+        // at least (L1 + L2) / 2 + a gap apart — the very same rule the
+        // formatter applies below (see "per-note lyric room"), so the bar is
+        // always given at least the width that spacing needs.
+        const tickW = getLyricTickWidths(colIdx);
+        let posAcc = 0;
+        const Ls = nonChord.map((n) => {
+          const key = Math.round(posAcc * 1000);
+          posAcc += noteDuration(n);
+          return tickW.get(key) || 0;
+        });
+        const notePx = nonChord.reduce((sum, n, i) => {
           const durationPx =
             (NOTE_PX[n.duration] || SP * 3) +
             (n.dots ? SP : 0) +
             (n.pitch?.accidental ? SP * 0.8 : 0);
-          // A note's slot has to be at least as wide as its lyric syllable
-          // needs, or the syllable overflows into the next note's space
-          // instead of the bar making room for it.
-          //
-          // IMPORTANT LIMITATION: VexFlow's Formatter distributes a
-          // measure's total width PROPORTIONALLY BY NOTE DURATION, not by
-          // this per-note estimate — so even though this makes the
-          // measure's TOTAL width correctly account for a long lyric, the
-          // formatter doesn't know WHICH note the extra width is for. In a
-          // measure with several notes of the same duration, the surplus
-          // gets spread evenly across all of them rather than concentrated
-          // on the one that actually needs it, so a lyric noticeably
-          // longer than its neighbors can still crowd into the next note's
-          // space in some cases. Correctly fixing that needs VexFlow's
-          // TickContext.setPadding() on the specific note — real, but a
-          // second formatting pass I want to test properly before
-          // shipping rather than bolt on unverified. This estimate is
-          // deliberately generous (not just "exactly enough") specifically
-          // to reduce how often that gap actually matters in practice.
-          const lyricPx = n.lyric ? n.lyric.length * (11 * 0.7) + SP * 1.5 : 0;
-          return sum + Math.max(durationPx, lyricPx);
+          const L = Ls[i];
+          const Ln = i + 1 < Ls.length ? Ls[i + 1] : null;
+          const needPx =
+            Ln != null
+              ? (L + Ln) / 2 + (L > 0 && Ln > 0 ? SP * 0.8 : 0)
+              : L / 2 + SP * 1.2; // last note: half its word + barline room
+          return sum + Math.max(durationPx, needPx);
         }, 0);
         if (notePx > maxNotePx) maxNotePx = notePx;
       }
@@ -437,6 +464,30 @@ export default function ScoreRenderer() {
         MIN_MEASURE_WIDTH,
         Math.min(MAX_MEASURE_WIDTH, maxNotePx),
       );
+    }
+
+    // Widest lyric starting at each beat position of bar `colIdx`, across ALL
+    // parts. Using the shared maximum (not each part's own lyric) means voices
+    // with the same rhythm still get identical note spacing, so notes stay
+    // vertically aligned even when only some voices carry that lyric.
+    const lyricTickWidthCache = {};
+    function getLyricTickWidths(colIdx) {
+      if (lyricTickWidthCache[colIdx]) return lyricTickWidthCache[colIdx];
+      const map = new Map();
+      for (const part of score.parts) {
+        const m = part.measures[colIdx];
+        if (!m) continue;
+        let pos = 0;
+        m.notes
+          .filter((n) => !n.chordWith)
+          .forEach((n) => {
+            const key = Math.round(pos * 1000);
+            const w = n.lyric ? measureLyricPx(n.lyric) : 0;
+            if (w > (map.get(key) || 0)) map.set(key, w);
+            pos += noteDuration(n);
+          });
+      }
+      return (lyricTickWidthCache[colIdx] = map);
     }
 
     // First-measure overhead: clef + key sig + time sig
@@ -837,7 +888,76 @@ export default function ScoreRenderer() {
               40,
               width - glyphOverhead - BARLINE_PAD_LEFT - BARLINE_PAD_RIGHT,
             );
-            new Formatter().joinVoices([voice]).format([voice], formatterWidth);
+            const formatter = new Formatter().joinVoices([voice]);
+            let formatted = false;
+            try {
+              // VexFlow justifies a bar by note DURATION and ignores each
+              // note's own minimum room, so a long syllable under a short
+              // note crowds its neighbour. So after VexFlow has laid the bar
+              // out we re-place the notes ourselves:
+              //   * lyrics are drawn centred on their notes, so two
+              //     neighbours need their centres at least (L1 + L2) / 2 +
+              //     a small gap apart (never less than VexFlow's own
+              //     minimum for the notes themselves);
+              //   * any width left over after that is shared out in
+              //     proportion to VexFlow's own spacing, so the bar still
+              //     fills its width and keeps its duration-proportional feel;
+              //   * the first / last lyric also get room towards the
+              //     barlines so they don't spill into the next bar.
+              const tickW = getLyricTickWidths(col);
+              if (tickW.size) {
+                const softmax = formatter.formatterOptions?.softmaxFactor;
+                if (softmax) voice.setSoftmaxFactor(softmax);
+                formatter.createTickContexts([voice]);
+                const tcs = vfNotes.map((vfn) => vfn.getTickContext());
+
+                formatter.preFormat(0); // notes packed at their minimum
+                const minX = tcs.map((tc) => tc.getX());
+                formatter.preFormat(formatterWidth, undefined, [voice]);
+                const idealX = tcs.map((tc) => tc.getX());
+
+                let pos = 0;
+                const Ls = renderSeq.map((n) => {
+                  const key = Math.round(pos * 1000);
+                  pos += noteDuration(n);
+                  return tickW.get(key) || 0;
+                });
+                const n = tcs.length;
+                if (n > 1) {
+                  const LYRIC_GAP_PX = SP * 0.8;
+                  const minD = [];
+                  const idealD = [];
+                  for (let i = 0; i < n - 1; i++) {
+                    const need =
+                      (Ls[i] + Ls[i + 1]) / 2 +
+                      (Ls[i] > 0 && Ls[i + 1] > 0 ? LYRIC_GAP_PX : 0);
+                    minD.push(Math.max(minX[i + 1] - minX[i], need));
+                    idealD.push(Math.max(idealX[i + 1] - idealX[i], 0.01));
+                  }
+                  // Keep the first / last lyric clear of the barlines.
+                  const startShift = Math.max(0, Ls[0] / 2 - SP * 2.2);
+                  const endShift = Math.max(0, Ls[n - 1] / 2 - (BARLINE_PAD_RIGHT + SP * 0.5));
+                  const x0 = idealX[0] + startShift;
+                  const span = Math.max(0, idealX[n - 1] - endShift - x0);
+                  const minSum = minD.reduce((a, d) => a + d, 0);
+                  const idealSum = idealD.reduce((a, d) => a + d, 0);
+                  const surplus = Math.max(0, span - minSum);
+                  let x = x0;
+                  tcs[0].setX(x);
+                  for (let i = 0; i < n - 1; i++) {
+                    x += minD[i] + (surplus * idealD[i]) / idealSum;
+                    tcs[i + 1].setX(x);
+                  }
+                }
+                formatted = true;
+              }
+            } catch (_) {
+              formatted = false;
+            }
+            if (!formatted) {
+              // Fallback: plain VexFlow formatting (no lyric-aware spacing).
+              new Formatter().joinVoices([voice]).format([voice], formatterWidth);
+            }
 
             // Re-apply stem directions AFTER formatting — Formatter.format() resets
             // stem_direction to its own auto-calculated value, overriding ours.
