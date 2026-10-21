@@ -856,18 +856,25 @@ export default function ScoreRenderer() {
 
             // ── Beaming ─────────────────────────────────────────────────────
             //
-            // Standard engraving beam grouping rules:
-            //   4/4  → [4,4]       beam in half-note pulses
-            //   3/4  → [2,2,2]     beam per quarter beat
-            //   2/4  → [4]         all eighths in one beam
-            //   6/8  → [3,3]       two dotted-quarter pulses
-            //   9/8  → [3,3,3]     three dotted-quarter pulses
-            //   12/8 → [3,3,3,3]   four dotted-quarter pulses
+            // Beam grouping follows MuseScore's defaults. Groups below are in
+            // EIGHTH-NOTE units and apply to EIGHTH notes:
+            //   4/4  → [4,4]       beats 1–2 | 3–4 (never across the middle)
+            //   3/4  → [2,2,2]     one beam per beat
+            //   2/4  → [4]         all four eighths together
+            //   2/2  → [4,4]       like 4/4
+            //   5/4  → [6,4]       3+2
+            //   7/4  → [6,4,4]     3+2+2
+            //   6/8  → [3,3]  9/8 → [3,3,3]  12/8 → [3,3,3,3]
+            //   5/8  → [3,2]       7/8 → [3,2,2]
+            // SIXTEENTH (and shorter) notes break more finely: at every beat
+            // in simple meters (groups of 4 sixteenths), and at the group
+            // boundaries above in compound/irregular (8-based) meters.
             //
             // Algorithm:
             //   1. Walk vfNotes in original order (never pre-filter).
             //   2. Non-beamable note or rest → close current run immediately.
-            //   3. Beat-group boundary crossing → close current run, start new.
+            //   3. A note starting on a break point FOR ITS OWN DURATION
+            //      closes the current run and starts a new one.
             //   4. Run of 2+ beamable notes → build Beam with group-avg stem dir.
 
             function getBeamGrouping(ts) {
@@ -877,8 +884,9 @@ export default function ScoreRenderer() {
                 if (beats === 2) return [4];
                 if (beats === 3) return [2, 2, 2];
                 if (beats === 4) return [4, 4];
-                if (beats === 5) return [4, 2];
+                if (beats === 5) return [6, 4];
                 if (beats === 6) return [4, 4, 4];
+                if (beats === 7) return [6, 4, 4];
                 return Array(beats).fill(2);
               }
               if (beatType === 2) {
@@ -886,7 +894,7 @@ export default function ScoreRenderer() {
               }
               if (beatType === 8) {
                 if (beats % 3 === 0) return Array(beats / 3).fill(3);
-                const IRR = { 5: [3, 2], 7: [2, 2, 3], 11: [3, 3, 3, 2] };
+                const IRR = { 5: [3, 2], 7: [3, 2, 2], 11: [3, 3, 3, 2] };
                 if (IRR[beats]) return IRR[beats];
                 const g = [];
                 let r = beats;
@@ -913,11 +921,20 @@ export default function ScoreRenderer() {
                 return boundAcc;
               });
 
-              function groupOf(tick) {
-                for (let gi = 0; gi < bounds.length; gi++) {
-                  if (tick < bounds[gi] - 0.5) return gi;
+              // Internal group boundaries (the end of the bar is not a break).
+              const groupBreaks = bounds.slice(0, -1);
+              // 8-based meters group by the dotted-beat groups above; every
+              // other meter has a plain quarter-note beat for 16ths and below.
+              const quarterBeat = (measure.timeSignature?.beatType || 4) !== 8;
+              const EPS = 1;
+              function isBreak(tick, denom) {
+                if (groupBreaks.some((b) => Math.abs(tick - b) < EPS)) return true;
+                if (denom >= 16 && quarterBeat) {
+                  const q = 16384 / 4;
+                  const r = tick % q;
+                  if (r < EPS || q - r < EPS) return true;
                 }
-                return bounds.length - 1;
+                return false;
               }
 
               // Set a single stem direction across the entire run based on
@@ -966,58 +983,41 @@ export default function ScoreRenderer() {
 
               let run = [],
                 runSeq = [],
-                runGrp = -1,
                 tickPos = 0;
 
               vfNotes.forEach((vfNote, ni) => {
                 let dur = "",
                   isBeamable = false,
-                  noteTicks = 16384 / 4;
+                  denom = 4;
                 try {
                   dur = vfNote.getDuration();
-                } catch (_) {}
-                try {
                   const isRest = vfNote.isRest ? vfNote.isRest() : false;
                   isBeamable = BEAMABLE.has(dur) && !isRest;
-                  const denom = parseInt(dur, 10);
-                  if (denom >= 8) {
-                    noteTicks = 16384 / denom;
-                    const dots = vfNote.dots != null ? vfNote.dots : 0;
-                    let dotVal = noteTicks / 2;
-                    for (let d = 0; d < dots; d++) {
-                      noteTicks += dotVal;
-                      dotVal /= 2;
-                    }
-                  }
+                  denom = parseInt(dur, 10) || 4;
                 } catch (_) {}
 
-                // CRITICAL: a tuplet note's actual sounding duration is
-                // shorter than its written value (a triplet eighth takes
-                // 1/3 beat, not 1/2). Without this adjustment, tick
-                // advancement silently assumes the full written duration
-                // for every triplet member, which pushes every beam-group
-                // boundary after the triplet off by the difference — wrong
-                // beaming for the REST OF THE BAR, not just the triplet.
+                // Real sounding length of this note, from the same model the
+                // rest of the app uses (noteDuration: quarter = 1 beat). This
+                // covers dots on ANY value (dotted quarter, dotted half…),
+                // half/whole notes, and tuplets (a triplet eighth is 1/3 beat,
+                // not 1/2). A previous version only counted dots on eighths
+                // and shorter and treated every half/whole note as a quarter,
+                // which pushed every later beam boundary in the bar off.
                 const seqN = renderSeq[ni];
-                if (seqN?.tuplet) {
-                  noteTicks *= seqN.tuplet.den / seqN.tuplet.num;
-                } else if (seqN?.triplet) {
-                  noteTicks *= 2 / 3;
-                }
+                const noteTicks = seqN
+                  ? noteDuration(seqN) * (16384 / 4)
+                  : 16384 / 4;
 
                 if (!isBeamable) {
                   flushRun(run, runSeq);
                   run = [];
                   runSeq = [];
-                  runGrp = -1;
                 } else {
-                  const g = groupOf(tickPos);
-                  if (run.length > 0 && g !== runGrp) {
+                  if (run.length > 0 && isBreak(tickPos, denom)) {
                     flushRun(run, runSeq);
                     run = [];
                     runSeq = [];
                   }
-                  if (run.length === 0) runGrp = g;
                   run.push(vfNote);
                   runSeq.push(renderSeq[ni]);
                 }
