@@ -460,10 +460,79 @@ export default function ScoreRenderer() {
         }, 0);
         if (notePx > maxNotePx) maxNotePx = notePx;
       }
-      return Math.max(
+      const estimate = Math.max(
         MIN_MEASURE_WIDTH,
         Math.min(MAX_MEASURE_WIDTH, maxNotePx),
       );
+      // The estimate above is a fixed width per note value; it can't know
+      // about accidentals, dots, beamed 16ths/32nds, ties… that make a bar
+      // physically need more room. So a bar is NEVER narrower than what
+      // VexFlow itself says its notes need (plus lyric room). It is only
+      // limited by the page: a bar can't be wider than a whole line.
+      const needed = getVexMinContent(colIdx);
+      const wanted = Math.max(estimate, needed);
+      const pageCap = USABLE_W - getGlyphOverhead(colIdx, true) - SP * 1.2;
+      return Math.max(MIN_MEASURE_WIDTH, Math.min(wanted, pageCap));
+    }
+
+    // Minimum width (px) a bar's notes need, per VexFlow's own metrics: the
+    // notes are packed at their minimum spacing (no justification) and the
+    // widest part wins, so every stave in the system can share one width.
+    // Lyric spacing is added with the same rule the formatter uses later.
+    const vexMinCache = {};
+    function getVexMinContent(colIdx) {
+      if (vexMinCache[colIdx] != null) return vexMinCache[colIdx];
+      let best = 0;
+      try {
+        const tickW = getLyricTickWidths(colIdx);
+        for (const part of score.parts) {
+          const measure = part.measures[colIdx];
+          if (!measure) continue;
+          const clef = part.clef || "treble";
+          const chordMap = {};
+          measure.notes.forEach((n) => {
+            if (n.chordWith) (chordMap[n.chordWith] ||= []).push(n);
+          });
+          const seq = measure.notes.filter((n) => !n.chordWith);
+          if (!seq.length) continue;
+          const keyAcc = keySignatureAccidentals(measure.keySignature ?? 0);
+          const accState = {};
+          const vfs = seq.map((n) =>
+            buildVfNote(n, clef, false, chordMap[n.id] || [], keyAcc, accState),
+          );
+          const voice = new Voice({
+            numBeats: measure.timeSignature.beats,
+            beatValue: measure.timeSignature.beatType,
+          }).setStrict(false);
+          voice.addTickables(vfs);
+          const f = new Formatter().joinVoices([voice]);
+          f.createTickContexts([voice]);
+          f.preFormat(0);
+          const tcs = vfs.map((v) => v.getTickContext());
+          const xs = tcs.map((tc) => tc.getX());
+          const trailing = Math.max(0, f.getMinTotalWidth() - xs[xs.length - 1]);
+          let pos = 0;
+          const Ls = seq.map((n) => {
+            const key = Math.round(pos * 1000);
+            pos += noteDuration(n);
+            return tickW.get(key) || 0;
+          });
+          let total = trailing + Math.max(0, Ls[Ls.length - 1] / 2 - SP * 1.3);
+          for (let i = 0; i < xs.length - 1; i++) {
+            const need =
+              (Ls[i] + Ls[i + 1]) / 2 +
+              (Ls[i] > 0 && Ls[i + 1] > 0 ? SP * 0.8 : 0);
+            total += Math.max(xs[i + 1] - xs[i], need);
+          }
+          total += Math.max(0, Ls[0] / 2 - SP * 2.2) + xs[0];
+          if (total > best) best = total;
+        }
+      } catch (_) {
+        best = 0;
+      }
+      // + the formatter's own left padding and a little breathing room
+      best = best > 0 ? best + Stave.defaultPadding + SP * 0.8 : 0;
+      return (vexMinCache[colIdx] = best);
     }
 
     // Widest lyric starting at each beat position of bar `colIdx`, across ALL
@@ -490,8 +559,53 @@ export default function ScoreRenderer() {
       return (lyricTickWidthCache[colIdx] = map);
     }
 
-    // First-measure overhead: clef + key sig + time sig
+    // Real width taken by the clef / key signature / time signature (and any
+    // mid-line change glyphs) on this bar, measured from an actual VexFlow
+    // Stave. Falls back to the old estimate if that can't be measured.
+    const overheadCache = {};
     function getGlyphOverhead(colIdx, isFirstInLine) {
+      const ck = `${colIdx}:${isFirstInLine ? 1 : 0}`;
+      if (overheadCache[ck] != null) return overheadCache[ck];
+      let v;
+      try {
+        v = 0;
+        for (const part of score.parts) {
+          const measure = part.measures[colIdx];
+          if (!measure) continue;
+          const st = new Stave(0, 0, 4000);
+          const prev = part.measures[colIdx - 1];
+          const ks = measure.keySignature ?? 0;
+          const prevKs = prev?.keySignature;
+          const ts = measure.timeSignature;
+          if (isFirstInLine) {
+            st.addClef(part.clef || "treble");
+            st.addKeySignature(
+              keyNumToVexflow(ks),
+              prevKs !== undefined && prevKs !== ks
+                ? keyNumToVexflow(prevKs)
+                : undefined,
+            );
+            st.addTimeSignature(`${ts.beats}/${ts.beatType}`);
+          } else {
+            if ((prevKs ?? 0) !== ks) {
+              st.addKeySignature(keyNumToVexflow(ks), keyNumToVexflow(prevKs ?? 0));
+            }
+            const pts = prev?.timeSignature;
+            if (pts && (pts.beats !== ts.beats || pts.beatType !== ts.beatType)) {
+              st.addTimeSignature(`${ts.beats}/${ts.beatType}`);
+            }
+          }
+          v = Math.max(v, st.getNoteStartX());
+        }
+        if (!(v > 0)) v = estimateGlyphOverhead(colIdx, isFirstInLine);
+      } catch (_) {
+        v = estimateGlyphOverhead(colIdx, isFirstInLine);
+      }
+      return (overheadCache[ck] = v);
+    }
+
+    // First-measure overhead: clef + key sig + time sig (rough estimate)
+    function estimateGlyphOverhead(colIdx, isFirstInLine) {
       if (isFirstInLine) {
         const keySig = score.parts[0]?.measures[colIdx]?.keySignature ?? 0;
         return SP * 2.2 + Math.abs(keySig) * SP * 0.7 + SP * 1.6 + SP * 0.6;
@@ -553,7 +667,7 @@ export default function ScoreRenderer() {
         const needed = overhead + content + SP * 1.2;
 
         // Hard break: adding this measure would exceed usable width
-        if (colCount > 0 && lineWidth + needed > USABLE_W + SP * 2) break;
+        if (colCount > 0 && lineWidth + needed > USABLE_W) break;
         // Soft break: reached preferred bars-per-line (manual mode only)
         if (colCount >= preferredMax && preferredMax > 0) break;
 
@@ -697,7 +811,11 @@ export default function ScoreRenderer() {
       const isLastLine = lineIdx === totalLines - 1;
       // Last line: don't stretch — leave natural spacing
       const justifyScale =
-        !isLastLine && totalMinW < USABLE_W ? USABLE_W / totalMinW : 1;
+        totalMinW > USABLE_W
+          ? USABLE_W / totalMinW // never run off the page
+          : !isLastLine
+            ? USABLE_W / totalMinW
+            : 1;
       const colWidths = colMinWidths.map((w) => Math.floor(w * justifyScale));
       // Distribute rounding remainder to last column
       const allocated = colWidths.reduce((a, b) => a + b, 0);
@@ -884,9 +1002,15 @@ export default function ScoreRenderer() {
             // instead of just shrinking the trailing gap in isolation.
             const BARLINE_PAD_LEFT = SP * 2;
             const BARLINE_PAD_RIGHT = SP * 0.8;
+            // Use the stave's real note area (what is left after the clef /
+            // key / time glyphs it actually drew), not an estimate of it —
+            // an underestimate here is what pushed notes past the barline.
             const formatterWidth = Math.max(
               40,
-              width - glyphOverhead - BARLINE_PAD_LEFT - BARLINE_PAD_RIGHT,
+              stave.getNoteEndX() -
+                stave.getNoteStartX() -
+                Stave.defaultPadding -
+                BARLINE_PAD_RIGHT * 0.5,
             );
             const formatter = new Formatter().joinVoices([voice]);
             let formatted = false;
