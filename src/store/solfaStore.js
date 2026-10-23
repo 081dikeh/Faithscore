@@ -43,6 +43,7 @@
 //  12/x → after idx 2,5,8
 
 import { create } from 'zustand'
+import { withNoteLyric, splitLyricText, resolveVerses, nextVerseNumber } from '../utils/lyricVerses'
 
 export const SOLFA_SEMITONES = {d:0,de:1,r:2,ri:3,m:4,f:5,fe:6,s:7,se:8,l:9,ta:10,t:11}
 // Full 12-semitone chromatic cycle, derived from SOLFA_SEMITONES itself
@@ -430,23 +431,88 @@ export const useSolfaStore = create((set,get) => ({
     set(s => ({ score: { ...s.score, lyricDuplication: mode } }))
   },
 
+  // ── Verses ─────────────────────────────────────────────────────────────────
+  // See utils/lyricVerses.js for the data model. Verse 1 lives in event.lyric;
+  // verses 2+ live in event.lyrics[n]. score.verses holds each verse's SETTINGS
+  // (where it prints, under which voices) and, for "below score" verses, text.
+
+  // Which verse a click under a note writes to (transient — not saved).
+  activeLyricVerse: 1,
+  setActiveLyricVerse: (n) => set({ activeLyricVerse: n }),
+
   addVerse: (label) => {
     get()._snapshot()
+    const number = nextVerseNumber(get().score)
+    set(s => ({
+      activeLyricVerse: number,
+      score: { ...s.score, verses: [
+        ...(s.score.verses || []),
+        { number, tag: `${number}.`, label: label || `Verse ${number}`, placement: 'inline', voices: 'auto', text: '' },
+      ] },
+    }))
+    return number
+  },
+
+  // Create-or-update a verse's settings (verse 1 has no entry until changed).
+  // Live text edits pass snapshot=false so typing isn't one undo step per key.
+  setVerseProps: (number, patch, snapshot = true) => {
+    if (snapshot) get()._snapshot()
     set(s => {
       const verses = s.score.verses || []
-      const nextNum = verses.length ? Math.max(...verses.map(v=>v.number)) + 1 : 2
-      return { score: { ...s.score, verses: [...verses, { number: nextNum, label: label || `Verse ${nextNum}`, text: '' }] } }
+      const exists = verses.some(v => v.number === number)
+      const base = { number, tag: `${number}.`, label: `Verse ${number}`, placement: 'inline', voices: 'auto', text: '' }
+      const next = exists
+        ? verses.map(v => v.number === number ? { ...v, ...patch } : v)
+        : [...verses, { ...base, ...patch }]
+      return { score: { ...s.score, verses: next } }
     })
   },
 
-  // Live text/label edits — not undo-snapshotted per keystroke, same as setLyric
-  updateVerse: (number, patch) => {
-    set(s => ({ score: { ...s.score, verses: (s.score.verses||[]).map(v => v.number===number ? { ...v, ...patch } : v) } }))
+  // kept for older call sites
+  updateVerse: (number, patch) => get().setVerseProps(number, patch, false),
+
+  // Removing a verse also removes the syllables typed under notes for it.
+  removeVerse: (number) => {
+    if (number === 1) return
+    get()._snapshot()
+    set(s => ({
+      activeLyricVerse: s.activeLyricVerse === number ? 1 : s.activeLyricVerse,
+      score: {
+        ...s.score,
+        verses: (s.score.verses||[]).filter(v => v.number !== number),
+        parts: s.score.parts.map(p => ({ ...p, measures: p.measures.map(m0 => {
+          const m = migrateMeasure(m0)
+          return { ...m, beats: m.beats.map(b => ({ ...b, events: b.events.map(ev =>
+            ev.lyrics && ev.lyrics[number] ? withNoteLyric(ev, number, '') : ev) })) }
+        }) })),
+      },
+    }))
   },
 
-  removeVerse: (number) => {
+  // Spread typed lyrics over the NOTES of one or more voices, one syllable per
+  // note, starting at `fromMeasure`. Whatever the verse already had from that
+  // point on is replaced, so running it twice gives the same result.
+  fillVerseFromText: (partIds, verse, text, fromMeasure = 0) => {
+    const ids = Array.isArray(partIds) ? partIds : [partIds]
+    const tokens = splitLyricText(text)
     get()._snapshot()
-    set(s => ({ score: { ...s.score, verses: (s.score.verses||[]).filter(v => v.number !== number) } }))
+    set(s => ({
+      score: { ...s.score, parts: s.score.parts.map(p => {
+        if (!ids.includes(p.id)) return p
+        let k = 0
+        const measures = p.measures.map((m0, mi) => {
+          if (mi < fromMeasure) return m0
+          const m = migrateMeasure(m0)
+          return { ...m, beats: m.beats.map(b => ({ ...b, events: b.events.map(ev => {
+            if (ev.type !== 'note') return ev
+            const tok = k < tokens.length ? tokens[k] : ''
+            k++
+            return withNoteLyric(ev, verse, tok)
+          }) })) }
+        })
+        return { ...p, measures }
+      }) },
+    }))
   },
 
   addNavigationMarker: (type, atMeasure, label, verseNumber=null) => {
@@ -766,7 +832,7 @@ export const useSolfaStore = create((set,get) => ({
     })
   },
 
-  setLyric: (partId,measureIdx,beatIdx,eventIdx,lyric) => {
+  setLyric: (partId,measureIdx,beatIdx,eventIdx,lyric,verse=1) => {
     set(s=>{
       const parts=s.score.parts.map(p=>{
         if (p.id!==partId) return p
@@ -774,7 +840,7 @@ export const useSolfaStore = create((set,get) => ({
           if (mi!==measureIdx) return m
           const beats=m.beats.map((b,bi)=>{
             if (bi!==beatIdx) return b
-            const events=b.events.map((ev,ei)=>ei===eventIdx?{...ev,lyric}:ev)
+            const events=b.events.map((ev,ei)=>ei===eventIdx?withNoteLyric(ev,verse,lyric):ev)
             return {...b,events}
           })
           return {...m,beats}

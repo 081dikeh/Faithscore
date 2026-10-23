@@ -1,5 +1,6 @@
 // src/store/scoreStore.js
 import { create } from 'zustand'
+import { withNoteLyric, splitLyricText, nextVerseNumber } from '../utils/lyricVerses'
 
 // ── Auto-save helpers ─────────────────────────────────────────────────────────
 const AUTOSAVE_KEY = 'scoreai_autosave'
@@ -418,6 +419,91 @@ export const useScoreStore = create((set, get) => ({
   setArranger:  (a) => set(s => ({ score: { ...s.score, arranger: a } })),
   setCopyright: (c) => set(s => ({ score: { ...s.score, copyright: c } })),
   setCcli:      (c) => set(s => ({ score: { ...s.score, ccli: c } })),
+
+  // ── Verses ───────────────────────────────────────────────────────────────
+  // See utils/lyricVerses.js for the data model. Verse 1 lives in note.lyric,
+  // verses 2+ in note.lyrics[n]; score.verses holds each verse's settings
+  // (placement, which voices) and the text of "below the score" verses.
+
+  // Which verse the Lyric box / 'L' shortcut writes to (transient, not saved).
+  activeLyricVerse: 1,
+  setActiveLyricVerse: (n) => set({ activeLyricVerse: n }),
+
+  addVerse: (label) => {
+    get()._snapshot()
+    const number = nextVerseNumber(get().score)
+    const score = { ...get().score, verses: [
+      ...(get().score.verses || []),
+      { number, tag: `${number}.`, label: label || `Verse ${number}`, placement: 'inline', voices: 'auto', text: '' },
+    ] }
+    saveToStorage(score)
+    set({ score, activeLyricVerse: number })
+    return number
+  },
+
+  // Create-or-update a verse's settings (verse 1 has no entry until changed).
+  // Live text edits pass snapshot=false so typing isn't one undo step per key.
+  setVerseProps: (number, patch, snapshot = true) => {
+    if (snapshot) get()._snapshot()
+    const cur = get().score
+    const verses = cur.verses || []
+    const base = { number, tag: `${number}.`, label: `Verse ${number}`, placement: 'inline', voices: 'auto', text: '' }
+    const next = verses.some(v => v.number === number)
+      ? verses.map(v => v.number === number ? { ...v, ...patch } : v)
+      : [...verses, { ...base, ...patch }]
+    const score = { ...cur, verses: next }
+    saveToStorage(score)
+    set({ score })
+  },
+
+  // Removing a verse also removes the syllables typed under notes for it.
+  removeVerse: (number) => {
+    if (number === 1) return
+    get()._snapshot()
+    const cur = get().score
+    const score = {
+      ...cur,
+      verses: (cur.verses || []).filter(v => v.number !== number),
+      parts: cur.parts.map(p => ({ ...p, measures: p.measures.map(m => ({
+        ...m, notes: m.notes.map(n => (n.lyrics && n.lyrics[number]) ? withNoteLyric(n, number, '') : n),
+      })) })),
+    }
+    saveToStorage(score)
+    set(s => ({ score, activeLyricVerse: s.activeLyricVerse === number ? 1 : s.activeLyricVerse }))
+  },
+
+  // Spread typed lyrics over the NOTES of one or more voices, one syllable per
+  // note from `fromMeasure` on. Rests, chord companions and notes that are the
+  // far end of a tie get no syllable (a tie is one sung note). Whatever the
+  // verse already had from that point is replaced, so running it twice gives
+  // the same result.
+  fillVerseFromText: (partIds, verse, text, fromMeasure = 0) => {
+    const ids = Array.isArray(partIds) ? partIds : [partIds]
+    const tokens = splitLyricText(text)
+    get()._snapshot()
+    const cur = get().score
+    const score = { ...cur, parts: cur.parts.map(p => {
+      if (!ids.includes(p.id)) return p
+      let k = 0
+      let afterTie = false
+      const measures = p.measures.map((m, mi) => {
+        if (mi < fromMeasure) return m
+        const notes = m.notes.map(n => {
+          if (n.chordWith) return n
+          if (n.isRest) { afterTie = false; return n }
+          if (afterTie) { afterTie = !!n.tieStart; return n }
+          afterTie = !!n.tieStart
+          const tok = k < tokens.length ? tokens[k] : ''
+          k++
+          return withNoteLyric(n, verse, tok)
+        })
+        return { ...m, notes }
+      })
+      return { ...p, measures }
+    }) }
+    saveToStorage(score)
+    set({ score })
+  },
 
   // A transient (non-persisted) callback the currently-mounted lyric
   // <input> registers itself under, so the global keyboard handler (App.jsx,

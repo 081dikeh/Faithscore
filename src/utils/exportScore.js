@@ -162,7 +162,11 @@ export function exportMusicXML(score) {
             acc ? xml('accidental', {}, acc) : '',
             n.dots ? xml('dot', {}) : '',
             n.tieStart ? xml('tie', { type: 'start' }) : '',
-            n.lyric ? xml('lyric', { number: '1' }, xmlLeaf('text', n.lyric)) : '',
+            // verse 1 is note.lyric, verses 2+ are note.lyrics[n]
+            ...[[1, n.lyric], ...Object.entries(n.lyrics || {}).map(([k, t]) => [Number(k), t])]
+              .filter(([, t]) => t)
+              .sort((a, b) => a[0] - b[0])
+              .map(([num, t]) => xml('lyric', { number: String(num) }, xmlLeaf('text', t))),
             notations,
           ))
         }
@@ -388,8 +392,13 @@ export function importMusicXML(xmlText) {
             if (Array.from(child.querySelectorAll('tie')).some(t => t.getAttribute('type') === 'start')) {
               noteObj.tieStart = true
             }
-            const lyricText = child.querySelector('lyric > text')?.textContent
-            if (lyricText) noteObj.lyric = lyricText
+            child.querySelectorAll('lyric').forEach(ly => {
+              const t = ly.querySelector('text')?.textContent
+              if (!t) return
+              const num = parseInt(ly.getAttribute('number') || '1', 10)
+              if (!num || num === 1) noteObj.lyric = t
+              else (noteObj.lyrics ||= {})[num] = t
+            })
 
             const arts = []
             child.querySelectorAll('notations > articulations > *').forEach(a => { if (XML_TO_ARTICULATION[a.tagName]) arts.push(XML_TO_ARTICULATION[a.tagName]) })

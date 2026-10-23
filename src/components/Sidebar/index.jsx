@@ -12,10 +12,13 @@
 import { useState } from 'react'
 import { Search } from 'lucide-react'
 import { useScoreStore, measureCapacity } from '../../store/scoreStore'
+import VersePanel from '../VersePanel'
+import { verseNumbersInNotes } from '../../utils/lyricVerses'
 
 const TABS = [
   { id:'palettes',   label:'Palettes'   },
   { id:'parts',      label:'Parts'      },
+  { id:'lyrics',     label:'Lyrics'     },
   { id:'layout',     label:'Layout'     },
   { id:'properties', label:'Properties' },
 ]
@@ -485,6 +488,29 @@ function PropertiesTab() {
 }
 
 // ── Main Sidebar component ───────────────────────────────────────────────────
+// ── Lyrics & verses ──────────────────────────────────────────────────────────
+// Which voices an "Automatic" verse goes under: every voice that already has
+// words typed (any verse); the first voice if nothing is typed yet.
+function staffAutoVoiceIds(score) {
+  const withWords = score.parts
+    .filter(p => verseNumbersInNotes(p.measures.flatMap(m => m.notes)).size > 0)
+    .map(p => p.id)
+  return withWords.length ? withWords : (score.parts[0] ? [score.parts[0].id] : [])
+}
+
+function LyricsTab() {
+  return (
+    <div style={{ padding:'12px 12px 18px' }}>
+      <VersePanel
+        useStore={useScoreStore}
+        partLabel={p => p.name || p.label || 'Part'}
+        autoVoiceIds={staffAutoVoiceIds}
+        autoHint="Shown under every voice that has words for this verse — type under a voice and it appears there."
+      />
+    </div>
+  )
+}
+
 export default function Sidebar({ collapsed, setCollapsed }) {
   const [activeTab, setActiveTab] = useState('palettes')
   const [search,    setSearch   ] = useState('')
@@ -563,6 +589,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
       <div style={{ flex:1, overflowY:'auto', overflowX:'hidden' }}>
         {activeTab==='palettes'   && <PalettesTab   search={search} />}
         {activeTab==='parts'      && <PartsTab />}
+        {activeTab==='lyrics'     && <LyricsTab />}
         {activeTab==='layout'     && <LayoutTab />}
         {activeTab==='properties' && <PropertiesTab />}
       </div>

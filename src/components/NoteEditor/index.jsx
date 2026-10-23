@@ -2,6 +2,7 @@
 import { useEffect, useRef } from 'react'
 import { useScoreStore } from '../../store/scoreStore'
 import { Trash2, X } from 'lucide-react'
+import { getNoteLyric, withNoteLyric, resolveVerses } from '../../utils/lyricVerses'
 
 const STEPS     = ['C','D','E','F','G','A','B']
 const OCTAVES   = [2,3,4,5,6]
@@ -53,6 +54,9 @@ export default function NoteEditor() {
   const setChordMode           = useScoreStore(s => s.setChordMode)
   const _applyToMeasure        = useScoreStore(s => s._applyToMeasure)
   const registerLyricInputFocuser = useScoreStore(s => s.registerLyricInputFocuser)
+  const score                = useScoreStore(s => s.score)
+  const activeLyricVerse     = useScoreStore(s => s.activeLyricVerse)
+  const setActiveLyricVerse  = useScoreStore(s => s.setActiveLyricVerse)
 
   // Declared before the `if (!note) return null` below (Rules of Hooks —
   // hooks can't be conditional), so this stays registered/unregistered
@@ -79,6 +83,39 @@ export default function NoteEditor() {
     _applyToMeasure(selectedPartId, selectedMeasureIndex, (notes) =>
       notes.map(n => n.id === selectedNoteId ? { ...n, ...changes } : n)
     )
+  }
+
+  // ── Lyrics (one box, many verses) ───────────────────────────────────────
+  // The box edits whichever verse is chosen next to it; verse 1 is note.lyric,
+  // later verses are note.lyrics[n] (see utils/lyricVerses.js).
+  const inlineVerses = resolveVerses(score).filter(v => v.placement === 'inline')
+  const verseNo = inlineVerses.some(v => v.number === activeLyricVerse) ? activeLyricVerse : 1
+  const setLyricText = (text) => {
+    const next = withNoteLyric(note, verseNo, text)
+    setProp(verseNo === 1 ? { lyric: next.lyric } : { lyrics: next.lyrics })
+  }
+  // Tab / Enter → the next sung note in this voice (Shift+Tab → previous), so
+  // a whole verse can be typed without touching the mouse. Rests, chord
+  // companions and the far end of a tie carry no syllable and are skipped.
+  const goToLyricNote = (dir) => {
+    const cur = useScoreStore.getState()
+    const part = cur.score.parts.find(p => p.id === selectedPartId)
+    if (!part) return
+    const seq = []
+    part.measures.forEach((m, mi) => m.notes.forEach(n => {
+      if (!n.chordWith && !n.isRest) seq.push({ n, mi })
+    }))
+    const idx = seq.findIndex(x => x.n.id === selectedNoteId)
+    if (idx < 0) return
+    const isTieEnd = (k) => k > 0 && !!seq[k - 1].n.tieStart
+    let j = idx + dir
+    while (seq[j] && isTieEnd(j)) j += dir
+    if (!seq[j]) return
+    cur.selectNote(seq[j].n.id, part.id, seq[j].mi)
+    setTimeout(() => {
+      const el = lyricInputRef.current
+      if (el) { el.focus(); el.select() }
+    }, 0)
   }
 
   const accentColor = isRest ? 'sky' : 'orange'
@@ -164,9 +201,20 @@ export default function NoteEditor() {
         {/* Lyric */}
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-gray-500">Lyric</span>
-          <input ref={lyricInputRef} value={note.lyric || ''} onChange={e => setProp({ lyric: e.target.value })}
-            placeholder="syl-"
-            className="border border-gray-300 rounded px-2 h-7 text-sm w-20 outline-none focus:ring-2 focus:ring-orange-300 bg-white" />
+          {inlineVerses.length > 1 && (
+            <select value={verseNo} onChange={e => setActiveLyricVerse(Number(e.target.value))}
+              title="Which verse this box types into"
+              className="border border-gray-300 rounded px-1 h-7 text-sm bg-white outline-none focus:ring-2 focus:ring-orange-300">
+              {inlineVerses.map(v => <option key={v.number} value={v.number}>{v.tag}</option>)}
+            </select>
+          )}
+          <input ref={lyricInputRef} value={getNoteLyric(note, verseNo)} onChange={e => setLyricText(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); goToLyricNote(e.shiftKey ? -1 : 1) }
+            }}
+            placeholder="syl-  (Tab → next note)"
+            title="Tab or Enter jumps to the next note; Shift+Tab goes back"
+            className="border border-gray-300 rounded px-2 h-7 text-sm w-28 outline-none focus:ring-2 focus:ring-orange-300 bg-white" />
         </div>
 
         <div className="h-7 w-px bg-gray-300" />

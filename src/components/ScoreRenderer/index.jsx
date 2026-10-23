@@ -22,6 +22,14 @@ import {
   keySignatureAccidentals,
 } from "../../store/scoreStore";
 import {
+  getNoteLyric,
+  anyNoteHasVerse,
+  inlineVersesForPart,
+  belowScoreVerses,
+  resolveVerses,
+  wrapLyricBlock,
+} from "../../utils/lyricVerses";
+import {
   keySignatureToSolfaKey,
   NAME_TO_VOICE_ID,
   convertMeasureToSolfaBeats,
@@ -410,7 +418,37 @@ export default function ScoreRenderer() {
 
     const numParts = score.parts.length;
     const totalCols = Math.max(...score.parts.map((p) => p.measures.length), 1);
-    const systemH = numParts * PART_HEIGHT + SYSTEM_GAP;
+    // ── Verses ────────────────────────────────────────────────────────────
+    // Which verse lines hang under each voice. A verse on "auto" voices shows
+    // under every voice that actually has text for it; a verse pinned to a
+    // list of voices shows under exactly those. Each extra line makes that
+    // staff row a little taller so lines never collide with the next staff.
+    const partVerseList = score.parts.map((part) =>
+      inlineVersesForPart(score, part, (v) =>
+        anyNoteHasVerse(
+          part.measures.flatMap((m) => m.notes),
+          v.number,
+        ),
+      ),
+    );
+    const LYRIC_LINE_H = SP * 1.7;
+    const partHeights = partVerseList.map(
+      (l) => PART_HEIGHT + Math.max(0, l.length - 1) * LYRIC_LINE_H,
+    );
+    const partOff = [];
+    {
+      let acc = 0;
+      partHeights.forEach((h) => {
+        partOff.push(acc);
+        acc += h;
+      });
+    }
+    const partsTotalH = partHeights.reduce((a, b) => a + b, 0);
+    // "1." "2." … are printed at the start of each line once the score has
+    // more than one inline verse.
+    const showVerseTags =
+      resolveVerses(score).filter((v) => v.placement === "inline").length > 1;
+    const systemH = partsTotalH + SYSTEM_GAP;
 
     // ── Measure width calculation ─────────────────────────────────────────────
     // Compute minimum pixel width for each measure based on content density.
@@ -543,19 +581,24 @@ export default function ScoreRenderer() {
     function getLyricTickWidths(colIdx) {
       if (lyricTickWidthCache[colIdx]) return lyricTickWidthCache[colIdx];
       const map = new Map();
-      for (const part of score.parts) {
+      score.parts.forEach((part, pIdx) => {
         const m = part.measures[colIdx];
-        if (!m) continue;
+        if (!m) return;
+        const verses = partVerseList[pIdx];
         let pos = 0;
         m.notes
           .filter((n) => !n.chordWith)
           .forEach((n) => {
             const key = Math.round(pos * 1000);
-            const w = n.lyric ? measureLyricPx(n.lyric) : 0;
+            let w = 0;
+            for (const v of verses) {
+              const t = getNoteLyric(n, v.number);
+              if (t) w = Math.max(w, measureLyricPx(t));
+            }
             if (w > (map.get(key) || 0)) map.set(key, w);
             pos += noteDuration(n);
           });
-      }
+      });
       return (lyricTickWidthCache[colIdx] = map);
     }
 
@@ -706,7 +749,23 @@ export default function ScoreRenderer() {
     DRAW_W = Math.round(PAGE_W / SCALE); // internal drawing width
     DRAW_H = Math.round((totalLines * systemH + 80) / SCALE);
     const canvasW = PAGE_W; // actual SVG pixel width = container width
-    const canvasH = totalLines * systemH + 80; // actual SVG pixel height
+    // Verses set to "Below score" print as ordinary text under the last system.
+    const blockVerses = belowScoreVerses(score);
+    const BLOCK_LINE_H = SP * 1.7;
+    const BLOCK_HEAD_H = SP * 2;
+    const blockMaxW = Math.max(120, USABLE_W - SP * 3);
+    const blockPrepared = blockVerses.map((v) => ({
+      ...v,
+      lines: wrapLyricBlock(v.text, blockMaxW, measureLyricPx),
+    }));
+    const blockH = blockPrepared.length
+      ? SP * 3.6 +
+        blockPrepared.reduce(
+          (sum, v) => sum + BLOCK_HEAD_H + v.lines.length * BLOCK_LINE_H + SP,
+          0,
+        )
+      : 0;
+    const canvasH = totalLines * systemH + 80 + blockH; // actual SVG pixel height
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
     renderer.resize(canvasW, canvasH);
@@ -783,6 +842,25 @@ export default function ScoreRenderer() {
     // so staves span the full width of the scaled coordinate space
     // EFFECTIVE_W replaced by USABLE_W in dynamic layout
 
+    if (blockPrepared.length) {
+      // Top of this area = bottom of the last system's staves + a margin.
+      let by = (totalLines - 1) * systemH + STAVE_TOP + partsTotalH + SP * 3.4;
+      blockPrepared.forEach((v) => {
+        try {
+          ctx.setFont("Times New Roman", 12, "bold");
+          ctx.fillText(v.label || `Verse ${v.number}`, LEFT_MARGIN + 4, by);
+          by += BLOCK_HEAD_H;
+          ctx.setFont("Times New Roman", 11, "normal");
+          v.lines.forEach((ln) => {
+            if (ln) ctx.fillText(ln, LEFT_MARGIN + SP, by);
+            by += BLOCK_LINE_H;
+          });
+          by += SP;
+          ctx.setFont("Times New Roman", 10);
+        } catch (_) {}
+      });
+    }
+
     for (let lineIdx = 0; lineIdx < totalLines; lineIdx++) {
       const { cols: lineCols } = lines[lineIdx];
       const startCol = lineCols[0];
@@ -829,7 +907,7 @@ export default function ScoreRenderer() {
       }
 
       score.parts.forEach((part, pIdx) => {
-        const partY = sysY + pIdx * PART_HEIGHT;
+        const partY = sysY + partOff[pIdx];
         const clef = part.clef || "treble";
 
         for (let colInLine = 0; colInLine < lineCols.length; colInLine++) {
@@ -1292,20 +1370,30 @@ export default function ScoreRenderer() {
             // two paddings. getBottomLineY() has none of that, so there's
             // exactly one offset in play, not two compounding ones.
             const lyricY = stave.getBottomLineY() + SP * 1.5;
-            if (renderSeq.some((n) => n.lyric)) {
+            const verseRows = partVerseList[pIdx];
+            if (verseRows.length) {
               ctx.setFont("Times New Roman", 11, "normal");
-              renderSeq.forEach((seqNote, ni) => {
-                if (!seqNote.lyric) return;
-                try {
-                  // Centered under the notehead, not left-aligned at it —
-                  // measureText gives the syllable's actual rendered width
-                  // (not an estimate, unlike the width-budgeting guess in
-                  // getMeasureContentWidth above, which only needs to be
-                  // roughly right) so the centering offset is exact.
-                  const { width } = ctx.measureText(seqNote.lyric);
-                  const noteX = vfNotes[ni].getAbsoluteX();
-                  ctx.fillText(seqNote.lyric, noteX - width / 2, lyricY);
-                } catch (_) {}
+              verseRows.forEach((verse, vk) => {
+                const rowY = lyricY + vk * LYRIC_LINE_H;
+                renderSeq.forEach((seqNote, ni) => {
+                  const text = getNoteLyric(seqNote, verse.number);
+                  if (!text) return;
+                  try {
+                    // Centered under the notehead; measureText gives the
+                    // syllable's real rendered width so centering is exact.
+                    const { width } = ctx.measureText(text);
+                    const noteX = vfNotes[ni].getAbsoluteX();
+                    ctx.fillText(text, noteX - width / 2, rowY);
+                  } catch (_) {}
+                });
+                // Verse number at the start of each system.
+                if (showVerseTags && isFirst) {
+                  try {
+                    ctx.setFont("Times New Roman", 11, "bold");
+                    ctx.fillText(verse.tag, stave.getX() + SP * 1.3, rowY);
+                    ctx.setFont("Times New Roman", 11, "normal");
+                  } catch (_) {}
+                }
               });
               // Explicit reset (not save/restore) so whatever draws next —
               // measure numbers, rehearsal marks — isn't left inheriting

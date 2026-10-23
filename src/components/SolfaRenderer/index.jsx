@@ -33,6 +33,12 @@ import {
   resolveKeyBefore,
   bridgeSyllable,
 } from "../../store/solfaStore";
+import {
+  getNoteLyric,
+  inlineVersesForPart,
+  belowScoreVerses,
+  resolveVerses,
+} from "../../utils/lyricVerses";
 
 const FONT = '"Times New Roman", Georgia, serif';
 const NOTE_SZ = 14;
@@ -338,6 +344,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
   const selectedEventIdx = useSolfaStore((s) => s.selectedEventIdx);
   const selectEvent = useSolfaStore((s) => s.selectEvent);
   const setLyric = useSolfaStore((s) => s.setLyric);
+  const setActiveLyricVerse = useSolfaStore((s) => s.setActiveLyricVerse);
   const inputMode = useSolfaStore((s) => s.inputMode);
   const slurStart = useSolfaStore((s) => s.slurStart);
   const setSlurStart = useSolfaStore((s) => s.setSlurStart);
@@ -396,7 +403,9 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
     const betweenLeadIdx =
       altoIdx >= 0 ? altoIdx : Math.floor((parts.length - 1) / 2);
 
-    function showLyricForPart(pIdx) {
+    // The score's Lyric Layout decides which voices carry lyrics when a verse
+    // is left on "auto" voices (this is the rule verse 1 always followed).
+    function layoutShowsLyricFor(pIdx) {
       if (lyricLayout === "instrumental" || lyricLayout === "below-score-only")
         return false;
       if (lyricLayout === "per-voice") return true;
@@ -405,15 +414,50 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
       return lyricDuplication === "per-voice-copy" ? true : pIdx === 0;
     }
 
+    // The inline verse lines drawn UNDER each voice (verse 1, 2, 3 … in number
+    // order). Each verse is either "auto" (the layout rule above) or pinned to
+    // an explicit list of voices — that is what makes any permutation possible.
+    const partVerseList = parts.map((part, pIdx) =>
+      lyricLayout === "instrumental"
+        ? []
+        : inlineVersesForPart(score, part, () => layoutShowsLyricFor(pIdx)),
+    );
+    const nLyricLines = partVerseList.map((l) => Math.max(1, l.length));
+    // Top of each voice row within a system (a voice with N verse lines is
+    // N lyric rows tall; one line is exactly the old fixed height).
+    const partOff = [];
+    {
+      let acc = 0;
+      parts.forEach((_, i) => {
+        partOff.push(acc);
+        acc += ROW_H + LYRIC_H * nLyricLines[i] + VOICE_G;
+      });
+    }
+    const systemContentH = parts.length
+      ? partOff[parts.length - 1] +
+        ROW_H +
+        LYRIC_H * nLyricLines[parts.length - 1] +
+        VOICE_G
+      : 0;
+    // Verse numbers ("1." "2.") are printed at the start of each line as soon
+    // as the score has more than one inline verse.
+    const showVerseTags =
+      resolveVerses(score).filter((v) => v.placement === "inline").length > 1;
+    function showLyricForPart(pIdx) {
+      return partVerseList[pIdx].length > 0;
+    }
+
     // Width a lyric wants for an event in part pIdx, bar col (0 when the
     // event has no lyric, isn't a note, or lyrics aren't shown for that part).
-    const lyricNeedFor = (pIdx, col) => (ev) =>
-      ev.type === "note" &&
-      ev.lyric &&
-      showLyricForPart(pIdx) &&
-      !instrumentalSet.has(col)
-        ? lyricTextWidth(ev.lyric) + LYRIC_GAP
-        : 0;
+    const lyricNeedFor = (pIdx, col) => (ev) => {
+      if (ev.type !== "note" || instrumentalSet.has(col)) return 0;
+      let w = 0;
+      for (const v of partVerseList[pIdx]) {
+        const t = getNoteLyric(ev, v.number);
+        if (t) w = Math.max(w, lyricTextWidth(t) + LYRIC_GAP);
+      }
+      return w;
+    };
 
     // Per-bar layout shared by ALL parts, so voices stay vertically aligned:
     //  - a beat is as wide as the widest any part needs it (notes + lyrics)
@@ -474,10 +518,10 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
       return ls;
     })();
 
-    const showVerseBlocks =
-      lyricLayout === "verse1-inline-rest-below" ||
-      lyricLayout === "below-score-only";
-    const verses = score.verses || [];
+    const blockVerses =
+      lyricLayout === "instrumental" ? [] : belowScoreVerses(score);
+    const showVerseBlocks = blockVerses.length > 0;
+    const verses = blockVerses;
     const VERSE_LINE_H = 15;
     const VERSE_HEAD_H = 18;
     const verseAvailW = svgW - PAGE_L * 2 - PAGE_R;
@@ -512,7 +556,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
         )
       : 0;
 
-    const systemH = parts.length * VOICE_H + SYS_GAP;
+    const systemH = systemContentH + SYS_GAP;
     const totalH = HDR_H + lines.length * systemH + 40 + versesExtraH;
     const elems = [];
     let sysY = HDR_H + 20;
@@ -563,7 +607,8 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
       const systemRight = cxPos;
 
       const lineTop = sysY - NOTE_SZ - 4;
-      const lineBottom = sysY + (parts.length - 1) * VOICE_H + LYRIC_H + 4;
+      const lineBottom =
+        sysY + partOff[parts.length - 1] + LYRIC_H * nLyricLines[parts.length - 1] + 4;
 
       elems.push(
         <g key={`brk-${lineIdx}`}>
@@ -639,7 +684,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
       );
 
       parts.forEach((part, pIdx) => {
-        const rowY = sysY + pIdx * VOICE_H;
+        const rowY = sysY + partOff[pIdx];
 
         elems.push(
           <text
@@ -654,6 +699,26 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
             {part.label}
           </text>,
         );
+
+        if (showVerseTags) {
+          partVerseList[pIdx].forEach((v, k) => {
+            elems.push(
+              <text
+                key={`vtag-${lineIdx}-${pIdx}-${v.number}`}
+                x={leftEdge - 3}
+                y={rowY + 4 + k * LYRIC_H + LYRIC_H * 0.7}
+                textAnchor="end"
+                fontFamily={FONT}
+                fontSize={LYR_SZ}
+                fontWeight={700}
+                fill={C.label}
+                style={{ pointerEvents: "none", userSelect: "none" }}
+              >
+                {v.tag}
+              </text>,
+            );
+          });
+        }
 
         lineCols.forEach((col, ci) => {
           const measure = migrateMeasure(part.measures[col]);
@@ -701,7 +766,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
                 x={colXs[ci]}
                 y={rowY - NOTE_SZ - 2}
                 width={scaledMW}
-                height={NOTE_SZ + 2 + 4 + LYRIC_H + 2}
+                height={NOTE_SZ + 2 + 4 + LYRIC_H * nLyricLines[pIdx] + 2}
                 fill={C.mBgAlt}
               />,
             );
@@ -1137,88 +1202,84 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
                 });
               }
 
-              // Lyric zone — sits immediately below note baseline
-              // Top of lyric zone = rowY + 4 (small gap after note)
-              // This keeps it well above the next voice's note hit rect
-              const lyricZoneY = rowY + 4;
-              const lyricZoneH = LYRIC_H;
-              const lyricTextY = lyricZoneY + LYRIC_H * 0.7;
+              // Lyric zone — one row per verse shown under this voice, each
+              // sitting below the note baseline (verse 1 first, then 2, 3 …).
               const lyricSlotW = Math.max(totalW, 8 * sc3);
 
-              // Lyric zone — only for notes, gated by layout/duplication/instrumental
-              if (
-                isNote &&
-                showLyricForPart(pIdx) &&
-                !instrumentalSet.has(col)
-              ) {
-                // Underline ruler — hidden by default. It's drawn in two
-                // cases: (1) "lyrics mode" is switched on globally, shown
-                // solid/full — for batch-entering lyrics across the piece;
-                // (2) the mouse is hovering this specific slot, shown
-                // faint/dashed — a discoverability hint so a first-time
-                // user learns "the space under a note is clickable"
-                // without the underline being visible all the time.
-                const isLyricHovered = hoveredLyricId === ev.id;
-                if (lyricsMode || isLyricHovered) {
+              if (isNote && !instrumentalSet.has(col)) {
+                partVerseList[pIdx].forEach((verse, vk) => {
+                  const lyricZoneY = rowY + 4 + vk * LYRIC_H;
+                  const lyricZoneH = LYRIC_H;
+                  const lyricTextY = lyricZoneY + LYRIC_H * 0.7;
+                  const text = getNoteLyric(ev, verse.number);
+                  const hoverKey = `${ev.id}:${verse.number}`;
+                  // Underline ruler — hidden by default. Drawn when "lyrics
+                  // mode" is on (solid, for batch entry) or while hovering
+                  // that slot (faint/dashed — a hint that it is clickable).
+                  const isLyricHovered = hoveredLyricId === hoverKey;
+                  if (lyricsMode || isLyricHovered) {
+                    elems.push(
+                      <line
+                        key={`lu-${ev.id}-${verse.number}`}
+                        x1={x}
+                        y1={lyricZoneY + lyricZoneH - 2}
+                        x2={x + lyricSlotW}
+                        y2={lyricZoneY + lyricZoneH - 2}
+                        stroke={C.lyricRul}
+                        strokeWidth={0.6}
+                        strokeDasharray={lyricsMode ? undefined : "2,2"}
+                        style={{
+                          pointerEvents: "none",
+                          opacity: lyricsMode ? 1 : 0.55,
+                        }}
+                      />,
+                    );
+                  }
                   elems.push(
-                    <line
-                      key={`lu-${ev.id}`}
-                      x1={x}
-                      y1={lyricZoneY + lyricZoneH - 2}
-                      x2={x + lyricSlotW}
-                      y2={lyricZoneY + lyricZoneH - 2}
-                      stroke={C.lyricRul}
-                      strokeWidth={0.6}
-                      strokeDasharray={lyricsMode ? undefined : "2,2"}
-                      style={{
-                        pointerEvents: "none",
-                        opacity: lyricsMode ? 1 : 0.55,
+                    <text
+                      key={`ly-${ev.id}-${verse.number}`}
+                      x={x + lyricSlotW / 2}
+                      y={lyricTextY}
+                      textAnchor="middle"
+                      fontFamily={FONT}
+                      fontSize={LYR_SZ}
+                      fill={C.lyric}
+                      style={{ pointerEvents: "none", userSelect: "none" }}
+                    >
+                      {text}
+                    </text>,
+                  );
+                  elems.push(
+                    <rect
+                      key={`lhit-${ev.id}-${verse.number}`}
+                      x={x}
+                      y={lyricZoneY}
+                      width={lyricSlotW}
+                      height={lyricZoneH}
+                      fill="transparent"
+                      style={{ cursor: "text" }}
+                      onMouseEnter={() => setHoveredLyricId(hoverKey)}
+                      onMouseLeave={() =>
+                        setHoveredLyricId((cur) => (cur === hoverKey ? null : cur))
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveLyricVerse(verse.number);
+                        setLyricEdit({
+                          partId: part.id,
+                          measureIdx: col,
+                          beatIdx: bi,
+                          eventIdx: ei,
+                          verse: verse.number,
+                          x,
+                          y: lyricZoneY + 1,
+                          w: lyricSlotW,
+                          current: text,
+                        });
                       }}
                     />,
                   );
-                }
-                elems.push(
-                  <text
-                    key={`ly-${ev.id}`}
-                    x={x + lyricSlotW / 2}
-                    y={lyricTextY}
-                    textAnchor="middle"
-                    fontFamily={FONT}
-                    fontSize={LYR_SZ}
-                    fill={C.lyric}
-                    style={{ pointerEvents: "none", userSelect: "none" }}
-                  >
-                    {ev.lyric || ""}
-                  </text>,
-                );
-                elems.push(
-                  <rect
-                    key={`lhit-${ev.id}`}
-                    x={x}
-                    y={lyricZoneY}
-                    width={lyricSlotW}
-                    height={lyricZoneH}
-                    fill="transparent"
-                    style={{ cursor: "text" }}
-                    onMouseEnter={() => setHoveredLyricId(ev.id)}
-                    onMouseLeave={() =>
-                      setHoveredLyricId((cur) => (cur === ev.id ? null : cur))
-                    }
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setLyricEdit({
-                        partId: part.id,
-                        measureIdx: col,
-                        beatIdx: bi,
-                        eventIdx: ei,
-                        x,
-                        y: lyricZoneY + 1,
-                        w: lyricSlotW,
-                        current: ev.lyric || "",
-                      });
-                    }}
-                  />,
-                );
+                });
               }
 
               x += totalW;
@@ -1231,7 +1292,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
         // Voice separator — sits below lyric zone, above next voice's note area
         if (pIdx < parts.length - 1) {
           // rowY + 4 (lyricZoneY) + LYRIC_H + 3 = bottom of lyric + small gap
-          const sepY = rowY + 4 + LYRIC_H + 3;
+          const sepY = rowY + 4 + LYRIC_H * nLyricLines[pIdx] + 3;
           elems.push(
             <line
               key={`vsep-${lineIdx}-${pIdx}`}
@@ -1686,6 +1747,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
           lyricEdit.beatIdx,
           lyricEdit.eventIdx,
           val.trim(),
+          lyricEdit.verse || 1,
         );
         setLyricEdit(null);
       }}

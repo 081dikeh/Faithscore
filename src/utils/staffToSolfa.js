@@ -40,6 +40,7 @@
 
 import { KEY_ROOTS, SOLFA_SEMITONES, buildEmptySolfaScore, VOICE_COMBOS, VOICE_OCTAVE_OFFSET } from '../store/solfaStore'
 import { noteDuration, MAJOR_SCALES } from '../store/scoreStore'
+import { portableVerses } from './lyricVerses'
 
 // ─── Pitch ──────────────────────────────────────────────────────────────────
 
@@ -112,8 +113,8 @@ export function keySignatureToSolfaKey(keySignature) {
 
 const QUARTER_UNITS_PER_BEAT = 4
 
-function makeSolfaEvent(type, syllable, octave, durationQU, lyric = null) {
-  return { id: crypto.randomUUID(), type, syllable, octave, lyric, duration: durationQU }
+function makeSolfaEvent(type, syllable, octave, durationQU, lyric = null, lyrics = null) {
+  return { id: crypto.randomUUID(), type, syllable, octave, lyric, duration: durationQU, ...(lyrics ? { lyrics } : {}) }
 }
 
 const samePitch = (a, b) =>
@@ -160,6 +161,7 @@ function mergeTiedSpans(notes) {
       isRest: !!start.isRest,
       pitch: start.pitch,
       lyric: start.isRest ? null : (start.lyric || null),
+      lyrics: start.isRest ? null : (start.lyrics || null),
       openTieEnd: !last.isRest && !!last.tieStart && j >= notes.length,
       // The FIRST underlying Score note's id — the correct slur anchor
       // point even for a tie-merged run, since a slur attaches to the
@@ -251,6 +253,7 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, w
       isRest: ls.isRest,
       pitch: ls.pitch,
       lyric: ls.lyric,
+      lyrics: ls.lyrics,
       scoreNoteId: ls.scoreNoteId,
       suppressAttack: idx === 0 && !ls.isRest && carryPitchIn != null && samePitch(ls.pitch, carryPitchIn),
     })
@@ -288,7 +291,7 @@ export function convertMeasureToSolfaBeats(notes, timeSignature, key, voiceId, w
           notePositions.set(span.scoreNoteId, { measureIdx, beatIdx, eventIdx: beats[beatIdx].events.length })
         }
         beats[beatIdx].events.push(
-          makeSolfaEvent(type, type === 'note' ? syllable : null, octave, pieceDur, type === 'note' ? span.lyric : null),
+          makeSolfaEvent(type, type === 'note' ? syllable : null, octave, pieceDur, type === 'note' ? span.lyric : null, type === 'note' ? span.lyrics : null),
         )
       }
 
@@ -540,6 +543,7 @@ export function convertStaffScoreToSolfa(staffScore) {
     return { id: voice.id, name: voice.name, label: voice.label, measures }
   })
   solfaScore.slurs = allSlurs
+  if (Array.isArray(staffScore.verses) && staffScore.verses.length) solfaScore.verses = portableVerses(staffScore)
 
   return { score: solfaScore, warnings: [...new Set(warnings)] }
 }

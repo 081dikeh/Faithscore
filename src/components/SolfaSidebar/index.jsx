@@ -9,6 +9,7 @@
 import { useState } from 'react'
 import { Search } from 'lucide-react'
 import { useSolfaStore, VOICE_COMBOS, migrateMeasure, resolveKeyAt } from '../../store/solfaStore'
+import VersePanel from '../VersePanel'
 
 const TABS = [
   { id:'palettes',   label:'Palettes'   },
@@ -435,6 +436,21 @@ const LYRIC_LAYOUTS = [
   { id:'instrumental',             label:'Instrumental',           hint:'No lyrics anywhere in the score.' },
 ]
 
+// Which voices an "Automatic" verse appears under — mirrors the renderer's rule.
+function solfaAutoVoiceIds(score) {
+  const parts = score.parts || []
+  const layout = score.lyricLayout || 'inline'
+  const dup = score.lyricDuplication || 'per-voice-copy'
+  if (layout === 'instrumental' || layout === 'below-score-only') return []
+  if (layout === 'per-voice') return parts.map(p => p.id)
+  if (layout === 'between-alto-tenor') {
+    const alto = parts.findIndex(p => (p.label || '').toUpperCase().startsWith('A'))
+    const lead = alto >= 0 ? alto : Math.floor((parts.length - 1) / 2)
+    return parts[lead] ? [parts[lead].id] : []
+  }
+  return dup === 'per-voice-copy' ? parts.map(p => p.id) : (parts[0] ? [parts[0].id] : [])
+}
+
 function LyricsTab() {
   const score              = useSolfaStore(s => s.score)
   const setLyricLayout      = useSolfaStore(s => s.setLyricLayout)
@@ -511,38 +527,12 @@ function LyricsTab() {
         </button>
       </div>
 
-      <div style={{ fontSize:11, fontWeight:700, color:'#374151', marginBottom:6, textTransform:'uppercase', letterSpacing:'0.05em' }}>
-        Verses
-      </div>
-      <div style={{ fontSize:10.5, color:'#9ca3af', marginBottom:8, lineHeight:1.4 }}>
-        {layout === 'below-score-only'
-          ? 'Type every verse here — none are synced to notes.'
-          : 'Verse 1 is edited directly on the score (click under a note). Add verses 2+ here to print them as text.'}
-      </div>
-
-      {verses.map(v => (
-        <div key={v.number} style={{ marginBottom:10, border:'1px solid #e5e7eb', borderRadius:6, overflow:'hidden' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:4, padding:'4px 6px', background:'#f9fafb' }}>
-            <input value={v.label} onChange={e => updateVerse(v.number, { label: e.target.value })}
-              style={{ flex:1, fontSize:11, fontWeight:600, border:'none', background:'none', color:'#1e2433', outline:'none' }}/>
-            <button onClick={() => removeVerse(v.number)}
-              title="Remove verse"
-              style={{ border:'none', background:'none', color:'#9ca3af', cursor:'pointer', fontSize:13 }}>×</button>
-          </div>
-          <textarea value={v.text} onChange={e => updateVerse(v.number, { text: e.target.value })}
-            placeholder="Type verse lyrics, one line per line…"
-            rows={4}
-            style={{ width:'100%', fontSize:11.5, border:'none', padding:'6px 8px',
-              boxSizing:'border-box', resize:'vertical', outline:'none', color:'#374151',
-              fontFamily:'inherit', lineHeight:1.45 }}/>
-        </div>
-      ))}
-
-      <button onClick={() => addVerse()}
-        style={{ width:'100%', fontSize:11.5, fontWeight:600, padding:'7px 0', borderRadius:6,
-          border:'1px dashed #93c5fd', background:'#eff6ff', color:'#1d4ed8', cursor:'pointer' }}>
-        + Add verse
-      </button>
+      <VersePanel
+        useStore={useSolfaStore}
+        partLabel={p => p.label}
+        autoVoiceIds={solfaAutoVoiceIds}
+        autoHint={`Follows the Layout above — ${LYRIC_LAYOUTS.find(l => l.id===layout)?.hint || ''}`}
+      />
     </div>
   )
 }

@@ -41,6 +41,7 @@
 
 import { solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
 import { spellPitch, spellingOctaveDelta, MAJOR_SCALES, beatsToRest, DURATION_BEATS, EMPTY_SCORE } from '../store/scoreStore'
+import { portableVerses } from './lyricVerses'
 
 // ─── Pitch ──────────────────────────────────────────────────────────────────
 
@@ -103,7 +104,7 @@ const QUARTER_UNITS_PER_BEAT = 4
 // greedy algorithm and the same tie-on-truncation convention
 // normalizeMeasure() already uses, just applied here to build a span
 // instead of to truncate one.
-function notesFromSpan(qb, pitch, warnings, lyric) {
+function notesFromSpan(qb, pitch, warnings, lyric, lyrics) {
   const notes = []
   let rem = qb
   let guard = 0
@@ -122,6 +123,7 @@ function notesFromSpan(qb, pitch, warnings, lyric) {
       // (no single duration value covers it), the syllable belongs under
       // the onset, not repeated under each tied piece.
       lyric: (isFirstNote && pitch && lyric) ? lyric : undefined,
+      lyrics: (isFirstNote && pitch && lyrics) ? lyrics : undefined,
     })
     rem -= used
     isFirstNote = false
@@ -169,7 +171,7 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
 
   const flush = () => {
     if (!open) return
-    const newNotes = notesFromSpan(open.qb, open.pitch, warnings, open.lyric)
+    const newNotes = notesFromSpan(open.qb, open.pitch, warnings, open.lyric, open.lyrics)
     notes.push(...newNotes)
     if (positionToNoteId && newNotes.length > 0) {
       for (const posKey of openPosKeys) positionToNoteId.set(posKey, newNotes[0].id)
@@ -215,6 +217,7 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
           duration: half.duration, dots: half.dots,
           tuplet: { num: 3, den: 2 },
           lyric: (ev.type === 'note' && ev.lyric) ? ev.lyric : undefined,
+          lyrics: (ev.type === 'note' && ev.lyrics) ? ev.lyrics : undefined,
         }
         // Unlike the general merge path, each triplet event maps 1:1 to
         // exactly one Score note — no span-decomposition to worry about —
@@ -235,7 +238,7 @@ export function convertSolfaBeatsToNotes(beats, timeSignature, key, voiceId, war
 
       if (ev.type === 'note' && ev.syllable) {
         flush()
-        open = { pitch: solfaToScorePitch(ev.syllable, ev.octave || 0, key, voiceId), qb: evQb, lyric: ev.lyric || null }
+        open = { pitch: solfaToScorePitch(ev.syllable, ev.octave || 0, key, voiceId), qb: evQb, lyric: ev.lyric || null, lyrics: ev.lyrics || null }
         openPosKeys = measureIdx != null ? [`${measureIdx}:${bi}:${ei}`] : []
       } else if (ev.type === 'sustain') {
         if (open && open.pitch) {
@@ -301,6 +304,7 @@ export function convertSolfaScoreToStaff(solfaScore) {
     dynamics: [], hairpins: [], rehearsalMarks: [], staffTexts: [], barlines: [], octaveLines: [],
     pageSettings: { ...EMPTY_SCORE.pageSettings },
     parts: [],
+    ...(Array.isArray(solfaScore.verses) && solfaScore.verses.length ? { verses: portableVerses(solfaScore) } : {}),
   }
 
   staffScore.parts = (solfaScore.parts || []).map(voicePart => {
