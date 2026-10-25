@@ -43,7 +43,7 @@
 //  12/x → after idx 2,5,8
 
 import { create } from 'zustand'
-import { withNoteLyric, splitLyricText, resolveVerses, nextVerseNumber } from '../utils/lyricVerses'
+import { withNoteLyric, splitLyricText, resolveVerses, nextVerseNumber } from '../utils/lyricVerses.js'
 
 export const SOLFA_SEMITONES = {d:0,de:1,r:2,ri:3,m:4,f:5,fe:6,s:7,se:8,l:9,ta:10,t:11}
 // Full 12-semitone chromatic cycle, derived from SOLFA_SEMITONES itself

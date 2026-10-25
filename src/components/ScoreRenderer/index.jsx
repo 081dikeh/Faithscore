@@ -20,6 +20,7 @@ import {
   noteDuration,
   measureCapacity,
   keySignatureAccidentals,
+  planPlacement,
 } from "../../store/scoreStore";
 import {
   getNoteLyric,
@@ -29,6 +30,21 @@ import {
   resolveVerses,
   wrapLyricBlock,
 } from "../../utils/lyricVerses";
+import {
+  pitchFromStaffPos,
+  staffPosFromY,
+  staffPosFromPitch,
+  yFromStaffPos,
+  ledgerPositions,
+  stemUpForPos,
+  pointerToLocal,
+  pickStaff,
+  buildBeatAnchors,
+  beatToX,
+  xToBeat,
+  gridStepFor,
+  snapBeat,
+} from "../../utils/notePlacement.js";
 import {
   keySignatureToSolfaKey,
   NAME_TO_VOICE_ID,
@@ -320,11 +336,144 @@ function measureLyricPx(text) {
   return w;
 }
 
+// A translucent note that follows the pointer. Pure presentation: it knows
+// nothing about the score, only where (x, y in local px), which staff position
+// (pos), and how big a line spacing (ls) to draw at — so it scales with the
+// staff size and the zoom (the zoom is a CSS scale on the whole page).
+const GHOST_TONES = {
+  ok: ["rgba(37,99,235,0.88)", "rgba(37,99,235,0.35)", "#1d4ed8"],
+  chord: ["rgba(124,58,237,0.88)", "rgba(124,58,237,0.35)", "#6d28d9"],
+  invalid: ["rgba(220,38,38,0.88)", "rgba(220,38,38,0.35)", "#b91c1c"],
+  drag: ["rgba(234,88,12,0.88)", "rgba(234,88,12,0.35)", "#c2410c"],
+};
+function GhostNote({ x, y, pos, ls, top, duration, dots, tone, label, sub, showBeatGuide, bare }) {
+  const [color, glow, badge] = GHOST_TONES[tone] || GHOST_TONES.ok;
+  const w = ls * 1.32;
+  const h = ls * 0.95;
+  const filled = duration !== "w" && duration !== "h";
+  const hasStem = !bare && duration !== "w";
+  const flags = bare ? 0 : { 8: 1, 16: 2, 32: 3, 64: 4 }[duration] || 0;
+  const up = stemUpForPos(pos);
+  const stemLen = ls * 3.4;
+  const sw = Math.max(1.2, ls * 0.15);
+  const stemX = up ? x + w / 2 - sw : x - w / 2;
+  const stemTop = up ? y - stemLen : y;
+  const common = { position: "absolute", pointerEvents: "none" };
+  return (
+    <>
+      {showBeatGuide && (
+        <div
+          style={{
+            ...common,
+            left: x - 0.5,
+            top: top - ls * 1.2,
+            width: 1,
+            height: ls * 6.4,
+            background: glow,
+            zIndex: 17,
+          }}
+        />
+      )}
+      {ledgerPositions(pos).map((q) => (
+        <div
+          key={q}
+          style={{
+            ...common,
+            left: x - ls * 1.1,
+            top: yFromStaffPos(q, top, ls) - 1,
+            width: ls * 2.2,
+            height: Math.max(1.5, ls * 0.15),
+            background: color,
+            opacity: 0.8,
+            zIndex: 18,
+          }}
+        />
+      ))}
+      <div
+        style={{
+          ...common,
+          left: x - w / 2,
+          top: y - h / 2,
+          width: w,
+          height: h,
+          borderRadius: "50%",
+          background: filled ? color : "transparent",
+          border: `${Math.max(1.5, ls * 0.17)}px solid ${color}`,
+          boxSizing: "border-box",
+          boxShadow: `0 0 ${ls * 0.8}px ${glow}`,
+          transform: "rotate(-20deg)",
+          zIndex: 18,
+        }}
+      />
+      {hasStem && (
+        <div style={{ ...common, left: stemX, top: stemTop, width: sw, height: stemLen, background: color, zIndex: 18 }} />
+      )}
+      {Array.from({ length: flags }).map((_, i) => (
+        <div
+          key={i}
+          style={{
+            ...common,
+            left: stemX + (up ? sw : 0),
+            top: up ? stemTop + i * ls * 0.55 : stemTop + stemLen - i * ls * 0.55,
+            width: ls * 1.0,
+            height: Math.max(1.5, ls * 0.2),
+            background: color,
+            transformOrigin: "left center",
+            transform: `rotate(${up ? 38 : -38}deg)`,
+            zIndex: 18,
+          }}
+        />
+      ))}
+      {dots ? (
+        <div
+          style={{
+            ...common,
+            left: x + w / 2 + ls * 0.35,
+            top: y - ls * 0.2 - (pos % 2 === 0 ? ls * 0.5 : 0),
+            width: ls * 0.4,
+            height: ls * 0.4,
+            borderRadius: "50%",
+            background: color,
+            zIndex: 18,
+          }}
+        />
+      ) : null}
+      <div
+        style={{
+          ...common,
+          left: x + w / 2 + ls * 0.9,
+          top: y - ls * 2.1,
+          background: badge,
+          color: "white",
+          fontSize: Math.max(10, ls * 1.0),
+          fontWeight: 700,
+          lineHeight: 1.25,
+          padding: "1px 6px",
+          borderRadius: 4,
+          whiteSpace: "nowrap",
+          boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+          zIndex: 19,
+        }}
+      >
+        {label}
+        {sub ? (
+          <span style={{ fontWeight: 500, opacity: 0.9, marginLeft: 6, fontSize: "0.85em" }}>
+            {sub}
+          </span>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
 export default function ScoreRenderer() {
   const containerRef = useRef(null);
   const [zones, setZones] = useState([]);
-  const [dragState, setDragState] = useState(null); // existing-note drag (move)
-  const [dropTarget, setDropTarget] = useState(null); // drop highlight key
+  const rootRef = useRef(null); // the positioned wrapper — the single coordinate origin
+  const gestureRef = useRef(null); // a note-input press in progress { pointerId }
+  const noteDragRef = useRef(null); // an existing-note pitch drag in progress
+  const lastPtrRef = useRef(null); // last pointer position, to refresh the ghost after edits
+  const [pitchDrag, setPitchDrag] = useState(null); // preview while dragging a notehead
   // cursor: tracks mouse position in note mode — the "ghost note" that follows the cursor
   // { partId, measureIndex, zKey, beat, pitch, ghostX, ghostY, isChord }
   const [cursor, setCursor] = useState(null);
@@ -341,6 +490,7 @@ export default function ScoreRenderer() {
   const selectedMarking = useScoreStore((s) => s.selectedMarking);
   const selectMarking = useScoreStore((s) => s.selectMarking);
   const moveNote = useScoreStore((s) => s.moveNote);
+  const setNotePitch = useScoreStore((s) => s.setNotePitch);
   const playbackBeat = useScoreStore((s) => s.playbackBeat);
   const dropNoteAtBeat = useScoreStore((s) => s.dropNoteAtBeat);
   const addChordNote = useScoreStore((s) => s.addChordNote);
@@ -1982,6 +2132,14 @@ export default function ScoreRenderer() {
               staveLineSpacing = (botLineY - staveTopLineY) / 4;
             } catch (_) {}
 
+            // Where beat 1 and the end of the bar really are, for note placement
+            // (the old noteAreaStart/Width stay as they were for dynamics etc.)
+            let beat0X = firstNoteX + 5.5;
+            let endX = x + width - 12;
+            try {
+              endX = stave.getNoteEndX() - 8;
+            } catch (_) {}
+
             allZones.push({
               type: "measure",
               partId: part.id,
@@ -1991,11 +2149,23 @@ export default function ScoreRenderer() {
               width,
               height: STAVE_HEIGHT,
               selected: isMeasureSel,
+              beat0X,
+              endX,
               noteAreaStart,
               noteAreaWidth,
               staveTopLineY, // actual pixel Y of top staff line
               staveLineSpacing, // pixel spacing between staff lines (usually 10)
             });
+
+            // Beat at which each rendered event starts (for placement anchors)
+            const noteStarts = [];
+            {
+              let acc = 0;
+              renderSeq.forEach((n) => {
+                noteStarts.push(acc);
+                acc += noteDuration(n);
+              });
+            }
 
             // Per-note/rest zones — base notes AND individual chord note zones
             vfNotes.forEach((vfNote, ni) => {
@@ -2003,87 +2173,63 @@ export default function ScoreRenderer() {
                 const nx = vfNote.getAbsoluteX();
                 const seqNote = renderSeq[ni];
 
-                // Base note / rest zone (full height — click anywhere on the column)
+                // ── Hit zones, built from the REAL staff geometry ────────────
+                // (They used to be a fixed box from the top of the system, which
+                // only reached 2–3 spaces down the staff — a note on the lower
+                // lines could not be grabbed at all.)
+                //   rest        → the whole staff band
+                //   note        → a box round its notehead AND stem
+                //   chord tone  → a small box round its own notehead
+                const lsU = staveLineSpacing;
+                const topU = staveTopLineY;
+                const clefKey = part.clef || "treble";
+                const halfW = lsU * 1.4;
+                const posOf = (pitch) => staffPosFromPitch(pitch, clefKey);
+                const headY = (pitch) => yFromStaffPos(posOf(pitch), topU, lsU);
+
+                let zoneY = topU - lsU * 0.5;
+                let zoneH = lsU * 5;
+                if (!seqNote.isRest && seqNote.pitch) {
+                  const hy = headY(seqNote.pitch);
+                  const up = stemUpForPos(posOf(seqNote.pitch));
+                  zoneY = hy - (up ? lsU * 3.9 : lsU * 1.0);
+                  zoneH = lsU * 4.9;
+                }
+
                 allZones.push({
                   type: seqNote.isRest ? "rest" : "note",
                   noteId: seqNote.id,
                   partId: part.id,
                   measureIndex: col,
-                  x: nx - 10,
-                  y: partY + 2,
-                  width: 28,
-                  height: STAVE_HEIGHT - 4,
+                  x: nx + 5.5 - halfW,
+                  y: zoneY,
+                  width: halfW * 2,
+                  height: zoneH,
                   selected: seqNote.id === selectedNoteId,
                   isRest: seqNote.isRest,
                   isBase: true,
+                  beatStart: noteStarts[ni],
+                  noteX: nx + 5.5, // centre of the notehead
                 });
 
-                // Individual chord note zones — smaller, Y-positioned by pitch
-                // so each note in the chord is independently clickable
+                // Individual chord-tone zones, each at its own pitch
                 const chordCompanions = chordMap[seqNote.id] || [];
                 chordCompanions.forEach((cn, ci) => {
-                  // Estimate Y from pitch: map pitch to staff position
-                  // Higher pitch = lower Y (higher on screen)
-                  // We space chord zones evenly within the note column
-                  const TREBLE_ORDER = [
-                    "C4",
-                    "D4",
-                    "E4",
-                    "F4",
-                    "G4",
-                    "A4",
-                    "B4",
-                    "C5",
-                    "D5",
-                    "E5",
-                    "F5",
-                    "G5",
-                    "A5",
-                    "B5",
-                  ];
-                  const BASS_ORDER = [
-                    "C2",
-                    "D2",
-                    "E2",
-                    "F2",
-                    "G2",
-                    "A2",
-                    "B2",
-                    "C3",
-                    "D3",
-                    "E3",
-                    "F3",
-                    "G3",
-                    "A3",
-                    "B3",
-                  ];
-                  const order = clef === "bass" ? BASS_ORDER : TREBLE_ORDER;
-                  const pitchKey = cn.pitch
-                    ? `${cn.pitch.step}${cn.pitch.octave}`
-                    : "";
-                  const pitchIdx = order.indexOf(pitchKey);
-                  // Y position: higher pitch → closer to top of staff
-                  const staffH = STAVE_HEIGHT - 8;
-                  const noteY =
-                    pitchIdx >= 0
-                      ? partY +
-                        staffH -
-                        (pitchIdx / (order.length - 1)) * staffH
-                      : partY + 20 + ci * 14; // fallback: stack evenly
-
+                  const hy = cn.pitch ? headY(cn.pitch) : topU + ci * lsU;
                   allZones.push({
                     type: "note",
                     noteId: cn.id,
                     partId: part.id,
                     measureIndex: col,
-                    x: nx - 10,
-                    y: Math.max(partY + 2, noteY - 8),
-                    width: 28,
-                    height: 16, // small zone — just around this pitch
+                    x: nx + 5.5 - halfW,
+                    y: hy - lsU * 0.8,
+                    width: halfW * 2,
+                    height: lsU * 1.6,
                     selected: cn.id === selectedNoteId,
                     isRest: false,
                     isChordNote: true,
                     baseNoteId: seqNote.id,
+                    noteX: nx + 5.5,
                   });
                 });
               } catch (_) {}
@@ -2118,7 +2264,23 @@ export default function ScoreRenderer() {
       }
     }
 
-    setZones(allZones);
+    // Zones are measured in drawing units, but everything that uses them
+    // (hit areas, the ghost note, highlights) is positioned in screen pixels.
+    // At the default staff size the two are equal; at any other size they are
+    // SCALE apart — so convert once, here.
+    const GEOM = [
+      "x", "y", "width", "height", "noteAreaStart", "noteAreaWidth",
+      "staveTopLineY", "staveLineSpacing", "noteX", "beat0X", "endX",
+    ];
+    setZones(
+      SCALE === 1
+        ? allZones
+        : allZones.map((z) => {
+            const o = { ...z };
+            for (const f of GEOM) if (typeof o[f] === "number") o[f] *= SCALE;
+            return o;
+          }),
+    );
   }, [
     score,
     selectedMeasureIndex,
@@ -2245,280 +2407,316 @@ export default function ScoreRenderer() {
     }
   }, [cursorStyle?.top]);
 
-  // ── Shared pitch/beat calculation helpers (used by both mousemove and zone handlers)
-  const computeCursorFromEvent = useCallback(
+  // ══ Note placement ═══════════════════════════════════════════════════════
+  // One path for everything: pointer → local px (zoom-corrected) → staff →
+  // staff position + beat → planPlacement (read-only) → ghost. Committing calls
+  // the same plan through dropNoteAtBeat, so the ghost never lies.
+  const computeCursor = useCallback(
     (e) => {
-      if (inputMode !== "note") return null;
-      const container = containerRef.current?.parentElement;
-      if (!container) return null;
-      const rect = container.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
+      const root = rootRef.current;
+      if (!root || inputMode !== "note") return null;
+      const { x, y } = pointerToLocal(e, root);
 
-      // Find which measure zone the mouse is over
-      // Zone height is visually expanded for ledger lines, so check with 30px padding
-      const z = measureZones.find(
-        (mz) =>
-          mouseX >= mz.x &&
-          mouseX <= mz.x + mz.width &&
-          mouseY >= mz.y - 30 &&
-          mouseY <= mz.y + mz.height + 30,
-      );
+      const z = pickStaff(measureZones, x, y);
       if (!z) return null;
-
       const part = score.parts.find((p) => p.id === z.partId);
-      const clef = part?.clef || "treble";
-      const ts = part?.measures[z.measureIndex]?.timeSignature ?? {
-        beats: 4,
-        beatType: 4,
-      };
-      const capacity = measureCapacity(ts);
+      const measure = part?.measures[z.measureIndex];
+      if (!measure) return null;
 
-      // X → beat using actual note area coordinates stored in the zone
-      const noteStart =
-        z.noteAreaStart ?? (z.measureIndex === 0 ? z.x + 55 : z.x + 10);
-      const noteWidth =
-        z.noteAreaWidth ?? z.width - (z.measureIndex === 0 ? 60 : 15);
-      const frac = Math.max(0, Math.min(1, (mouseX - noteStart) / noteWidth));
-      const rawBeat = frac * capacity;
-      const beat = Math.round(rawBeat / 0.25) * 0.25;
+      const clef = part.clef || "treble";
+      const cap = measureCapacity(measure.timeSignature);
+      const ls = z.staveLineSpacing || 10;
+      const top = z.staveTopLineY;
 
-      // Y → pitch using actual stave coordinates stored during rendering
-      // staveTopLineY = pixel Y of the top staff line (F5 treble / A3 bass)
-      // staveLineSpacing = pixels between lines (typically 10px)
-      // Each staff position (line OR space) = staveLineSpacing / 2 pixels
-      const topLineY = z.staveTopLineY ?? z.y + (staffSize ?? 10);
-      const lineSpacing = z.staveLineSpacing ?? staffSize ?? 10;
-      const posSpacing = lineSpacing / 2; // pixels per staff position (5px normally)
-      const rawPos = (mouseY - topLineY) / posSpacing;
-      const pos = Math.max(-6, Math.min(14, Math.round(rawPos)));
+      // Y → nearest line or space → pitch for THIS staff's clef
+      const pos = Math.max(-10, Math.min(18, staffPosFromY(y, top, ls)));
+      const pitch = pitchFromStaffPos(pos, clef);
 
-      const TREBLE_POS = [
-        { s: "E", o: 6 },
-        { s: "D", o: 6 },
-        { s: "C", o: 6 },
-        { s: "B", o: 5 },
-        { s: "A", o: 5 },
-        { s: "G", o: 5 },
-        { s: "F", o: 5 },
-        { s: "E", o: 5 },
-        { s: "D", o: 5 },
-        { s: "C", o: 5 },
-        { s: "B", o: 4 },
-        { s: "A", o: 4 },
-        { s: "G", o: 4 },
-        { s: "F", o: 4 },
-        { s: "E", o: 4 },
-        { s: "D", o: 4 },
-        { s: "C", o: 4 },
-        { s: "B", o: 3 },
-        { s: "A", o: 3 },
-        { s: "G", o: 3 },
-        { s: "F", o: 3 },
-      ];
-      const BASS_POS = [
-        { s: "C", o: 5 },
-        { s: "B", o: 4 },
-        { s: "A", o: 4 },
-        { s: "G", o: 4 },
-        { s: "F", o: 4 },
-        { s: "E", o: 4 },
-        { s: "A", o: 3 },
-        { s: "G", o: 3 },
-        { s: "F", o: 3 },
-        { s: "E", o: 3 },
-        { s: "D", o: 3 },
-        { s: "C", o: 3 },
-        { s: "B", o: 2 },
-        { s: "A", o: 2 },
-        { s: "G", o: 2 },
-        { s: "F", o: 2 },
-        { s: "E", o: 2 },
-        { s: "D", o: 2 },
-        { s: "C", o: 2 },
-        { s: "B", o: 1 },
-        { s: "A", o: 1 },
-      ];
-      const table = clef === "treble" ? TREBLE_POS : BASS_POS;
-      const entry = table[Math.max(0, Math.min(table.length - 1, pos + 6))];
-      const pitch = { step: entry.s, octave: entry.o, accidental: null };
+      // X → beat, anchored on the REAL x of the notes already in the bar
+      const real = noteZones
+        .filter(
+          (n) =>
+            n.partId === z.partId &&
+            n.measureIndex === z.measureIndex &&
+            !n.isRest &&
+            !n.isChordNote &&
+            n.beatStart != null,
+        )
+        .map((n) => ({ beatStart: n.beatStart, x: n.noteX }));
+      const anchors = buildBeatAnchors(
+        z.beat0X ?? z.noteAreaStart,
+        z.endX ?? z.noteAreaStart + z.noteAreaWidth,
+        cap,
+        real,
+      );
+      const beat = snapBeat(
+        xToBeat(anchors, x),
+        gridStepFor(selectedDuration),
+        cap,
+        real.map((r) => r.beatStart),
+      );
 
-      // Pixel X for the ghost note — clamped to actual note area
-      const ghostX =
-        noteStart + Math.max(0, Math.min(1, beat / capacity)) * noteWidth;
-      const ghostY = topLineY + pos * posSpacing;
-
-      const isChord = chordMode && selectedNoteId_store;
-      const zKey = `${z.partId}-${z.measureIndex}`;
+      const plan = planPlacement(measure, beat, selectedDuration, selectedDots);
+      const at = plan.ok ? plan.beat : beat;
+      const keyAcc = keySignatureAccidentals(measure.keySignature ?? 0);
 
       return {
         partId: z.partId,
         measureIndex: z.measureIndex,
-        zKey,
-        beat,
+        zKey: `${z.partId}-${z.measureIndex}`,
+        beat: at,
         pitch,
-        ghostX,
-        ghostY,
-        isChord,
+        pos,
+        ls,
+        top,
+        ghostX: beatToX(anchors, at),
+        ghostY: yFromStaffPos(pos, top, ls),
+        keyAlter: keyAcc[pitch.step] || "",
+        isChord: plan.ok && plan.kind === "chord",
+        valid: plan.ok,
+        clipped: !!plan.clipped,
+        reason: plan.ok ? null : plan.reason,
       };
     },
-    [inputMode, measureZones, score, chordMode, selectedNoteId_store],
+    [inputMode, measureZones, noteZones, score, selectedDuration, selectedDots],
   );
+
+  const sameCursor = (a, b) =>
+    a === b ||
+    (a &&
+      b &&
+      a.zKey === b.zKey &&
+      a.beat === b.beat &&
+      a.pos === b.pos &&
+      a.valid === b.valid &&
+      a.isChord === b.isChord &&
+      a.ghostX === b.ghostX &&
+      a.ghostY === b.ghostY);
+
+  const showCursor = (c) => {
+    if (sameCursor(c, cursorRef.current)) return;
+    cursorRef.current = c;
+    setCursor(c);
+  };
+
+  // Commit what the ghost shows. Invalid spots change nothing.
+  const commitPlacement = (c) => {
+    if (!c || !c.valid) return;
+    dropNoteAtBeat(
+      c.partId,
+      c.measureIndex,
+      c.pitch,
+      selectedDuration,
+      selectedDots,
+      c.beat,
+    );
+  };
+
+  const cancelInteractions = () => {
+    gestureRef.current = null;
+    noteDragRef.current = null;
+    setPitchDrag(null);
+    showCursor(null);
+  };
+
+  // Escape cancels a press, a pitch drag, and hides the ghost.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") cancelInteractions();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Leaving note mode clears everything transient.
+  useEffect(() => {
+    if (inputMode !== "note") {
+      gestureRef.current = null;
+      showCursor(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputMode]);
+
+  // After the score re-lays out (a note was placed, duration changed, zoom…)
+  // re-evaluate the ghost at the last pointer position so it never goes stale.
+  useEffect(() => {
+    if (inputMode !== "note" || !lastPtrRef.current) return;
+    showCursor(computeCursor(lastPtrRef.current));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zones, selectedDuration, selectedDots, inputMode]);
+
+  const handlePointerMove = (e) => {
+    if (inputMode !== "note") return;
+    lastPtrRef.current = { clientX: e.clientX, clientY: e.clientY };
+    showCursor(computeCursor(e));
+  };
+
+  const handlePointerDown = (e) => {
+    if (inputMode !== "note") return;
+    if (e.pointerType === "mouse" && e.button !== 0) return; // primary only
+    lastPtrRef.current = { clientX: e.clientX, clientY: e.clientY };
+    showCursor(computeCursor(e));
+    gestureRef.current = { pointerId: e.pointerId };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (_) {}
+    e.preventDefault(); // no text selection / native drag while placing
+  };
+
+  // Release = commit at the RELEASE position. So both a plain click and a
+  // press-drag-release place the note where the ghost was last shown; letting
+  // go outside any staff places nothing.
+  const handlePointerUp = (e) => {
+    const g = gestureRef.current;
+    if (!g || g.pointerId !== e.pointerId) return;
+    gestureRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (_) {}
+    commitPlacement(computeCursor(e));
+  };
+
+  // ── Dragging an existing notehead: vertical = pitch only ──────────────────
+  const handleNotePointerDown = (e, z) => {
+    if (inputMode === "note" || z.isRest || z.isChordNote) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.stopPropagation();
+    selectNote(z.noteId, z.partId, z.measureIndex);
+    noteDragRef.current = {
+      noteId: z.noteId,
+      partId: z.partId,
+      measureIndex: z.measureIndex,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+      last: null,
+    };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (_) {}
+  };
+
+  const handleNotePointerMove = (e) => {
+    const d = noteDragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    if (!d.moved && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 4)
+      return; // a click, not yet a drag
+    d.moved = true;
+    const mz = measureZones.find(
+      (m) => m.partId === d.partId && m.measureIndex === d.measureIndex,
+    );
+    const root = rootRef.current;
+    if (!mz || !root) return;
+    const part = score.parts.find((p) => p.id === d.partId);
+    const { x, y } = pointerToLocal(e, root);
+    const ls = mz.staveLineSpacing || 10;
+    const pos = Math.max(-10, Math.min(18, staffPosFromY(y, mz.staveTopLineY, ls)));
+    const pitch = pitchFromStaffPos(pos, part?.clef || "treble");
+    d.last = { pitch, pos };
+    const nz = noteZones.find((n) => n.noteId === d.noteId);
+    const target = e.altKey ? pickStaff(measureZones, x, y) : null;
+    setPitchDrag({
+      noteId: d.noteId,
+      pitch,
+      pos,
+      ls,
+      top: mz.staveTopLineY,
+      ghostX: nz?.noteX ?? mz.beat0X,
+      ghostY: yFromStaffPos(pos, mz.staveTopLineY, ls),
+      moveTo:
+        target &&
+        (target.partId !== d.partId || target.measureIndex !== d.measureIndex)
+          ? target
+          : null,
+    });
+  };
+
+  const handleNotePointerUp = (e) => {
+    const d = noteDragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    noteDragRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (_) {}
+    setPitchDrag(null);
+    if (!d.moved) return; // plain click: selection already happened
+    if (e.altKey && rootRef.current) {
+      // Alt-drag: move the note into the bar under the pointer
+      const { x, y } = pointerToLocal(e, rootRef.current);
+      const t = pickStaff(measureZones, x, y);
+      if (t && (t.partId !== d.partId || t.measureIndex !== d.measureIndex)) {
+        moveNote(d.noteId, d.partId, d.measureIndex, t.partId, t.measureIndex);
+      }
+      return;
+    }
+    if (d.last) setNotePitch(d.partId, d.measureIndex, d.noteId, d.last.pitch);
+  };
+
+  const handleNotePointerCancel = () => {
+    noteDragRef.current = null;
+    setPitchDrag(null);
+  };
 
   return (
     <div
+      ref={rootRef}
       style={{
         position: "relative",
         display: "inline-block",
         minWidth: "100%",
         lineHeight: 0,
-        cursor: inputMode === "note" ? "none" : "default",
+        cursor: inputMode === "note" ? "crosshair" : "default",
+        // no scroll-by-touch / text selection fighting the placement gesture
+        touchAction: inputMode === "note" ? "none" : "auto",
+        userSelect: inputMode === "note" ? "none" : undefined,
+        WebkitUserSelect: inputMode === "note" ? "none" : undefined,
       }}
-      onMouseMove={(e) => {
-        if (inputMode !== "note") {
-          if (cursor) {
-            setCursor(null);
-            cursorRef.current = null;
-          }
-          return;
-        }
-        const result = computeCursorFromEvent(e);
-        setCursor(result);
-        cursorRef.current = result;
+      onPointerMove={handlePointerMove}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={() => {
+        gestureRef.current = null;
+        showCursor(null);
       }}
-      onMouseLeave={() => {
-        if (inputMode === "note") {
-          setCursor(null);
-          cursorRef.current = null;
+      onPointerLeave={() => {
+        if (inputMode === "note" && !gestureRef.current) {
+          lastPtrRef.current = null;
+          showCursor(null);
         }
       }}
       tabIndex={-1}
       onKeyDown={(e) => {
         if (inputMode !== "note") return;
         if (e.key === "Enter" || e.key === " ") {
-          const cur = cursorRef.current;
-          if (!cur) return;
+          if (!cursorRef.current) return;
           e.preventDefault();
-          const { partId, measureIndex, beat, pitch } = cur;
-          const part = score.parts.find((p) => p.id === partId);
-          const measure = part?.measures[measureIndex];
-          if (!measure) return;
-          let beatCursor = 0;
-          let noteAtBeat = null;
-          for (const n of measure.notes.filter((x) => !x.chordWith)) {
-            if (!n.isRest && Math.abs(beatCursor - beat) < 0.13) {
-              noteAtBeat = n;
-              break;
-            }
-            beatCursor += noteDuration(n);
-          }
-          if (noteAtBeat)
-            addChordNote(partId, measureIndex, noteAtBeat.id, pitch);
-          else
-            dropNoteAtBeat(
-              partId,
-              measureIndex,
-              pitch,
-              selectedDuration,
-              selectedDots,
-              beat,
-            );
-        }
-      }}
-      onClick={(e) => {
-        const cur = cursorRef.current;
-        if (inputMode !== "note" || !cur) return;
-        e.stopPropagation();
-
-        const { partId, measureIndex, beat, pitch } = cur;
-
-        // Walk the measure to find if this beat already has a real note
-        // If yes → auto-chord. If no → place new note.
-        const part = score.parts.find((p) => p.id === partId);
-        const measure = part?.measures[measureIndex];
-        if (!measure) return;
-
-        let beatCursor = 0;
-        let noteAtBeat = null;
-        for (const n of measure.notes.filter((x) => !x.chordWith)) {
-          if (!n.isRest && Math.abs(beatCursor - beat) < 0.13) {
-            noteAtBeat = n;
-            break;
-          }
-          beatCursor += noteDuration(n);
-        }
-
-        if (noteAtBeat) {
-          addChordNote(partId, measureIndex, noteAtBeat.id, pitch);
-        } else {
-          dropNoteAtBeat(
-            partId,
-            measureIndex,
-            pitch,
-            selectedDuration,
-            selectedDots,
-            beat,
-          );
+          commitPlacement(cursorRef.current);
         }
       }}
     >
       <div ref={containerRef} style={{ display: "block" }} />
 
-      {/* Measure zones — handle both ghost-note drags (note mode) and existing-note moves.
-          This hitbox is intentionally modest in size (just enough for ledger-line
-          clicks) so adjacent staves' click areas don't overlap and steal clicks
-          from each other. */}
+      {/* Measure zones — click a bar to select it (select mode only; in note
+          mode the wrapper handles every pointer event). */}
       {measureZones.map((z) => {
         const zKey = `${z.partId}-${z.measureIndex}`;
-        const isExistDrop = dropTarget === zKey;
-        const isGhostDrop = cursor?.zKey === zKey;
-
-        const part = score.parts.find((p) => p.id === z.partId);
-        const clef = part?.clef || "treble";
-        const beats = measureCapacity(
-          part?.measures[z.measureIndex]?.timeSignature,
-        );
-
         return (
           <div
             key={zKey}
-            onClick={(e) => {
+            onClick={() => {
               if (inputMode !== "note") selectMeasure(z.partId, z.measureIndex);
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDropTarget(zKey);
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              if (dragState) {
-                moveNote(
-                  dragState.noteId,
-                  dragState.partId,
-                  dragState.measureIndex,
-                  z.partId,
-                  z.measureIndex,
-                );
-              }
-              setDragState(null);
-              setDropTarget(null);
-            }}
-            onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget))
-                setDropTarget(null);
             }}
             style={{
               position: "absolute",
               left: z.x,
-              top: z.y - 10, // small margin for ledger-line clicks, without bleeding into the staff above
+              top: z.y - 10, // small margin for ledger-line clicks
               width: z.width,
-              height: z.height + 32, // room below for ledger lines / octave-line markings, without bleeding into the next staff
-              cursor: inputMode === "note" ? "none" : "pointer",
+              height: z.height + 32, // room below for ledger lines / octave markings
+              cursor: inputMode === "note" ? "crosshair" : "pointer",
               borderRadius: 2,
               boxSizing: "border-box",
-              // This div is purely a click/drop target now — no visible border or
-              // background. The visible selection highlight is drawn by a separate,
-              // tightly-fitted overlay below so it doesn't look oversized.
               border: "none",
               backgroundColor: "transparent",
               zIndex: inputMode === "note" ? 0 : 1,
@@ -2528,13 +2726,14 @@ export default function ScoreRenderer() {
         );
       })}
 
-      {/* Visible selection / drop-target highlight — hugs the staff plus enough
-          room below for ledger lines / octave-line markings (unlike a bare 5-line
-          staff, so 8vb etc. don't look cut off). */}
+      {/* Visible selection highlight — hugs the staff plus room for ledger lines. */}
       {measureZones.map((z) => {
         const zKey = `${z.partId}-${z.measureIndex}`;
-        const isExistDrop = dropTarget === zKey;
-        if (inputMode === "note" || (!z.selected && !isExistDrop)) return null;
+        const isMoveTarget =
+          pitchDrag?.moveTo &&
+          pitchDrag.moveTo.partId === z.partId &&
+          pitchDrag.moveTo.measureIndex === z.measureIndex;
+        if (inputMode === "note" || (!z.selected && !isMoveTarget)) return null;
         return (
           <div
             key={`hl-${zKey}`}
@@ -2548,8 +2747,8 @@ export default function ScoreRenderer() {
               boxSizing: "border-box",
               pointerEvents: "none",
               zIndex: 2,
-              border: isExistDrop ? "2px dashed #c2410c" : "2px solid #1d4ed8",
-              backgroundColor: isExistDrop
+              border: isMoveTarget ? "2px dashed #c2410c" : "2px solid #1d4ed8",
+              backgroundColor: isMoveTarget
                 ? "rgba(194,65,12,0.10)"
                 : "rgba(29,78,216,0.14)",
             }}
@@ -2557,144 +2756,71 @@ export default function ScoreRenderer() {
         );
       })}
 
-      {/* Ghost note preview — floating note dot + pitch label while dragging in note mode */}
-      {cursor &&
-        (() => {
-          const label = `${cursor.pitch.step}${cursor.pitch.accidental ?? ""}${cursor.pitch.octave}`;
-          const isWhole = selectedDuration === "w";
-          const isHalf = selectedDuration === "h";
-          const isFilled = !isWhole && !isHalf;
-          const noteColor = cursor.isChord
-            ? "rgba(124,58,237,0.85)"
-            : "rgba(37,99,235,0.85)";
-          const noteGlow = cursor.isChord
-            ? "rgba(124,58,237,0.4)"
-            : "rgba(37,99,235,0.4)";
+      {/* Ghost note while placing (note mode) */}
+      {cursor && (
+        <GhostNote
+          x={cursor.ghostX}
+          y={cursor.ghostY}
+          pos={cursor.pos}
+          ls={cursor.ls}
+          top={cursor.top}
+          duration={selectedDuration}
+          dots={selectedDots}
+          tone={!cursor.valid ? "invalid" : cursor.isChord ? "chord" : "ok"}
+          showBeatGuide
+          label={`${cursor.isChord ? "+" : ""}${cursor.pitch.step}${cursor.keyAlter}${cursor.pitch.octave}${selectedDots ? "." : ""}`}
+          sub={
+            cursor.valid
+              ? `beat ${Math.round((cursor.beat + 1) * 100) / 100}${cursor.clipped ? " · shortened to fit" : ""}`
+              : cursor.reason === "occupied"
+                ? "occupied — pick an empty beat"
+                : "no room here"
+          }
+        />
+      )}
 
-          // Find the zone this cursor is over (for ledger lines + stem positioning)
-          const z = measureZones.find(
-            (mz) => `${mz.partId}-${mz.measureIndex}` === cursor.zKey,
-          );
+      {/* Ghost while dragging an existing notehead to a new pitch */}
+      {pitchDrag && (
+        <GhostNote
+          x={pitchDrag.ghostX}
+          y={pitchDrag.ghostY}
+          pos={pitchDrag.pos}
+          ls={pitchDrag.ls}
+          top={pitchDrag.top}
+          duration="q"
+          dots={0}
+          tone="drag"
+          bare
+          label={
+            pitchDrag.moveTo
+              ? "move to this bar"
+              : `${pitchDrag.pitch.step}${pitchDrag.pitch.octave}`
+          }
+        />
+      )}
 
-          return (
-            <>
-              {/* Ghost note head — filled oval (blue like MuseScore) */}
-              <div
-                style={{
-                  position: "absolute",
-                  left: cursor.ghostX - 7,
-                  top: cursor.ghostY - 5,
-                  width: 13,
-                  height: 10,
-                  borderRadius: "50%",
-                  background: isFilled ? noteColor : "transparent",
-                  border: `2px solid ${noteColor}`,
-                  boxShadow: `0 0 8px ${noteGlow}`,
-                  pointerEvents: "none",
-                  zIndex: 18,
-                  transform: "rotate(-15deg)",
-                }}
-              />
-
-              {/* Stem — quarter notes and smaller get a stem */}
-              {!isWhole && z && (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: cursor.ghostX + 5,
-                    top:
-                      cursor.ghostY > (z.staveTopLineY ?? z.y + 30) + 20
-                        ? cursor.ghostY - 30
-                        : cursor.ghostY + 4,
-                    width: 1.5,
-                    height: 28,
-                    background: noteColor,
-                    pointerEvents: "none",
-                    zIndex: 18,
-                  }}
-                />
-              )}
-
-              {/* Ledger line — only when outside the staff (pos < 0 or > 8) */}
-              {z &&
-                (() => {
-                  const topLineY = z.staveTopLineY ?? z.y + 30;
-                  const botLineY = topLineY + (z.staveLineSpacing ?? 10) * 4;
-                  const needsLedger =
-                    cursor.ghostY < topLineY - 3 ||
-                    cursor.ghostY > botLineY + 3;
-                  if (!needsLedger) return null;
-                  return (
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: cursor.ghostX - 10,
-                        top: cursor.ghostY - 1,
-                        width: 22,
-                        height: 2,
-                        background: noteColor,
-                        opacity: 0.8,
-                        pointerEvents: "none",
-                        zIndex: 18,
-                      }}
-                    />
-                  );
-                })()}
-
-              {/* Pitch label — small tooltip showing note name */}
-              <div
-                style={{
-                  position: "absolute",
-                  left: cursor.ghostX + 10,
-                  top: cursor.ghostY - 18,
-                  background: cursor.isChord ? "#6d28d9" : "#1d4ed8",
-                  color: "white",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "1px 5px",
-                  borderRadius: 4,
-                  pointerEvents: "none",
-                  zIndex: 19,
-                  whiteSpace: "nowrap",
-                  boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
-                }}
-              >
-                {cursor.isChord ? "+" : ""}
-                {label}
-                {selectedDots ? "." : ""}
-              </div>
-            </>
-          );
-        })()}
-
-      {/* Note / rest zones */}
+      {/* Note / rest zones. In note mode they let every pointer event through
+          to the wrapper (they used to swallow clicks, so nothing could be
+          placed on a rest). In select mode: click selects, drag a note up or
+          down to change its pitch (Alt-drag moves it to another bar). */}
       {noteZones.map((z) => (
         <div
           key={`n-${z.noteId}`}
-          draggable={!z.isRest && !z.isChordNote}
-          onDragStart={(e) => {
-            if (z.isRest || z.isChordNote) return;
-            e.stopPropagation();
-            setDragState({
-              noteId: z.noteId,
-              partId: z.partId,
-              measureIndex: z.measureIndex,
-            });
-            e.dataTransfer.effectAllowed = "move";
-          }}
-          onDragEnd={() => setDragState(null)}
+          onPointerDown={(e) => handleNotePointerDown(e, z)}
+          onPointerMove={handleNotePointerMove}
+          onPointerUp={handleNotePointerUp}
+          onPointerCancel={handleNotePointerCancel}
           onClick={(e) => {
-            e.stopPropagation();
-            // In note mode the outer div handles note placement — don't select
             if (inputMode === "note") return;
+            e.stopPropagation();
             selectNote(z.noteId, z.partId, z.measureIndex);
           }}
           title={
             z.isRest
               ? "Rest — click to select, then press A–G to fill"
               : z.isChordNote
-                ? `Chord note — click to select, Del to remove from chord`
-                : "Note — click to select, drag to move"
+                ? "Chord note — click to select, Del to remove from chord"
+                : "Note — click to select · drag up/down to change pitch · Alt-drag to another bar"
           }
           style={{
             position: "absolute",
@@ -2702,11 +2828,12 @@ export default function ScoreRenderer() {
             top: z.y,
             width: z.width,
             height: z.height,
-            cursor: z.isRest ? "pointer" : dragState ? "grabbing" : "grab",
+            cursor: z.isRest || z.isChordNote ? "pointer" : pitchDrag ? "ns-resize" : "grab",
             boxSizing: "border-box",
             zIndex: z.isChordNote ? 12 : 10,
-            // MuseScore-style selection: NO big box, just a very subtle underline
-            // The notehead itself is already coloured orange/blue by VexFlow's setStyle
+            pointerEvents: inputMode === "note" ? "none" : "auto",
+            touchAction: "none",
+            // MuseScore-style selection: NO big box, just a subtle underline
             border: "none",
             borderBottom: z.selected
               ? z.isRest

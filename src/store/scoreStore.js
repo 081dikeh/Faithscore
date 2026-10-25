@@ -1,6 +1,6 @@
 // src/store/scoreStore.js
 import { create } from 'zustand'
-import { withNoteLyric, splitLyricText, nextVerseNumber } from '../utils/lyricVerses'
+import { withNoteLyric, splitLyricText, nextVerseNumber } from '../utils/lyricVerses.js'
 
 // ── Auto-save helpers ─────────────────────────────────────────────────────────
 const AUTOSAVE_KEY = 'scoreai_autosave'
@@ -214,6 +214,69 @@ function makeRests(beats, idPrefix) {
     rem -= used
   }
   return rests
+}
+
+// ── Note placement planning ─────────────────────────────────────────────────
+// Decides — WITHOUT changing anything — what putting a note of a given value
+// at a given beat would do. The pointer ghost uses it to show whether a spot is
+// valid, and dropNoteAtBeat uses the very same answer to commit, so what you
+// see is what you get.
+//
+//   kind 'chord' : a sounding note already starts at that beat → add the pitch
+//                  to it (never silently replace it)
+//   kind 'note'  : the beat falls inside a rest → the note goes EXACTLY at the
+//                  beat, the rest is split around it (before / after) and every
+//                  other event in the bar is left untouched
+//   ok:false     : inside a sounding note, no room, or outside the bar
+const FIT_ORDER = [['w',0],['h',1],['h',0],['q',1],['q',0],['8',1],['8',0],['16',1],['16',0],['32',0],['64',0]]
+function largestFit(beats) {
+  for (const [d, dot] of FIT_ORDER) {
+    const b = DURATION_BEATS[d + (dot ? 'd' : '')]
+    if (b <= beats + 0.001) return { duration: d, dots: dot, beats: b }
+  }
+  return null
+}
+
+export function planPlacement(measure, beat, duration, dots = 0) {
+  const EPS = 0.02
+  const cap = measureCapacity(measure?.timeSignature)
+  if (!measure || beat < -EPS || beat >= cap - EPS) return { ok: false, reason: 'outside' }
+
+  let cursor = 0
+  const events = []
+  for (const n of measure.notes.filter(x => !x.chordWith)) {
+    const d = noteDuration(n)
+    events.push({ n, start: cursor, end: cursor + d })
+    cursor += d
+  }
+
+  const onset = events.find(e => !e.n.isRest && Math.abs(e.start - beat) < EPS)
+  if (onset) return { ok: true, kind: 'chord', noteId: onset.n.id, beat: onset.start }
+
+  if (events.some(e => !e.n.isRest && beat > e.start + EPS && beat < e.end - EPS)) {
+    return { ok: false, reason: 'occupied' }
+  }
+
+  const rest = events.find(e => e.n.isRest && beat >= e.start - EPS && beat < e.end - EPS)
+  if (!rest) return { ok: false, reason: 'occupied' }
+
+  const at = Math.abs(beat - rest.start) < EPS ? rest.start : beat
+  const avail = rest.end - at
+  const key = duration + (dots ? 'd' : '')
+  const wanted = DURATION_BEATS[key] ?? DURATION_BEATS[duration] ?? 1
+  let use = { duration, dots: dots || 0, beats: wanted }
+  let clipped = false
+  if (wanted > avail + 0.001) {
+    const fit = largestFit(avail)
+    if (!fit) return { ok: false, reason: 'no-room' }
+    use = fit
+    clipped = true
+  }
+  return {
+    ok: true, kind: 'note', restId: rest.n.id, beat: at,
+    before: at - rest.start, after: avail - use.beats,
+    use, clipped, avail,
+  }
 }
 
 // CORE: Normalize a measure so notes + rests always fill exactly maxBeats
@@ -1245,54 +1308,35 @@ export const useScoreStore = create((set, get) => ({
   // ── Drop note at specific beat position (drag-and-drop from toolbar) ────────
   // beatPosition = fractional beat index within the measure (0 = start, 1 = after beat 1, etc.)
   // The note is inserted at the rest slot whose beat range contains beatPosition.
+  // Place a note at an exact beat. One undo step. Returns the plan, so callers
+  // can tell a placement ({ ok:true }) from a refusal ({ ok:false, reason }).
+  //   • a sounding note already starts there  → the pitch joins it as a chord
+  //   • otherwise the beat must fall inside a rest: the note goes exactly at
+  //     that beat, the rest is split around it, nothing else in the bar moves
+  //   • too long for the rest → shortened to the biggest value that fits
   dropNoteAtBeat: (partId, measureIndex, pitch, duration, dots, beatPosition) => {
-    get()._snapshot()
-        const part    = get().score.parts.find(p => p.id === partId)
+    const part    = get().score.parts.find(p => p.id === partId)
     const measure = part?.measures[measureIndex]
-    if (!measure) return
+    if (!measure) return { ok: false, reason: 'outside' }
 
-    const maxBeats  = measureCapacity(measure.timeSignature)
-    const clampedBeat = Math.max(0, Math.min(beatPosition, maxBeats - 0.001))
+    const plan = planPlacement(measure, beatPosition, duration, dots)
+    if (!plan.ok) return plan
 
-    // Find which rest slot the drop position falls into
-    // Walk through non-chord notes, tracking beat cursor, find the rest at clampedBeat
-    const nonChord = measure.notes.filter(n => !n.chordWith)
-    let cursor = 0
-    let targetRest = null
-
-    for (const n of nonChord) {
-      const dur = noteDuration(n)
-      if (n.isRest && clampedBeat >= cursor - 0.001 && clampedBeat < cursor + dur - 0.001) {
-        targetRest = n
-        break
-      }
-      cursor += dur
+    if (plan.kind === 'chord') {
+      get().addChordNote(partId, measureIndex, plan.noteId, pitch)
+      return plan
     }
 
-    // If no rest found at that position (it's occupied by a note), find the next rest
-    if (!targetRest) {
-      targetRest = nonChord.find(n => n.isRest)
-    }
-    if (!targetRest) return  // measure is completely full of real notes
-
-    const restBeats  = noteDuration(targetRest)
-    const durKey     = duration + (dots ? 'd' : '')
-    const newBeats   = DURATION_BEATS[durKey] || DURATION_BEATS[duration] || 1
-    const actualBeats = Math.min(newBeats, restBeats)  // clamp to fit
-    const fitDur     = actualBeats === newBeats
-      ? { duration, dots: dots || 0 }
-      : beatsToRest(restBeats)
-
+    get()._snapshot()
     const newId   = crypto.randomUUID()
-    const newNote = { id: newId, isRest: false, pitch, duration: fitDur.duration, dots: fitDur.dots }
-    const leftover = restBeats - noteDuration(newNote)
+    const newNote = { id: newId, isRest: false, pitch, duration: plan.use.duration, dots: plan.use.dots }
 
     get()._applyToMeasure(partId, measureIndex, (notes) => {
-      const idx      = notes.findIndex(n => n.id === targetRest.id)
-      const before   = notes.slice(0, idx)
-      const after    = notes.slice(idx + 1).filter(n => !n.isRest)
-      const leftovers = leftover > 0.001 ? makeRests(leftover, `drop_${newId}`) : []
-      return [...before, newNote, ...leftovers, ...after]
+      const idx = notes.findIndex(n => n.id === plan.restId)
+      if (idx < 0) return notes
+      const pre  = plan.before > 0.001 ? makeRests(plan.before, `pre_${newId}`)  : []
+      const post = plan.after  > 0.001 ? makeRests(plan.after,  `drop_${newId}`) : []
+      return [...notes.slice(0, idx), ...pre, newNote, ...post, ...notes.slice(idx + 1)]
     })
 
     set({
@@ -1300,8 +1344,71 @@ export const useScoreStore = create((set, get) => ({
       selectedMeasureIndex: measureIndex,
       selectedNoteId:       newId,
     })
+    return { ...plan, noteId: newId }
   },
 
+  // Move a note (with its chord tones) into another bar — one undo step.
+  // It goes into the first rest in that bar big enough to hold it; the spot
+  // it leaves becomes a rest of the same length. Nothing is overwritten:
+  // if the target bar has no room, nothing changes.
+  moveNote: (noteId, fromPartId, fromMeasure, toPartId, toMeasure) => {
+    if (fromPartId === toPartId && fromMeasure === toMeasure) return { ok: false, reason: 'same' }
+    const sc  = get().score
+    const src = sc.parts.find(p => p.id === fromPartId)?.measures[fromMeasure]
+    const dst = sc.parts.find(p => p.id === toPartId)?.measures[toMeasure]
+    const note = src?.notes.find(n => n.id === noteId)
+    if (!note || note.isRest || note.chordWith || !dst) return { ok: false, reason: 'invalid' }
+
+    // first rest in the target that holds the whole note without shortening it
+    let slot = null
+    let cursor = 0
+    for (const n of dst.notes.filter(x => !x.chordWith)) {
+      if (n.isRest) {
+        const plan = planPlacement(dst, cursor, note.duration, note.dots || 0)
+        if (plan.ok && plan.kind === 'note' && !plan.clipped) { slot = plan; break }
+      }
+      cursor += noteDuration(n)
+    }
+    if (!slot) return { ok: false, reason: 'no-room' }
+
+    get()._snapshot()
+    const companions = src.notes.filter(n => n.chordWith === noteId)
+
+    // 1) leave a rest of the same length behind
+    get()._applyToMeasure(fromPartId, fromMeasure, (notes) =>
+      notes
+        .filter(n => n.chordWith !== noteId)
+        .flatMap(n => n.id === noteId ? makeRests(noteDuration(n), `mv_${noteId}`) : [n])
+    )
+
+    // 2) put it (and its chord tones) into the target rest
+    const newId = crypto.randomUUID()
+    const moved = { ...note, id: newId, tieStart: undefined }
+    const movedCompanions = companions.map(c => ({ ...c, id: crypto.randomUUID(), chordWith: newId }))
+    get()._applyToMeasure(toPartId, toMeasure, (notes) => {
+      const idx = notes.findIndex(n => n.id === slot.restId)
+      if (idx < 0) return notes
+      const pre  = slot.before > 0.001 ? makeRests(slot.before, `pre_${newId}`)  : []
+      const post = slot.after  > 0.001 ? makeRests(slot.after,  `drop_${newId}`) : []
+      return [...notes.slice(0, idx), ...pre, moved, ...movedCompanions, ...post, ...notes.slice(idx + 1)]
+    })
+
+    set({ selectedPartId: toPartId, selectedMeasureIndex: toMeasure, selectedNoteId: newId })
+    return { ok: true, noteId: newId }
+  },
+
+  // Change a note's pitch (e.g. by dragging its notehead). One undo step; the
+  // note keeps its id, duration and position. Returns false if nothing changed.
+  setNotePitch: (partId, measureIndex, noteId, pitch) => {
+    const note = get().score.parts.find(p => p.id === partId)?.measures[measureIndex]?.notes.find(n => n.id === noteId)
+    if (!note || note.isRest || !pitch) return false
+    if (note.pitch && note.pitch.step === pitch.step && note.pitch.octave === pitch.octave) return false
+    get()._snapshot()
+    get()._applyToMeasure(partId, measureIndex, (notes) =>
+      notes.map(n => n.id === noteId ? { ...n, pitch: { step: pitch.step, octave: pitch.octave, accidental: null } } : n)
+    )
+    return true
+  },
 
   // ── Add a note as a chord companion to an existing note ──────────────────
   // baseNoteId must be a real (non-rest) note. The new pitch is stacked on
