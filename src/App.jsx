@@ -58,6 +58,8 @@ import { usePlayback } from "./hooks/usePlayback";
 import PianoKeyboard from "./components/PianoKeyboard";
 import { supabase } from "./lib/supabase";
 import SolfaApp from "./components/SolfaApp";
+import { dialog } from "./utils/dialog.js";
+import { saveRegistry } from "./utils/saveRegistry.js";
 
 const DURATION_KEYS = {
   1: "w",
@@ -579,7 +581,7 @@ export default function App() {
   }, []);
 
   const handleSignOut = async () => {
-    if (!confirmLeaveIfDirty()) return;
+    if (!(await confirmLeaveIfDirty())) return;
     await supabase.auth.signOut();
     // onAuthStateChange SIGNED_OUT will clear user and reset view
   };
@@ -592,30 +594,60 @@ export default function App() {
     return false;
   };
 
-  // Ask the user before leaving a score with unsaved changes. Returns true
-  // if it's OK to proceed (nothing unsaved, or the user chose to leave
-  // anyway), false if the navigation should be cancelled.
-  const confirmLeaveIfDirty = () => {
+  // Ask the user before leaving a score with unsaved changes. Resolves true
+  // if it's OK to proceed (nothing unsaved, they chose to leave anyway, or
+  // they saved), false if the navigation should be cancelled.
+  const confirmLeaveIfDirty = async () => {
     if (!currentIsDirty()) return true;
-    return window.confirm(
-      "You have unsaved changes.\n\nPress Cancel to go back and save (Ctrl+S), or OK to leave without saving.",
-    );
+    const inSolfa = appView === "solfa-editor";
+    const title =
+      (inSolfa
+        ? useSolfaStore.getState().score.title
+        : useScoreStore.getState().score.title) || "Untitled score";
+    const choice = await dialog.choose({
+      tone: "warn",
+      title: "Unsaved changes",
+      message: `“${title}” has changes that haven't been saved yet.\n\nWhat would you like to do?`,
+      actions: [
+        { id: "stay", label: "Stay here", variant: "secondary" },
+        { id: "discard", label: "Leave without saving", variant: "danger" },
+        { id: "save", label: "Save and continue", variant: "primary", primary: true },
+      ],
+    });
+    if (choice === "discard") return true;
+    if (choice !== "save") return false; // "Stay here", Esc, or clicked away
+    if (inSolfa) await saveRegistry.solfa?.();
+    else await doSave({ asNew: false, quiet: true });
+    if (currentIsDirty()) {
+      // the save did not go through — don't throw their work away
+      dialog.toast("Couldn't save, so you were kept here. Your changes are still safe on this page.", { tone: "danger" });
+      return false;
+    }
+    return true;
   };
 
-  const goHome = () => {
-    if (confirmLeaveIfDirty()) setAppView("home");
+  const goHome = async () => {
+    if (await confirmLeaveIfDirty()) setAppView("home");
   };
 
   // ── Save / Save As ───────────────────────────────────────────────────────
   // asNew=true (Save As): always creates a fresh cloud row / local slot and
   // points this session at the new one, leaving the original untouched.
-  const doSave = async ({ asNew }) => {
+  // quiet=true: no "saved" toast (used when saving as part of leaving a score)
+  // Resolves true once the score is actually saved, false otherwise.
+  const doSave = async ({ asNew, quiet = false }) => {
     let current = useScoreStore.getState().score;
     if (asNew) {
       const suggested = (current.title || "Untitled Score") + " copy";
-      const newTitle = prompt("Save as:", suggested);
-      if (newTitle === null) return; // cancelled
-      useScoreStore.getState().setTitle(newTitle || suggested);
+      const newTitle = await dialog.prompt("Give the new copy a name:", {
+        title: "Save as",
+        defaultValue: suggested,
+        placeholder: "Score title",
+        confirmLabel: "Save copy",
+        validate: (v) => (v.trim() ? "" : "Please enter a name"),
+      });
+      if (newTitle === null) return false; // cancelled
+      useScoreStore.getState().setTitle(newTitle.trim() || suggested);
       useScoreStore.getState().setCloudId(null);
       current = useScoreStore.getState().score;
     }
@@ -663,19 +695,29 @@ export default function App() {
           if (data?.id) useScoreStore.getState().setCloudId(data.id);
         }
         useScoreStore.getState().markSaved();
-        alert(
-          asNew ? `Saved a new copy: "${current.title}" ☁` : "Saved to cloud ☁",
-        );
+        if (!quiet)
+          dialog.toast(
+            asNew ? `Saved a new copy: “${current.title}” ☁` : "Saved to the cloud ☁",
+            { tone: "success" },
+          );
+        return true;
       } catch (e) {
-        alert("Cloud save failed — saved locally instead.");
+        dialog.alert(
+          "We couldn't reach the cloud, so this score was only saved on this device.\n\nYour changes are still marked as unsaved — try saving again when you're back online.",
+          { tone: "warn", title: "Cloud save failed" },
+        );
+        return false;
       }
     } else {
       useScoreStore.getState().markSaved();
-      alert(
-        asNew
-          ? `Saved a new copy locally: "${current.title}"`
-          : "Score saved to browser storage.",
-      );
+      if (!quiet)
+        dialog.toast(
+          asNew
+            ? `Saved a new copy on this device: “${current.title}”`
+            : "Saved on this device",
+          { tone: "success" },
+        );
+      return true;
     }
   };
 
@@ -685,7 +727,7 @@ export default function App() {
   const [recentLoading, setRecentLoading] = useState(false);
 
   const handleOpenRecentClick = async () => {
-    if (!confirmLeaveIfDirty()) return;
+    if (!(await confirmLeaveIfDirty())) return;
     setShowOpenRecent(true);
     setRecentLoading(true);
     try {
@@ -748,17 +790,20 @@ export default function App() {
         p.measures.some((m) => m.notes.some((n) => !n.isRest)),
       )
     ) {
-      alert("This score is empty — add some notes first.");
+      dialog.alert("This score is empty — add some notes first.", {
+        tone: "warn",
+        title: "Nothing to convert",
+      });
       return;
     }
     const { score: converted, warnings } = convertStaffScoreToSolfa(score);
     useSolfaStore.getState().loadScore(converted);
     setAppView("solfa-editor");
     if (warnings.length) {
-      alert(
-        "Converted to sol-fa. A few things to know:\n\n" +
-          warnings.join("\n\n"),
-      );
+      dialog.alert("A few things to know:\n\n" + warnings.join("\n\n"), {
+        title: "Converted to sol-fa",
+        tone: "info",
+      });
     }
   };
 
@@ -778,23 +823,26 @@ export default function App() {
       ),
     );
     if (!hasNotes) {
-      alert("This score is empty — add some notes first.");
+      dialog.alert("This score is empty — add some notes first.", {
+        tone: "warn",
+        title: "Nothing to convert",
+      });
       return;
     }
     const { score: converted, warnings } = convertSolfaScoreToStaff(solfaScore);
     useScoreStore.getState().loadScore(converted);
     setAppView("editor");
     if (warnings.length) {
-      alert(
-        "Converted to staff notation. A few things to know:\n\n" +
-          warnings.join("\n\n"),
-      );
+      dialog.alert("A few things to know:\n\n" + warnings.join("\n\n"), {
+        title: "Converted to staff notation",
+        tone: "info",
+      });
     }
   };
 
   const openFileInputRef = useRef(null);
-  const handleOpenClick = () => {
-    if (!confirmLeaveIfDirty()) return;
+  const handleOpenClick = async () => {
+    if (!(await confirmLeaveIfDirty())) return;
     openFileInputRef.current?.click();
   };
   const handleOpenFileChosen = async (e) => {
@@ -802,8 +850,9 @@ export default function App() {
     e.target.value = ""; // allow re-selecting the same file later
     if (!file) return;
     if (/\.mxl$/i.test(file.name)) {
-      alert(
+      dialog.alert(
         "This is a compressed MusicXML file (.mxl), which isn't supported yet.\n\nIn MuseScore (or similar), use File → Export → uncompressed MusicXML (.xml/.musicxml) instead.",
+        { tone: "warn", title: "File type not supported" },
       );
       return;
     }
@@ -811,18 +860,25 @@ export default function App() {
       const text = await file.text();
       const { score: imported, warnings } = importMusicXML(text);
       if (!imported) {
-        alert(
-          "Could not open this file:\n\n" + (warnings[0] || "Unknown error"),
-        );
+        dialog.alert(warnings[0] || "Unknown error", {
+          tone: "danger",
+          title: "Could not open this file",
+        });
         return;
       }
       useScoreStore.getState().loadScore(imported);
       setAppView("editor");
       if (warnings.length) {
-        alert("Opened with a few notes:\n\n" + warnings.join("\n\n"));
+        dialog.alert(warnings.join("\n\n"), {
+          tone: "info",
+          title: "Opened with a few notes",
+        });
       }
     } catch (err) {
-      alert("Could not open this file: " + err.message);
+      dialog.alert(err.message, {
+        tone: "danger",
+        title: "Could not open this file",
+      });
     }
   };
 
@@ -2001,12 +2057,24 @@ export default function App() {
                   icon=""
                   label="Find / Go to"
                   shortcut="Ctrl+F"
-                  onClick={() => {
+                  onClick={async () => {
                     const lastIdx = (score.parts[0]?.measures.length || 1) - 1;
-                    const raw = window.prompt(`Go to bar (1–${lastIdx + 1}):`);
-                    if (!raw) return;
+                    const raw = await dialog.prompt(
+                      `Which bar? (1–${lastIdx + 1})`,
+                      {
+                        title: "Go to bar",
+                        inputType: "number",
+                        confirmLabel: "Go",
+                        validate: (v) => {
+                          const k = parseInt(v, 10);
+                          return Number.isFinite(k) && k >= 1 && k <= lastIdx + 1
+                            ? ""
+                            : `Enter a bar number from 1 to ${lastIdx + 1}`;
+                        },
+                      },
+                    );
+                    if (raw === null) return;
                     const n = parseInt(raw, 10);
-                    if (!Number.isFinite(n) || n < 1 || n > lastIdx + 1) return;
                     const partId = selectedPartId || score.parts[0]?.id;
                     if (partId) selectMeasure(partId, n - 1);
                   }}
@@ -2131,14 +2199,24 @@ export default function App() {
                 <Item
                   icon=""
                   label="Append measures…"
-                  onClick={() => {
-                    const raw = window.prompt(
-                      "How many measures to append?",
-                      "4",
+                  onClick={async () => {
+                    const raw = await dialog.prompt(
+                      "How many bars should be added to the end?",
+                      {
+                        title: "Append bars",
+                        defaultValue: "4",
+                        inputType: "number",
+                        confirmLabel: "Add bars",
+                        validate: (v) => {
+                          const k = parseInt(v, 10);
+                          return Number.isFinite(k) && k >= 1 && k <= 200
+                            ? ""
+                            : "Enter a number from 1 to 200";
+                        },
+                      },
                     );
-                    if (!raw) return;
+                    if (raw === null) return;
                     const n = parseInt(raw, 10);
-                    if (!Number.isFinite(n) || n < 1 || n > 200) return;
                     for (let i = 0; i < n; i++) addMeasure();
                   }}
                 />
@@ -2163,13 +2241,24 @@ export default function App() {
                 <Item
                   icon=""
                   label="Add rehearsal mark"
-                  onClick={() => {
+                  onClick={async () => {
                     const idx = selectedMeasureIndex;
                     if (idx === null) {
-                      alert("Select a measure first.");
+                      dialog.alert("Click a bar first, then add the rehearsal mark.", {
+                        tone: "warn",
+                        title: "No bar selected",
+                      });
                       return;
                     }
-                    const letter = prompt("Rehearsal mark letter:", "A");
+                    const letter = await dialog.prompt(
+                      "What should the rehearsal mark say? (up to 3 characters)",
+                      {
+                        title: "Rehearsal mark",
+                        defaultValue: "A",
+                        confirmLabel: "Add mark",
+                        validate: (v) => (v.trim() ? "" : "Enter a letter or number"),
+                      },
+                    );
                     if (letter)
                       useScoreStore
                         .getState()
@@ -2213,12 +2302,21 @@ export default function App() {
                 <Item
                   icon=""
                   label="Fixed measures per system…"
-                  onClick={() => {
-                    const v = prompt(
-                      "Measures per line (1–16):",
-                      useScoreStore.getState().measuresPerLine ?? 4,
-                    );
-                    const n = parseInt(v);
+                  onClick={async () => {
+                    const v = await dialog.prompt("How many bars per line? (1–16)", {
+                      title: "Fixed bars per line",
+                      defaultValue: String(useScoreStore.getState().measuresPerLine ?? 4),
+                      inputType: "number",
+                      confirmLabel: "Apply",
+                      validate: (x) => {
+                        const k = parseInt(x, 10);
+                        return Number.isFinite(k) && k >= 1 && k <= 16
+                          ? ""
+                          : "Enter a number from 1 to 16";
+                      },
+                    });
+                    if (v === null) return;
+                    const n = parseInt(v, 10);
                     if (!isNaN(n)) {
                       useScoreStore.getState().setMeasuresPerLine(n);
                       useScoreStore.getState().setAutoLayout(false);
@@ -2293,12 +2391,24 @@ export default function App() {
                 <Item
                   icon=""
                   label="Transpose…"
-                  onClick={() => {
-                    const s = prompt(
-                      "Semitones to transpose (positive=up, negative=down):",
-                      "0",
+                  onClick={async () => {
+                    const s = await dialog.prompt(
+                      "How many semitones? Positive moves up, negative moves down.",
+                      {
+                        title: "Transpose",
+                        defaultValue: "0",
+                        inputType: "number",
+                        confirmLabel: "Transpose",
+                        validate: (x) => {
+                          const k = Number(x);
+                          return Number.isInteger(k) && k !== 0 && Math.abs(k) <= 48
+                            ? ""
+                            : "Enter a whole number other than 0 (up to 48 either way)";
+                        },
+                      },
                     );
-                    const n = parseInt(s);
+                    if (s === null) return;
+                    const n = parseInt(s, 10);
                     if (!isNaN(n) && n !== 0) transposeSelection(n);
                   }}
                 />
@@ -2358,17 +2468,17 @@ export default function App() {
                 <Item
                   icon={<Sparkles size={14} strokeWidth={2} />}
                   label="AI: Generate melody…"
-                  onClick={() => alert("AI melody generation — coming soon!")}
+                  onClick={() => dialog.toast("AI melody generation — coming soon!", { tone: "info" })}
                 />
                 <Item
                   icon={<Sparkles size={14} strokeWidth={2} />}
                   label="AI: Harmonize…"
-                  onClick={() => alert("AI harmonization — coming soon!")}
+                  onClick={() => dialog.toast("AI harmonization — coming soon!", { tone: "info" })}
                 />
                 <Item
                   icon={<Sparkles size={14} strokeWidth={2} />}
                   label="AI: Generate lyrics…"
-                  onClick={() => alert("AI lyric generation — coming soon!")}
+                  onClick={() => dialog.toast("AI lyric generation — coming soon!", { tone: "info" })}
                 />
               </>
             );

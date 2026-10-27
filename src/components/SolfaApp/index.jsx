@@ -62,6 +62,7 @@ import {
   solfaPrintTargetPx,
 } from "../../utils/exportSolfa";
 import { supabase } from "../../lib/supabase";
+import { saveRegistry } from "../../utils/saveRegistry.js";
 
 const SYLLABLES = ["d", "r", "m", "f", "s", "l", "t"];
 const CHROMATIC = ["de", "ri", "fe", "se", "ta"];
@@ -753,10 +754,11 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
         setSaveMsg("Saved ✓");
         useSolfaStore.getState().markSaved();
         setTimeout(() => setSaveMsg(""), 3000);
+        return true;
       } catch {
         setSaveMsg("Save failed");
+        return false;
       }
-      return;
     }
     setSaving(true);
     setSaveMsg("");
@@ -783,11 +785,23 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
       setSaveMsg("Saved ✓");
       useSolfaStore.getState().markSaved();
       setTimeout(() => setSaveMsg(""), 3000);
+      setSaving(false);
+      return true;
     } catch {
       setSaveMsg("Save failed");
+      setSaving(false);
+      return false;
     }
-    setSaving(false);
   }
+
+  // Let the app shell save this score (the "Unsaved changes → Save and
+  // continue" dialog) without reaching into this component.
+  useEffect(() => {
+    saveRegistry.solfa = saveToCloud;
+    return () => {
+      if (saveRegistry.solfa === saveToCloud) saveRegistry.solfa = null;
+    };
+  });
 
   const comboInfo = VOICE_COMBOS[score.voiceCombo] || VOICE_COMBOS.satb;
   const currentTS = `${score.timeSignature?.beats || 4}/${score.timeSignature?.beatType || 4}`;

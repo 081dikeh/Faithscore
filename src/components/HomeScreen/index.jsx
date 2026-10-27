@@ -5,6 +5,7 @@ import { useScoreStore } from '../../store/scoreStore'
 import { useSolfaStore } from '../../store/solfaStore'
 import SolfaWizard from '../SolfaWizard'
 import { supabase } from '../../lib/supabase'
+import { dialog } from '../../utils/dialog.js'
 
 // ─── Data  ────────────────────────────────────────────────────────────────────
 
@@ -267,7 +268,7 @@ function Wizard({ onDone, onCancel }) {
 
   function finish() {
     const partDefs = tab === 'template' ? tSel.parts : parts
-    if (!partDefs.length) { alert('Add at least one instrument.'); return }
+    if (!partDefs.length) { dialog.alert('Pick at least one instrument before continuing.', { tone: 'warn', title: 'No instruments yet' }); return }
     loadScore(buildScore(partDefs, { key, timeSig, tempo, measures, title, composer, subtitle, lyricist, copyright }))
     onDone()
   }
@@ -642,7 +643,11 @@ export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSi
 
   const deleteCloudScore = async (cloudId) => {
     if (!user || !cloudId) return
-    if (!window.confirm('Delete this score from your account?')) return
+    const ok = await dialog.confirm(
+      'This permanently deletes the score from your account. This can\'t be undone.',
+      { title: 'Delete this score?', tone: 'danger', confirmLabel: 'Delete score' },
+    )
+    if (!ok) return
     await supabase.from('scores').delete().eq('id', cloudId).eq('user_id', user.id)
     setRecent(r => r.filter(x => x.cloudId !== cloudId))
   }

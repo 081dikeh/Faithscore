@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+import DialogHost from './components/DialogHost'
 
 // If this window was opened specifically to complete the FaithLibrary
 // OAuth connect flow (see connectGoogle in PublishToFaithLibrary), it
@@ -80,6 +81,8 @@ if (isFaithLibraryPopup) {
   createRoot(document.getElementById('root')).render(
     <StrictMode>
       <App />
+      {/* FaithScore's own alert / confirm / prompt / toast popups */}
+      <DialogHost />
     </StrictMode>,
   )
 }
