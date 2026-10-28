@@ -237,6 +237,17 @@ function largestFit(beats) {
   return null
 }
 
+// A pitch entered by mouse is a plain letter + octave; in a key with sharps or
+// flats the note must carry that key's accidental (F in D major is F#), exactly
+// like the arrow-key pitch editing already does — otherwise the engraver draws
+// a natural sign and the note sounds a semitone off the key. An accidental the
+// caller set explicitly is left alone.
+export function pitchInKey(pitch, measure) {
+  if (!pitch) return pitch
+  const acc = pitch.accidental ?? (keySignatureAccidentals(measure?.keySignature ?? 0)[pitch.step] || null)
+  return { step: pitch.step, octave: pitch.octave, accidental: acc }
+}
+
 export function planPlacement(measure, beat, duration, dots = 0) {
   const EPS = 0.02
   const cap = measureCapacity(measure?.timeSignature)
@@ -1321,6 +1332,7 @@ export const useScoreStore = create((set, get) => ({
 
     const plan = planPlacement(measure, beatPosition, duration, dots)
     if (!plan.ok) return plan
+    pitch = pitchInKey(pitch, measure)
 
     if (plan.kind === 'chord') {
       get().addChordNote(partId, measureIndex, plan.noteId, pitch)
@@ -1400,12 +1412,14 @@ export const useScoreStore = create((set, get) => ({
   // Change a note's pitch (e.g. by dragging its notehead). One undo step; the
   // note keeps its id, duration and position. Returns false if nothing changed.
   setNotePitch: (partId, measureIndex, noteId, pitch) => {
-    const note = get().score.parts.find(p => p.id === partId)?.measures[measureIndex]?.notes.find(n => n.id === noteId)
+    const measure = get().score.parts.find(p => p.id === partId)?.measures[measureIndex]
+    const note = measure?.notes.find(n => n.id === noteId)
     if (!note || note.isRest || !pitch) return false
     if (note.pitch && note.pitch.step === pitch.step && note.pitch.octave === pitch.octave) return false
+    const next = pitchInKey({ step: pitch.step, octave: pitch.octave, accidental: null }, measure)
     get()._snapshot()
     get()._applyToMeasure(partId, measureIndex, (notes) =>
-      notes.map(n => n.id === noteId ? { ...n, pitch: { step: pitch.step, octave: pitch.octave, accidental: null } } : n)
+      notes.map(n => n.id === noteId ? { ...n, pitch: next } : n)
     )
     return true
   },

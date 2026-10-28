@@ -12,6 +12,7 @@
 
 import { solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
 import { PAGE_SIZES_MM } from '../store/scoreStore'
+import { dialog } from './dialog.js'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -350,7 +351,7 @@ export function exportSolfaPDF(score, svgElement) {
   const { pageWmm, pageHmm, marginTop, marginBot, marginSide, usableWmm, usableHmm } = resolvePageGeometry(score)
 
   if (!svgElement) {
-    alert('Nothing to print yet — add some notes first.')
+    dialog.alert('Add some notes first, then print.', { tone: 'warn', title: 'Nothing to print yet' })
     return
   }
 

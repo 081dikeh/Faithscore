@@ -466,6 +466,11 @@ function GhostNote({ x, y, pos, ls, top, duration, dots, tone, label, sub, showB
   );
 }
 
+// How strongly note LENGTH widens the space after a note (VexFlow's default is
+// 10). A lower number spaces notes more evenly, so a bar that ends on a long
+// note no longer carries a big empty stretch before the barline.
+const SOFTMAX_FACTOR = 10;
+
 export default function ScoreRenderer() {
   const containerRef = useRef(null);
   const [zones, setZones] = useState([]);
@@ -705,21 +710,27 @@ export default function ScoreRenderer() {
             pos += noteDuration(n);
             return tickW.get(key) || 0;
           });
-          let total = trailing + Math.max(0, Ls[Ls.length - 1] / 2 - SP * 1.3);
+          // the last syllable hangs (its width / 2 - note width / 2) past the note
+          const lastNotePx = tcs[tcs.length - 1].getMetrics().notePx || 0;
+          let total = trailing + Math.max(0, Ls[Ls.length - 1] / 2 - lastNotePx / 2 + SP * 0.8);
           for (let i = 0; i < xs.length - 1; i++) {
             const need =
               (Ls[i] + Ls[i + 1]) / 2 +
               (Ls[i] > 0 && Ls[i + 1] > 0 ? SP * 0.8 : 0);
             total += Math.max(xs[i + 1] - xs[i], need);
           }
-          total += Math.max(0, Ls[0] / 2 - SP * 2.2) + xs[0];
+          const firstNotePx = tcs[0].getMetrics().notePx || 0;
+          total += Math.max(xs[0], Ls[0] / 2 - firstNotePx / 2 + SP * 0.8);
           if (total > best) best = total;
         }
       } catch (_) {
         best = 0;
       }
       // + the formatter's own left padding and a little breathing room
-      best = best > 0 ? best + Stave.defaultPadding + SP * 0.8 : 0;
+      // + room for the end margin the formatter keeps before the barline, so a
+      // bar that is already at its minimum width still clears the barline
+      // (this is what stops dense bars of 16ths / 32nds spilling over).
+      best = best > 0 ? best + SP * 1.0 + SP * 0.8 : 0;
       return (vexMinCache[colIdx] = best);
     }
 
@@ -1230,17 +1241,18 @@ export default function ScoreRenderer() {
             // instead of just shrinking the trailing gap in isolation.
             const BARLINE_PAD_LEFT = SP * 2;
             const BARLINE_PAD_RIGHT = SP * 0.8;
+            const TRAIL_PAD = SP * 0.3;
             // Use the stave's real note area (what is left after the clef /
             // key / time glyphs it actually drew), not an estimate of it —
             // an underestimate here is what pushed notes past the barline.
+            // The space left between the last note and the closing barline.
+            // (It used to reserve defaultPadding + more, ≈ 3.5 staff spaces —
+            // visibly loose. Kept as a small, deliberate margin instead.)
             const formatterWidth = Math.max(
               40,
-              stave.getNoteEndX() -
-                stave.getNoteStartX() -
-                Stave.defaultPadding -
-                BARLINE_PAD_RIGHT * 0.5,
+              stave.getNoteEndX() - stave.getNoteStartX() - TRAIL_PAD,
             );
-            const formatter = new Formatter().joinVoices([voice]);
+            const formatter = new Formatter({ softmaxFactor: SOFTMAX_FACTOR }).joinVoices([voice]);
             let formatted = false;
             try {
               // VexFlow justifies a bar by note DURATION and ignores each
@@ -1287,8 +1299,25 @@ export default function ScoreRenderer() {
                     idealD.push(Math.max(idealX[i + 1] - idealX[i], 0.01));
                   }
                   // Keep the first / last lyric clear of the barlines.
-                  const startShift = Math.max(0, Ls[0] / 2 - SP * 2.2);
-                  const endShift = Math.max(0, Ls[n - 1] / 2 - (BARLINE_PAD_RIGHT + SP * 0.5));
+                  // First syllable: centred on the first note, so its LEFT edge is
+                  // note centre − half its width; it must clear the previous
+                  // barline by LYRIC_BAR_GAP (the previous bar's last syllable
+                  // keeps the same gap on its side, so neighbours never touch).
+                  const LYRIC_BAR_GAP = SP * 0.8;
+                  const firstNotePx = tcs[0].getMetrics().notePx || 0;
+                  const startShift = Math.max(
+                    0,
+                    Ls[0] / 2 - firstNotePx / 2 + LYRIC_BAR_GAP - idealX[0],
+                  );
+                  // The last syllable is centred on its note, so its right edge is
+                  // note centre + half its width. That must stay inside the note
+                  // area (A) with a small gap: pull the note in by any excess.
+                  const A = stave.getNoteEndX() - stave.getNoteStartX();
+                  const lastNotePx = tcs[n - 1].getMetrics().notePx || 0;
+                  const endShift = Math.max(
+                    0,
+                    idealX[n - 1] + lastNotePx / 2 + Ls[n - 1] / 2 - (A - LYRIC_BAR_GAP),
+                  );
                   const x0 = idealX[0] + startShift;
                   const span = Math.max(0, idealX[n - 1] - endShift - x0);
                   const minSum = minD.reduce((a, d) => a + d, 0);
@@ -1308,8 +1337,65 @@ export default function ScoreRenderer() {
             }
             if (!formatted) {
               // Fallback: plain VexFlow formatting (no lyric-aware spacing).
-              new Formatter().joinVoices([voice]).format([voice], formatterWidth);
+              new Formatter({ softmaxFactor: SOFTMAX_FACTOR }).joinVoices([voice]).format([voice], formatterWidth);
             }
+
+            // ── Set the space after the last note ───────────────────────────
+            // VexFlow reserves room after the last note in proportion to how
+            // LONG that note is (a half note keeps twice a quarter's share of
+            // empty space), so bars ended with a loose gap before the barline.
+            // Here that gap is brought to a small, deliberate size:
+            //   • too loose  → the notes are stretched a little (uniformly, so
+            //                  their proportions are kept) until the last one
+            //                  sits close to the barline;
+            //   • too tight  → they are compressed by a few pixels so the last
+            //                  note (and its stem / beam) never touches or
+            //                  crosses the barline into the next bar.
+            // The margin is never zero — it is reduced, not removed.
+            try {
+              const tcs = vfNotes.map((v) => v.getTickContext());
+              const n = tcs.length;
+              // Only for bars that END ON A NOTE. A rest at the end isn't a loose
+              // gap after a note, and stretching those bars would make a note
+              // you just placed slide away from where the ghost showed it.
+              const endsOnNote = !renderSeq[renderSeq.length - 1]?.isRest;
+              if (n >= 2 && endsOnNote) {
+                const x0 = tcs[0].getX();
+                const xl = tcs[n - 1].getX();
+                const m = tcs[n - 1].getMetrics();
+                // the note's real right edge sits a little past what VexFlow measures
+                let lastExtent = (m.notePx || 0) + (m.totalRightPx || 0) + SP * 0.4;
+                // …and a lyric under it is centred on the note, so it hangs half
+                // its own width past the note's centre — that is the real edge.
+                const tickW = getLyricTickWidths(col);
+                const hasLyrics = tickW.size > 0;
+                if (hasLyrics) {
+                  let pos = 0;
+                  renderSeq.forEach((nn, i) => {
+                    if (i < renderSeq.length - 1) pos += noteDuration(nn);
+                  });
+                  const Llast = tickW.get(Math.round(pos * 1000)) || 0;
+                  lastExtent = Math.max(
+                    lastExtent,
+                    (m.notePx || 0) / 2 + Llast / 2 + SP * 0.5,
+                  );
+                }
+                const natural = formatterWidth - (xl + lastExtent);
+                const floorGap = SP * 1.0;
+                const want =
+                  natural > floorGap
+                    ? Math.min(SP * 3.2, Math.max(floorGap, natural * 0.25))
+                    : floorGap;
+                if (xl > x0 && Math.abs(natural - want) > 0.5) {
+                  const k = (formatterWidth - want - lastExtent - x0) / (xl - x0);
+                  // k > 1 stretches. A bar WITHOUT lyrics may also be compressed a
+                  // little (never wildly); a bar with lyrics never is — squeezing
+                  // would push neighbouring syllables into each other.
+                  if (k > (hasLyrics ? 1 : 0.6))
+                    tcs.forEach((tc) => tc.setX(x0 + (tc.getX() - x0) * k));
+                }
+              }
+            } catch (_) {}
 
             // Re-apply stem directions AFTER formatting — Formatter.format() resets
             // stem_direction to its own auto-calculated value, overriding ours.
@@ -2443,20 +2529,59 @@ export default function ScoreRenderer() {
             n.beatStart != null,
         )
         .map((n) => ({ beatStart: n.beatStart, x: n.noteX }));
-      const anchors = buildBeatAnchors(
-        z.beat0X ?? z.noteAreaStart,
-        z.endX ?? z.noteAreaStart + z.noteAreaWidth,
-        cap,
-        real,
-      );
-      const beat = snapBeat(
-        xToBeat(anchors, x),
-        gridStepFor(selectedDuration),
-        cap,
-        real.map((r) => r.beatStart),
-      );
-
-      const plan = planPlacement(measure, beat, selectedDuration, selectedDots);
+      // ── beat ⇄ x for THIS bar ────────────────────────────────────────────
+      // A bar that ends on a note has that note pulled close to the barline
+      // (see "Set the space after the last note"), so its x is known: ≈ 2.1
+      // line-spaces in from the barline. The map is anchored there as well as
+      // on the real notes, so the ghost lands where the note will really sit
+      // instead of assuming a note's worth of empty room after it.
+      const evs = [];
+      {
+        let acc = 0;
+        for (const nn of measure.notes.filter((q) => !q.chordWith)) {
+          const d = noteDuration(nn);
+          evs.push({ start: acc, isRest: nn.isRest });
+          acc += d;
+        }
+      }
+      const tailEv = evs[evs.length - 1];
+      // start beat of the bar's LAST event once a note goes in at the plan
+      const lastStartAfter = (pl) => {
+        if (pl && pl.ok && pl.kind === "note") {
+          const filledEnd = pl.beat + pl.use.beats + pl.after; // end of the rest being filled
+          if (filledEnd < cap - 0.01) return tailEv && !tailEv.isRest ? tailEv.start : null;
+          return pl.after > 0.001 ? null : pl.beat; // trailing rest → no pull
+        }
+        return tailEv && !tailEv.isRest ? tailEv.start : null;
+      };
+      const mapFor = (lastStart) => {
+        const pts =
+          lastStart != null &&
+          lastStart > 0.01 &&
+          !real.some((r) => Math.abs(r.beatStart - lastStart) < 0.01)
+            ? [...real, { beatStart: lastStart, x: z.x + z.width - ls * 2.1 }]
+            : real;
+        return buildBeatAnchors(
+          z.beat0X ?? z.noteAreaStart,
+          z.endX ?? z.noteAreaStart + z.noteAreaWidth,
+          cap,
+          pts,
+        );
+      };
+      const grid = gridStepFor(selectedDuration);
+      const onsets = real.map((r) => r.beatStart);
+      // pass 1 — which beat is the pointer over (plain map)?
+      let anchors = mapFor(null);
+      let beat = snapBeat(xToBeat(anchors, x), grid, cap, onsets);
+      let plan = planPlacement(measure, beat, selectedDuration, selectedDots);
+      // pass 2 — redo it with the pulled-in last note taken into account
+      anchors = mapFor(lastStartAfter(plan));
+      const beat2 = snapBeat(xToBeat(anchors, x), grid, cap, onsets);
+      if (beat2 !== beat) {
+        beat = beat2;
+        plan = planPlacement(measure, beat, selectedDuration, selectedDots);
+        anchors = mapFor(lastStartAfter(plan));
+      }
       const at = plan.ok ? plan.beat : beat;
       const keyAcc = keySignatureAccidentals(measure.keySignature ?? 0);
 

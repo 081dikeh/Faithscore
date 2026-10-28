@@ -12,6 +12,7 @@
 
 import { useState } from 'react'
 import { resolveVerses } from '../../utils/lyricVerses'
+import { dialog } from '../../utils/dialog.js'
 
 const S = {
   h: { fontSize: 11, fontWeight: 700, color: '#374151', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' },
@@ -122,7 +123,13 @@ function VerseCard({ verse, parts, partLabel, autoIds, autoHint, st }) {
           )}
 
           {verse.number !== 1 && (
-            <button onClick={() => { if (window.confirm(`Remove ${verse.tag} and everything typed for it?`)) removeVerse(verse.number) }}
+            <button onClick={async () => {
+                const ok = await dialog.confirm(
+                  `Everything typed for ${verse.tag} — under the notes and any text below the score — will be removed.`,
+                  { title: `Remove verse ${verse.tag}?`, tone: 'danger', confirmLabel: 'Remove verse' },
+                )
+                if (ok) removeVerse(verse.number)
+              }}
               style={{ marginTop: 10, fontSize: 11, border: 'none', background: 'none', color: '#dc2626', cursor: 'pointer', padding: 0 }}>
               Remove this verse
             </button>

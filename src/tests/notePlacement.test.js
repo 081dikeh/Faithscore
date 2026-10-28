@@ -253,3 +253,25 @@ test('moveNote: chord tones travel with the note', () => {
   assert.equal(m2.notes.filter((n) => n.chordWith === base.id).length, 1)
   assert.equal(bars()[0].notes.filter((n) => n.chordWith).length, 0)
 })
+
+// ── Key signatures ──────────────────────────────────────────────────────────
+test('a mouse-placed F in D major carries the key\'s sharp (never a stray natural)', () => {
+  fresh([R('w', 'r0')])
+  useScoreStore.setState((s) => ({ score: { ...s.score, parts: s.score.parts.map((p) => ({ ...p, measures: p.measures.map((m) => ({ ...m, keySignature: 2 })) })) } }))
+  drop(0, 'q', 0, { step: 'F', octave: 4, accidental: null })
+  const n = measure().notes.find((x) => !x.isRest)
+  assert.equal(n.pitch.accidental, '#')
+  drop(1, 'q', 0, { step: 'G', octave: 4, accidental: null })
+  assert.equal(measure().notes.filter((x) => !x.isRest).find((x) => x.pitch.step === 'G').pitch.accidental, null)
+})
+test('dragging a note onto an altered letter applies the key signature', () => {
+  fresh([N('w', 'n1', 'E')])
+  useScoreStore.setState((s) => ({ score: { ...s.score, parts: s.score.parts.map((p) => ({ ...p, measures: p.measures.map((m) => ({ ...m, keySignature: 2 })) })) } }))
+  useScoreStore.getState().setNotePitch('p', 0, 'n1', { step: 'C', octave: 5, accidental: null })
+  assert.equal(measure().notes[0].pitch.accidental, '#')    // C# in D major
+})
+test('an explicit accidental is never overridden', () => {
+  fresh([R('w', 'r0')])
+  drop(0, 'q', 0, { step: 'F', octave: 4, accidental: 'b' })
+  assert.equal(measure().notes.find((x) => !x.isRest).pitch.accidental, 'b')
+})

@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DURATION_BEATS, noteDuration, measureCapacity, normalizeMeasure, PAGE_SIZES_MM, useScoreStore } from '../store/scoreStore'
+import { dialog } from './dialog.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function xml(tag, attrs, ...children) {
@@ -699,13 +700,13 @@ export function printScore(score) {
   const USABLE_H_MM = PAGE_H_MM - MARGIN_TOP - MARGIN_BOT
 
   const pages = document.querySelectorAll('.score-page')
-  if (!pages.length) { alert('Nothing to print yet — add some notes first.'); return }
+  if (!pages.length) { dialog.alert('Add some notes first, then print.', { tone: 'warn', title: 'Nothing to print yet' }); return }
 
   const svgElements = []
   pages.forEach(page => {
     page.querySelectorAll('svg').forEach(svg => svgElements.push(svg))
   })
-  if (!svgElements.length) { alert('No score SVG found.'); return }
+  if (!svgElements.length) { dialog.alert('The score hasn\'t finished drawing yet. Wait a moment and try again.', { tone: 'warn', title: 'Nothing to print yet' }); return }
 
   // Clean up any leftovers from a previous print (e.g. if afterprint never fired)
   document.getElementById('faithscore-print-root')?.remove()
