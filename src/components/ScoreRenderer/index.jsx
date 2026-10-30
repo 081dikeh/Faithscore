@@ -336,6 +336,41 @@ function measureLyricPx(text) {
   return w;
 }
 
+// The tapered lens used for every tie and slur: thin at both ends, thickest in
+// the middle, bowing away from the stem. Module-level so the cross-bar pass
+// (which runs after every bar has been placed) draws EXACTLY the same shape.
+function drawTieCurve(ctx, x1, y1, x2, y2, stemUp, depthFn = tieCurveDepth) {
+  try {
+    ctx.save();
+    const depth = depthFn(Math.abs(x2 - x1));
+    const bow = stemUp ? depth : -depth; // arc direction and height
+    const INS = 1; // hairline of clearance from the notehead edge
+    const lx1 = x1 + INS;
+    const lx2 = x2 - INS;
+    const oc1x = lx1 + (lx2 - lx1) * 0.25;
+    const oc1y = y1 + bow * 1.3;
+    const oc2x = lx1 + (lx2 - lx1) * 0.75;
+    const oc2y = y2 + bow * 1.3;
+    const THICK = 4.0; // thickness at the centre, px
+    const ic1y = oc1y - Math.sign(bow) * THICK;
+    const ic2y = oc2y - Math.sign(bow) * THICK;
+    ctx.beginPath();
+    ctx.moveTo(lx1, y1);
+    ctx.bezierCurveTo(oc1x, oc1y, oc2x, oc2y, lx2, y2);
+    ctx.bezierCurveTo(oc2x, ic2y, oc1x, ic1y, lx1, y1);
+    ctx.closePath();
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fill();
+    ctx.restore();
+  } catch (_) {}
+}
+const pitchesMatch = (a, b) =>
+  a?.pitch &&
+  b?.pitch &&
+  a.pitch.step === b.pitch.step &&
+  a.pitch.octave === b.pitch.octave &&
+  (a.pitch.accidental ?? null) === (b.pitch.accidental ?? null);
+
 // A translucent note that follows the pointer. Pure presentation: it knows
 // nothing about the score, only where (x, y in local px), which staff position
 // (pos), and how big a line spacing (ls) to draw at — so it scales with the
@@ -1022,6 +1057,20 @@ export default function ScoreRenderer() {
       });
     }
 
+    // Where every note really sits, for ties and slurs that cross a barline.
+    // A bar is drawn on its own stave, so a curve between two bars can only be
+    // drawn once BOTH ends are placed — see "Ties and slurs that cross a bar".
+    const noteGeom = new Map(); // noteId -> { rx, lx, y, stemUp, line, col, partId, barRight, lineRight }
+    const lineStartX = new Map(); // `${partId}:${line}` -> x where notes may start on that line
+    // Slur ends, resolved across the WHOLE part (the same rule the sol-fa
+    // conversion uses), so a slur can end in a later bar.
+    const slurEndByPart = new Map(
+      score.parts.map((p) => [
+        p.id,
+        new Map(resolveScoreSlurs(p).map((sl) => [sl.startNoteId, sl.endNoteId])),
+      ]),
+    );
+
     for (let lineIdx = 0; lineIdx < totalLines; lineIdx++) {
       const { cols: lineCols } = lines[lineIdx];
       const startCol = lineCols[0];
@@ -1242,6 +1291,11 @@ export default function ScoreRenderer() {
             const BARLINE_PAD_LEFT = SP * 2;
             const BARLINE_PAD_RIGHT = SP * 0.8;
             const TRAIL_PAD = SP * 0.3;
+            if (isFirst) {
+              try {
+                lineStartX.set(`${part.id}:${lineIdx}`, stave.getNoteStartX());
+              } catch (_) {}
+            }
             // Use the stave's real note area (what is left after the clef /
             // key / time glyphs it actually drew), not an estimate of it —
             // an underestimate here is what pushed notes past the barline.
@@ -1340,6 +1394,35 @@ export default function ScoreRenderer() {
               new Formatter({ softmaxFactor: SOFTMAX_FACTOR }).joinVoices([voice]).format([voice], formatterWidth);
             }
 
+            // ── Room for an arriving tie / slur ─────────────────────────────
+            // On the first bar of a line, a tie or slur that ARRIVES at the first
+            // note has to be drawn between the clef/key/time signature and that
+            // note. The first note sits very close to them, which left only a
+            // sliver — so such a note is moved a few pixels right (the rest of
+            // the bar is compressed very slightly to compensate). Skipped for
+            // bars with lyrics, whose syllable spacing must not shrink.
+            try {
+              const first = renderSeq[0];
+              if (isFirst && first && !first.isRest && vfNotes.length >= 2) {
+                const prevM = part.measures[col - 1];
+                const prevLast = prevM?.notes.filter((q) => !q.chordWith).slice(-1)[0];
+                const tieIn = !!(prevLast?.tieStart && !prevLast.isRest && pitchesMatch(prevLast, first));
+                const slurIn = [...(slurEndByPart.get(part.id)?.values() || [])].includes(first.id);
+                if ((tieIn || slurIn) && getLyricTickWidths(col).size === 0) {
+                  const tcs0 = vfNotes.map((v) => v.getTickContext());
+                  // x0 is measured from where notes may start (just after the
+                  // clef / key / time signature), so it IS the room available
+                  const x0 = tcs0[0].getX();
+                  const shift = Math.max(0, SP * 1.4 - x0);
+                  const xl = tcs0[tcs0.length - 1].getX();
+                  if (shift > 0.5 && xl > x0 + shift + 4) {
+                    const k = (xl - (x0 + shift)) / (xl - x0);
+                    tcs0.forEach((tc) => tc.setX(x0 + shift + (tc.getX() - x0) * k));
+                  }
+                }
+              }
+            } catch (_) {}
+
             // ── Set the space after the last note ───────────────────────────
             // VexFlow reserves room after the last note in proportion to how
             // LONG that note is (a half note keeps twice a quarter's share of
@@ -1381,7 +1464,10 @@ export default function ScoreRenderer() {
                   );
                 }
                 const natural = formatterWidth - (xl + lastExtent);
-                const floorGap = SP * 1.0;
+                // a tie / slur that leaves this bar needs room to be seen before
+                // the barline (it runs on to the next bar or the next line)
+                const lastN = renderSeq[renderSeq.length - 1];
+                const floorGap = lastN?.tieStart || lastN?.slurStart ? SP * 2.2 : SP * 1.0;
                 const want =
                   natural > floorGap
                     ? Math.min(SP * 3.2, Math.max(floorGap, natural * 0.25))
@@ -1818,57 +1904,26 @@ export default function ScoreRenderer() {
             // hardcoded, letting both reuse the exact same clearance/inset
             // geometry instead of two separately-tuned (and previously
             // inconsistent) drawing paths.
-            const drawTieCanvas = (
-              x1,
-              y1,
-              x2,
-              y2,
-              stemUp,
-              depthFn = tieCurveDepth,
-            ) => {
-              try {
-                ctx.save();
-                // Depth scales gently with distance between the two
-                // noteheads (clamped) rather than a fixed 12px for every
-                // tie regardless of how far apart the notes are.
-                const dist = Math.abs(x2 - x1);
-                const depth = depthFn(dist);
-                const bow = stemUp ? depth : -depth; // arc direction and height
-                // Small inset from the passed-in x1/x2 anchors. Reduced
-                // from 3 to 1: x1/x2 are now VexFlow's own getTieRightX()/
-                // getTieLeftX() notehead-edge anchors (see the TIES/SLURS
-                // call sites), not a rough guess — so this only needs to
-                // supply a hairline of clearance, not pull back a large,
-                // separately-guessed offset on top of an already-guessed
-                // anchor. A curve that reaches all the way to (or just
-                // past) the notehead edge, the way real engraving software
-                // draws it, needs this to stay small.
-                const INS = 1;
-                const lx1 = x1 + INS;
-                const lx2 = x2 - INS;
-                // Outer arc control points (the "outside" of the lens)
-                const oc1x = lx1 + (lx2 - lx1) * 0.25;
-                const oc1y = y1 + bow * 1.3;
-                const oc2x = lx1 + (lx2 - lx1) * 0.75;
-                const oc2y = y2 + bow * 1.3;
-                // Inner arc control points (the "inside" — closer to baseline)
-                // The distance between outer and inner determines thickness at peak
-                const THICK = 4.0; // max thickness at centre in px
-                const ic1y = oc1y - Math.sign(bow) * THICK;
-                const ic2y = oc2y - Math.sign(bow) * THICK;
+            const drawTieCanvas = (x1, y1, x2, y2, stemUp, depthFn = tieCurveDepth) =>
+              drawTieCurve(ctx, x1, y1, x2, y2, stemUp, depthFn);
 
-                ctx.beginPath();
-                // Draw outer arc left→right
-                ctx.moveTo(lx1, y1);
-                ctx.bezierCurveTo(oc1x, oc1y, oc2x, oc2y, lx2, y2);
-                // Draw inner arc right→left (closing the lens)
-                ctx.bezierCurveTo(oc2x, ic2y, oc1x, ic1y, lx1, y1);
-                ctx.closePath();
-                ctx.fillStyle = "#1a1a1a";
-                ctx.fill();
-                ctx.restore();
+            // Record where each note sits (used by the cross-bar pass below).
+            renderSeq.forEach((n, i) => {
+              try {
+                const v = vfNotes[i];
+                noteGeom.set(n.id, {
+                  rx: v.getTieRightX(),
+                  lx: v.getTieLeftX(),
+                  y: v.getYs()[0],
+                  stemUp: v.getStemDirection() === 1,
+                  line: lineIdx,
+                  col,
+                  partId: part.id,
+                  barRight: x + width,
+                  lineRight: colX[colX.length - 1] + colWidths[colWidths.length - 1],
+                });
               } catch (_) {}
-            };
+            });
 
             // ── TIES ──────────────────────────────────────────────────────────
             // Pure canvas rendering — NO StaveTie used anywhere.
@@ -1915,9 +1970,10 @@ export default function ScoreRenderer() {
                   ty = ny;
                 }
               } else {
-                // No same-pitch note in this bar: arc runs to right barline
-                tx = x + width - 8;
-                ty = ny;
+                // No same-pitch note in this bar: the tie runs into the NEXT
+                // bar. It is drawn by "Ties and slurs that cross a bar" once
+                // that bar has been placed, so it can reach the other note.
+                return;
               }
 
               drawTieCanvas(nx, ny, tx, ty, stemUp);
@@ -1963,10 +2019,12 @@ export default function ScoreRenderer() {
               // rests excluded here since this is the SILENT default
               // behavior; auto-landing on a rest the user never marked
               // would be surprising, not helpful.
-              let endIdx = renderSeq.findIndex((n, i) => i > ni && n.slurEnd);
-              if (endIdx < 0) {
-                endIdx = renderSeq.findIndex((n, i) => i > ni && !n.isRest);
-              }
+              // The end is resolved over the whole part (explicit slurEnd
+              // first, else the next real note), so it may be in a later bar.
+              const resolvedEndId = slurEndByPart.get(part.id)?.get(seqNote.id);
+              const endIdx = resolvedEndId
+                ? renderSeq.findIndex((n) => n.id === resolvedEndId)
+                : -1;
 
               const vfStart = vfNotes[ni];
               let nx, ny, stemUp;
@@ -1984,10 +2042,8 @@ export default function ScoreRenderer() {
               }
 
               if (endIdx < 0 || endIdx <= ni) {
-                // No end note anywhere in this bar — the slur continues
-                // into the next measure. Draw only the departing half.
-                const tx = x + width - 8;
-                drawTieCanvas(nx, ny, tx, ny, stemUp, slurCurveDepth);
+                // The slur ends in a LATER bar (or has no end). It is drawn by
+                // "Ties and slurs that cross a bar", which can reach that note.
                 return;
               }
 
@@ -2348,6 +2404,70 @@ export default function ScoreRenderer() {
             .draw();
         } catch (_) {}
       }
+    }
+
+    // ── Ties and slurs that cross a bar ─────────────────────────────────────
+    // Each bar is its own stave, so a tie/slur whose two notes are in different
+    // bars can only be drawn now that BOTH are placed. Two cases:
+    //   • same line      → ONE continuous curve from the first note, across the
+    //                      barline, to the second note;
+    //   • line break     → a curve leaving the end of the first line, and a
+    //                      matching one arriving at the second note from the
+    //                      start of the next line (standard engraving).
+    // (Before, only the "leaving" half was drawn and it stopped at the barline,
+    //  so the line never met the note on the other side.)
+    {
+      const connect = (S, E, depthFn) => {
+        if (S.line === E.line) {
+          drawTieCurve(ctx, S.rx, S.y, E.lx, E.y, S.stemUp, depthFn);
+        } else {
+          // Leaving: run on to the end of the line — but never a mere speck
+          // (the last note now sits close to the barline), so give it a
+          // minimum visible length.
+          const outX = Math.max(S.lineRight - 2, S.rx + SP * 1.5);
+          drawTieCurve(ctx, S.rx, S.y, outX, S.y, S.stemUp, depthFn);
+          // Arriving: starts just after the clef / key / time signature (the
+          // first note is given a little extra room when a connector arrives —
+          // see "room for an arriving tie" in the layout).
+          const inX = (lineStartX.get(`${E.partId}:${E.line}`) ?? E.lx - 40) + 2;
+          drawTieCurve(ctx, inX, E.y, E.lx, E.y, E.stemUp, depthFn);
+        }
+      };
+      // nothing to connect to (end of the score / no matching note)
+      const stub = (S, depthFn) =>
+        drawTieCurve(ctx, S.rx, S.y, S.barRight - 8, S.y, S.stemUp, depthFn);
+
+      score.parts.forEach((part) => {
+        const slurEnd = slurEndByPart.get(part.id);
+        part.measures.forEach((m, mi) => {
+          const seq = m.notes.filter((n) => !n.chordWith);
+          seq.forEach((n, ni) => {
+            // TIES whose partner is not in this bar
+            if (n.tieStart && !n.isRest) {
+              if (seq.some((q, i) => i > ni && !q.isRest && pitchesMatch(n, q))) return; // drawn in-bar
+              const S = noteGeom.get(n.id);
+              if (!S) return;
+              const next = part.measures[mi + 1];
+              const target = next
+                ? next.notes.find((q) => !q.chordWith && !q.isRest && pitchesMatch(n, q))
+                : null;
+              const E = target ? noteGeom.get(target.id) : null;
+              if (E) connect(S, E, tieCurveDepth);
+              else stub(S, tieCurveDepth);
+            }
+            // SLURS whose end is not in this bar
+            if (n.slurStart) {
+              const endId = slurEnd?.get(n.id);
+              if (endId && seq.some((q) => q.id === endId)) return; // drawn in-bar
+              const S = noteGeom.get(n.id);
+              if (!S) return;
+              const E = endId ? noteGeom.get(endId) : null;
+              if (E) connect(S, E, slurCurveDepth);
+              else stub(S, slurCurveDepth);
+            }
+          });
+        });
+      });
     }
 
     // Zones are measured in drawing units, but everything that uses them
