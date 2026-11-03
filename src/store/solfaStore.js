@@ -120,6 +120,47 @@ function makeEmptyMeasure(numBeats=4) {
   }
 }
 
+// An instruction bar: a bar-shaped box that holds free text ("Repeat 3 times",
+// "Chorus", "Piano interlude — 4 bars") instead of beats. It exists as one
+// column across EVERY voice, takes no time in playback, and is not counted
+// when bars are numbered. It carries the previous bar's time signature so the
+// meter-change marker doesn't fire around it.
+export const isTextBar = (m) => m?.kind === 'text'
+
+function makeTextMeasure(text, ts) {
+  return {
+    id: uid(),
+    kind: 'text',
+    text: text || '',
+    wide: false, // true = takes a whole line to itself
+    timeSignature: ts || { beats: 4, beatType: 4 },
+    beats: [],
+  }
+}
+
+// Move every stored measure INDEX after an insertion (delta +1 at `at`) or a
+// deletion (delta -1 at `at`), so markers, marks, slurs, ties, key changes,
+// sections and instrumental bars keep pointing at the bar they were on.
+// Things that pointed AT a deleted bar are dropped.
+function shiftMeasureRefs(score, at, delta) {
+  const mv = (i) => (typeof i !== 'number' ? i : i >= at ? i + delta : i)
+  const gone = (i) => delta < 0 && i === at
+  return {
+    ...score,
+    marks: (score.marks || []).filter(m => !gone(m.measureIdx)).map(m => ({ ...m, measureIdx: delta < 0 && m.measureIdx > at ? m.measureIdx + delta : delta > 0 ? mv(m.measureIdx) : m.measureIdx })),
+    slurs: (score.slurs || []).filter(x => !gone(x.startMeasure) && !gone(x.endMeasure)).map(x => ({ ...x, startMeasure: delta < 0 ? (x.startMeasure > at ? x.startMeasure + delta : x.startMeasure) : mv(x.startMeasure), endMeasure: delta < 0 ? (x.endMeasure > at ? x.endMeasure + delta : x.endMeasure) : mv(x.endMeasure) })),
+    ties: (score.ties || []).filter(x => !gone(x.startMeasure) && !gone(x.endMeasure)).map(x => ({ ...x, startMeasure: delta < 0 ? (x.startMeasure > at ? x.startMeasure + delta : x.startMeasure) : mv(x.startMeasure), endMeasure: delta < 0 ? (x.endMeasure > at ? x.endMeasure + delta : x.endMeasure) : mv(x.endMeasure) })),
+    navigationMarkers: (score.navigationMarkers || []).filter(m => !gone(m.atMeasure)).map(m => ({ ...m, atMeasure: delta < 0 ? (m.atMeasure > at ? m.atMeasure + delta : m.atMeasure) : mv(m.atMeasure) })),
+    instrumentalMeasures: (score.instrumentalMeasures || []).filter(i => !gone(i)).map(i => delta < 0 ? (i > at ? i + delta : i) : mv(i)),
+    keyChanges: (score.keyChanges || []).filter(k => !gone(k.measureIdx)).map(k => ({ ...k, measureIdx: delta < 0 ? (k.measureIdx > at ? k.measureIdx + delta : k.measureIdx) : mv(k.measureIdx) })),
+    sections: (score.sections || []).map(sec => ({
+      ...sec,
+      startMeasure: delta < 0 ? (sec.startMeasure > at ? sec.startMeasure + delta : sec.startMeasure) : mv(sec.startMeasure),
+      endMeasure:   delta < 0 ? (sec.endMeasure   >= at && sec.endMeasure > sec.startMeasure ? sec.endMeasure + delta : sec.endMeasure) : mv(sec.endMeasure),
+    })),
+  }
+}
+
 function makePart(voiceDef, numMeasures=12, numBeats=4) {
   return {
     id:voiceDef.id, name:voiceDef.name, label:voiceDef.label,
@@ -217,6 +258,8 @@ export function bridgeSyllable(syllable, octave, newKey, oldKey) {
 // ── MIGRATION from old formats ────────────────────────────────────────────────
 export function migrateMeasure(measure) {
   if (!measure) return makeEmptyMeasure(4)
+  // An instruction ("text") bar has no beats — leave it exactly as it is
+  if (measure.kind === 'text') return measure
   // Already new format (has beats with events arrays)
   if (Array.isArray(measure.beats) && measure.beats[0]?.events) return measure
   // Old slot-based format (beats with slots[])
@@ -889,6 +932,41 @@ export const useSolfaStore = create((set,get) => ({
     })
   },
 
+  // ── Instruction ("text") bars ──────────────────────────────────────────────
+  // Insert a text bar AFTER bar `afterIdx` (or at the end when null). It spans
+  // every voice. Returns the new bar's index. One undo step.
+  insertTextBar: (afterIdx = null, text = '') => {
+    get()._snapshot()
+    let newIdx = 0
+    set(s => {
+      const ref = s.score.parts[0]?.measures || []
+      newIdx = afterIdx == null ? ref.length : Math.min(ref.length, afterIdx + 1)
+      // inherit the meter of the bar it follows so no meter-change marker appears
+      const before = ref[Math.max(0, newIdx - 1)]
+      const ts = before?.timeSignature || s.score.timeSignature
+      const parts = s.score.parts.map(p => {
+        const ms = [...p.measures]
+        ms.splice(newIdx, 0, makeTextMeasure(text, ts))
+        return { ...p, measures: ms }
+      })
+      const shifted = shiftMeasureRefs({ ...s.score, parts }, newIdx, +1)
+      return { score: shifted, selectedMeasureIdx: newIdx, selectedBeatIdx: null, selectedEventIdx: null }
+    })
+    return newIdx
+  },
+
+  // Edit a text bar (all voices share the same text). `snapshot` false while
+  // typing so a keystroke isn't an undo step; the editor commits with true.
+  setTextBar: (measureIdx, patch, snapshot = true) => {
+    if (snapshot) get()._snapshot()
+    set(s => ({
+      score: { ...s.score, parts: s.score.parts.map(p => ({
+        ...p,
+        measures: p.measures.map((m, i) => (i === measureIdx && m.kind === 'text') ? { ...m, ...patch } : m),
+      })) },
+    }))
+  },
+
   addMeasure: () => {
     set(s=>{
       // Inherit whatever time signature is currently active at the END of
@@ -918,7 +996,9 @@ export const useSolfaStore = create((set,get) => ({
       const parts=s.score.parts.map(p=>({
         ...p,measures:p.measures.filter((_,i)=>i!==idx),
       }))
-      return {score:{...s.score,parts},selectedMeasureIdx:newSel,selectedBeatIdx:null,selectedEventIdx:null}
+      // a score always keeps at least one real (non-text) bar
+      if (!parts[0].measures.some(m => m.kind !== 'text')) return {}
+      return {score:shiftMeasureRefs({...s.score,parts}, idx, -1),selectedMeasureIdx:newSel,selectedBeatIdx:null,selectedEventIdx:null}
     })
   },
 
@@ -932,6 +1012,7 @@ export const useSolfaStore = create((set,get) => ({
       const parts=s.score.parts.map(p=>({
         ...p,
         measures:p.measures.map(m=>{
+          if (m.kind === 'text') return m
           let beats=[...(m.beats||[])]
           while (beats.length<newBeats) beats.push(makeEmptyBeat())
           if (beats.length>newBeats) beats=beats.slice(0,newBeats)
@@ -961,6 +1042,8 @@ export const useSolfaStore = create((set,get) => ({
         ...p,
         measures: p.measures.map((m, i) => {
           if (i < measureIdx || i >= endIdx) return m
+          // a text bar has no beats; it just follows the meter around it
+          if (m.kind === 'text') return { ...m, timeSignature: ts }
           let beats = [...(m.beats || [])]
           while (beats.length < newBeats) beats.push(makeEmptyBeat())
           if (beats.length > newBeats) beats = beats.slice(0, newBeats)
