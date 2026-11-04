@@ -32,12 +32,14 @@ import {
   resolveKeyAt,
   resolveKeyBefore,
   bridgeSyllable,
+  isTextBar,
 } from "../../store/solfaStore";
 import {
   getNoteLyric,
   inlineVersesForPart,
   belowScoreVerses,
   resolveVerses,
+  wrapLyricBlock,
 } from "../../utils/lyricVerses";
 
 const FONT = '"Times New Roman", Georgia, serif';
@@ -199,6 +201,117 @@ function beatCells(beat, lyricNeed) {
 }
 const cellsWidth = (cells) => cells.reduce((a, c) => a + c.preN + c.bodyN + c.sufN, 0);
 
+// ── Instruction (text) bars ───────────────────────────────────────────────
+// A text bar is one merged box across every voice. Its width follows its text
+// (min TB_MIN_W, wrapping at TB_MAX_W); a "wide" bar takes a whole line.
+const TB_SZ = 13;
+const TB_LH = 16;
+const TB_MIN_W = 150;
+const TB_MAX_W = 340;
+let _tbCtx;
+const _tbWCache = new Map();
+function textBarTextWidth(text) {
+  const t = String(text || "");
+  if (!t) return 0;
+  const hit = _tbWCache.get(t);
+  if (hit != null) return hit;
+  let w;
+  try {
+    if (!_tbCtx && typeof document !== "undefined") {
+      _tbCtx = document.createElement("canvas").getContext("2d");
+      _tbCtx.font = `${TB_SZ}px ${FONT}`;
+    }
+    w = _tbCtx ? _tbCtx.measureText(t).width : t.length * TB_SZ * 0.5;
+  } catch (_) {
+    w = t.length * TB_SZ * 0.5;
+  }
+  if (_tbWCache.size > 2000) _tbWCache.clear();
+  _tbWCache.set(t, w);
+  return w;
+}
+// → { raw, lines } : bar width and the wrapped text lines that fit `maxLines`.
+function layoutTextBar(text, wide, availW, maxLines) {
+  const pad = 10;
+  const t = String(text || "");
+  if (!t.trim()) return { raw: wide ? availW : TB_MIN_W, lines: [] };
+  const wrapAt = (inner) => wrapLyricBlock(t, inner, textBarTextWidth);
+  if (wide) {
+    return { raw: availW, lines: clampLines(wrapAt(availW - pad * 2), maxLines) };
+  }
+  const longest = Math.max(...t.split("\n").map(textBarTextWidth));
+  let w = Math.min(TB_MAX_W, Math.max(TB_MIN_W, longest + pad * 2));
+  let lines = wrapAt(w - pad * 2);
+  // a long note grows toward the max width before it is cut off
+  while (lines.length > maxLines && w < TB_MAX_W) {
+    w = Math.min(TB_MAX_W, w + 20);
+    lines = wrapAt(w - pad * 2);
+  }
+  w = Math.min(w, Math.max(availW, TB_MIN_W));
+  return { raw: w, lines: clampLines(lines, maxLines) };
+}
+function clampLines(lines, maxLines) {
+  if (lines.length <= maxLines) return lines;
+  const out = lines.slice(0, maxLines);
+  out[maxLines - 1] = out[maxLines - 1].replace(/\s*$/, "") + " …";
+  return out;
+}
+
+function TextBarEditor({ x, y, w, h, value, onCommit, onCancel }) {
+  const ref = useRef(null);
+  const done = useRef(false);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }, 30);
+    return () => clearTimeout(t);
+  }, []);
+  const finish = (fn, val) => {
+    if (done.current) return;
+    done.current = true;
+    fn(val);
+  };
+  return (
+    <foreignObject x={x} y={y} width={w} height={h}>
+      <textarea
+        ref={ref}
+        defaultValue={value}
+        placeholder="Click to add instructions…"
+        style={{
+          width: "100%",
+          height: "100%",
+          border: "1.5px solid #2563eb",
+          borderRadius: 3,
+          fontSize: TB_SZ,
+          lineHeight: `${TB_LH}px`,
+          fontFamily: FONT,
+          padding: "4px 8px",
+          boxSizing: "border-box",
+          background: "#eff6ff",
+          color: "#111",
+          outline: "none",
+          resize: "none",
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            finish(onCommit, e.target.value);
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            finish(onCancel);
+          }
+        }}
+        onBlur={(e) => finish(onCommit, e.target.value)}
+      />
+    </foreignObject>
+  );
+}
+
 function InlineLyricEditor({ x, y, w, value, onCommit, onCancel }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -274,6 +387,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
   // animation frames, so it's worth guarding).
   const exportingRef = useRef(false);
   const [lyricEdit, setLyricEdit] = useState(null);
+  const [textEdit, setTextEdit] = useState(null);
   const [hoveredSlurId, setHoveredSlurId] = useState(null);
   const [hoveredTieId, setHoveredTieId] = useState(null);
   const [tieFeedback, setTieFeedback] = useState(null);
@@ -358,6 +472,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
   const removeTie = useSolfaStore((s) => s.removeTie);
   const removeMark = useSolfaStore((s) => s.removeMark);
   const removeNavigationMarker = useSolfaStore((s) => s.removeNavigationMarker);
+  const setTextBar = useSolfaStore((s) => s.setTextBar);
 
   // Map of "partId:measureIdx:beatIdx:eventIdx" → {cx, bottomY} for slur drawing
   const eventPosMap = useRef({});
@@ -463,7 +578,28 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
     //  - a beat is as wide as the widest any part needs it (notes + lyrics)
     //  - where every part has the same rhythm in the beat, each note cell is
     //    the widest of that cell across parts (exact vertical alignment)
+    const leftEdge = PAGE_L + BRAK_W + LABEL_W;
+    const available = svgW - leftEdge - PAGE_R;
+    // Height of the merged text box (first row top → last row bottom).
+    const textBoxH =
+      NOTE_SZ + 8 + (parts.length ? partOff[parts.length - 1] + LYRIC_H * nLyricLines[parts.length - 1] : 0);
+    const textMaxLines = Math.max(1, Math.floor((textBoxH - 8) / TB_LH));
+    const colIsText = Array.from({ length: numM }, (_, c) => isTextBar(parts[0]?.measures[c]));
+    const colIsWide = Array.from({ length: numM }, (_, c) => colIsText[c] && !!parts[0].measures[c].wide);
+    // Bar numbers skip text bars.
+    const realBarNo = [];
+    {
+      let n = 0;
+      for (let c = 0; c < numM; c++) {
+        if (!colIsText[c]) n++;
+        realBarNo.push(colIsText[c] ? 0 : n);
+      }
+    }
     const colLayout = Array.from({ length: numM }, (_, col) => {
+      if (colIsText[col]) {
+        const tb = layoutTextBar(parts[0].measures[col].text, colIsWide[col], available, textMaxLines);
+        return { text: true, beatW: [], cells: [], raw: tb.raw, lines: tb.lines };
+      }
       const refM = migrateMeasure(parts[0]?.measures[col]);
       const nb = refM?.beats?.length || 0;
       if (!nb) {
@@ -497,9 +633,6 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
     });
     const rawMWs = colLayout.map((c) => c.raw);
 
-    const leftEdge = PAGE_L + BRAK_W + LABEL_W;
-    const available = svgW - leftEdge - PAGE_R;
-
     const lines = (() => {
       const ls = [];
       let start = 0;
@@ -507,9 +640,10 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
         let used = 0,
           count = 0;
         for (let i = start; i < numM; i++) {
-          if (count > 0 && used + rawMWs[i] > available) break;
+          if (count > 0 && (used + rawMWs[i] > available || colIsWide[i])) break;
           used += rawMWs[i];
           count++;
+          if (colIsWide[i]) break;
         }
         if (count === 0) count = 1;
         ls.push(Array.from({ length: count }, (_, i) => start + i));
@@ -663,7 +797,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
           fontSize={9}
           fill="#9ca3af"
         >
-          {lineCols[0] + 1}
+          {colIsText[lineCols[0]] ? "" : realBarNo[lineCols[0]]}
         </text>,
       );
 
@@ -721,6 +855,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
         }
 
         lineCols.forEach((col, ci) => {
+          if (isTextBar(part.measures[col])) return; // drawn once, merged, after the voice rows
           const measure = migrateMeasure(part.measures[col]);
           const mTs = measure.timeSignature || { beats: topNum, beatType: botNum };
           const colSlashSet = slashPositions(mTs.beats, mTs.beatType);
@@ -1293,18 +1428,103 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
         if (pIdx < parts.length - 1) {
           // rowY + 4 (lyricZoneY) + LYRIC_H + 3 = bottom of lyric + small gap
           const sepY = rowY + 4 + LYRIC_H * nLyricLines[pIdx] + 3;
-          elems.push(
-            <line
-              key={`vsep-${lineIdx}-${pIdx}`}
-              x1={leftEdge}
-              y1={sepY}
-              x2={systemRight}
-              y2={sepY}
-              stroke={C.voiceSep}
-              strokeWidth={0.6}
-            />,
-          );
+          let segStart = null;
+          const flush = (segEnd, k) => {
+            if (segStart == null) return;
+            elems.push(
+              <line
+                key={`vsep-${lineIdx}-${pIdx}-${k}`}
+                x1={segStart}
+                y1={sepY}
+                x2={segEnd}
+                y2={sepY}
+                stroke={C.voiceSep}
+                strokeWidth={0.6}
+              />,
+            );
+            segStart = null;
+          };
+          lineCols.forEach((col, ci) => {
+            if (colIsText[col]) flush(colXs[ci], ci);
+            else if (segStart == null) segStart = colXs[ci];
+          });
+          flush(systemRight, "end");
         }
+      });
+
+      // ── Instruction (text) bars: one merged box across all voices ──────────
+      lineCols.forEach((col, ci) => {
+        if (!colIsText[col]) return;
+        const tm = parts[0].measures[col];
+        const lay = colLayout[col];
+        const bx0 = colXs[ci];
+        const bw = rawMWs[col] * sc2;
+        const isSel = col === selectedMeasureIdx;
+        const empty = !String(tm.text || "").trim();
+        const lh = TB_LH;
+        const startY = lineTop + (lineBottom - lineTop) / 2 - ((empty ? 1 : lay.lines.length) * lh) / 2 + lh * 0.75;
+        elems.push(
+          <g
+            key={`tbar-${lineIdx}-${col}`}
+            data-textbar={col}
+            style={{ cursor: "text" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              useSolfaStore.setState({
+                selectedMeasureIdx: col,
+                selectedBeatIdx: null,
+                selectedEventIdx: null,
+              });
+              setTextEdit({
+                col,
+                x: bx0 + 1,
+                y: lineTop + 1,
+                w: Math.max(bw - 2, 120),
+                h: Math.max(lineBottom - lineTop - 2, 28),
+                text: tm.text || "",
+              });
+            }}
+          >
+            <rect
+              x={bx0 + 1.5}
+              y={lineTop + 1.5}
+              width={Math.max(bw - 3, 1)}
+              height={lineBottom - lineTop - 3}
+              rx={3}
+              fill="#fffbeb"
+              stroke={isSel ? "#2563eb" : "#d97706"}
+              strokeWidth={isSel ? 1.8 : 1}
+              strokeDasharray="5 3"
+            />
+            {empty ? (
+              <text
+                x={bx0 + bw / 2}
+                y={startY}
+                textAnchor="middle"
+                fontFamily={FONT}
+                fontSize={TB_SZ}
+                fontStyle="italic"
+                fill="#b8a27a"
+              >
+                Click to add instructions…
+              </text>
+            ) : (
+              lay.lines.map((ln, li) => (
+                <text
+                  key={li}
+                  x={bx0 + bw / 2}
+                  y={startY + li * lh}
+                  textAnchor="middle"
+                  fontFamily={FONT}
+                  fontSize={TB_SZ}
+                  fill="#78350f"
+                >
+                  {ln}
+                </text>
+              ))
+            )}
+          </g>,
+        );
       });
 
       elems.push(
@@ -1662,6 +1882,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
         // Match the audio scheduler's cumulative-beat source exactly (time
         // signature, not the rendered beats array) so the cursor never
         // drifts out of sync with the actual audio position measure-by-measure.
+        if (m?.kind === "text") continue; // instruction bars take no time
         const nBeats = m?.timeSignature?.beats || topNum;
         if (playbackBeat < cum + nBeats || col === numM - 1) {
           const within = playbackBeat - cum;
@@ -1755,6 +1976,22 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
     />
   ) : null;
 
+  const textEditElem = textEdit ? (
+    <TextBarEditor
+      key={`tb-ed-${textEdit.col}`}
+      x={textEdit.x}
+      y={textEdit.y}
+      w={textEdit.w}
+      h={textEdit.h}
+      value={textEdit.text}
+      onCommit={(val) => {
+        if (val !== textEdit.text) setTextBar(textEdit.col, { text: val });
+        setTextEdit(null);
+      }}
+      onCancel={() => setTextEdit(null)}
+    />
+  ) : null;
+
   return (
     <div ref={wrapRef} style={{ width: "100%", overflowX: "auto" }}>
       <svg
@@ -1793,6 +2030,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
           />
         </g>
         {lyricEditElem}
+        {textEditElem}
       </svg>
     </div>
   );
