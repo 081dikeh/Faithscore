@@ -1105,11 +1105,15 @@ export const useSolfaStore = create((set,get) => ({
     const {score,selectedPartId,selectedMeasureIdx,selectedBeatIdx,selectedEventIdx}=get()
     const sel=get().selectEvent
 
-    if (selectedPartId===null||selectedMeasureIdx===null) {
-      const p=score.parts[0],m=p?.measures[0]
-      if (m?.beats[0]) sel(p.id,0,0,0)
+    // instruction (text) bars hold no notes — navigation steps over them
+    const firstReal=(score.parts[0]?.measures||[]).findIndex(m=>m.kind!=='text')
+    if (selectedPartId===null||selectedMeasureIdx===null||selectedBeatIdx===null) {
+      const p=score.parts[0],m=p?.measures[firstReal]
+      if (firstReal>=0&&m?.beats[0]) sel(p.id,firstReal,0,0)
       return
     }
+    const nextReal=(from)=>{const ms=score.parts[0]?.measures||[];for(let j=from+1;j<ms.length;j++)if(ms[j].kind!=='text')return j;return -1}
+    const prevReal=(from)=>{const ms=score.parts[0]?.measures||[];for(let j=from-1;j>=0;j--)if(ms[j].kind!=='text')return j;return -1}
     const pi=score.parts.findIndex(p=>p.id===selectedPartId)
     const part=score.parts[pi]; if (!part) return
     const meas=migrateMeasure(part.measures[selectedMeasureIdx]); if (!meas) return
@@ -1121,17 +1125,19 @@ export const useSolfaStore = create((set,get) => ({
     if (direction==='right') {
       if (ei<evts.length-1){sel(selectedPartId,selectedMeasureIdx,bi,ei+1);return}
       if (bi<meas.beats.length-1){sel(selectedPartId,selectedMeasureIdx,bi+1,0);return}
-      if (selectedMeasureIdx<part.measures.length-1){sel(selectedPartId,selectedMeasureIdx+1,0,0);return}
+      const nj=nextReal(selectedMeasureIdx)
+      if (nj>=0){sel(selectedPartId,nj,0,0);return}
     } else if (direction==='left') {
       if (ei>0){sel(selectedPartId,selectedMeasureIdx,bi,ei-1);return}
       if (bi>0){
         const pb=migrateMeasure(part.measures[selectedMeasureIdx])?.beats[bi-1]
         sel(selectedPartId,selectedMeasureIdx,bi-1,(pb?.events?.length||1)-1);return
       }
-      if (selectedMeasureIdx>0){
-        const pm=migrateMeasure(part.measures[selectedMeasureIdx-1])
+      const pj=prevReal(selectedMeasureIdx)
+      if (pj>=0){
+        const pm=migrateMeasure(part.measures[pj])
         const lb=pm.beats[pm.beats.length-1]
-        sel(selectedPartId,selectedMeasureIdx-1,pm.beats.length-1,(lb?.events?.length||1)-1);return
+        sel(selectedPartId,pj,pm.beats.length-1,(lb?.events?.length||1)-1);return
       }
     } else if (direction==='down') {
       if (pi<score.parts.length-1){

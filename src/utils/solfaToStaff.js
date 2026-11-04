@@ -39,7 +39,7 @@
 // algorithm normalizeMeasure() already uses when a note needs to be split
 // across a measure boundary.
 
-import { solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
+import { solfaToMidiForVoice, migrateMeasure, resolveKeyAt, isTextBar } from '../store/solfaStore'
 import { spellPitch, spellingOctaveDelta, MAJOR_SCALES, beatsToRest, DURATION_BEATS, EMPTY_SCORE } from '../store/scoreStore'
 import { portableVerses } from './lyricVerses'
 
@@ -296,6 +296,11 @@ export function convertSolfaScoreToStaff(solfaScore) {
   const startKeySig = solfaKeyToKeySignature(startKey)
   const startTs = solfaScore.timeSignature || { beats: 4, beatType: 4 }
 
+  // Instruction (text) bars have no beats and no Staff equivalent — they are
+  // skipped (indices stay the Solfa ones, so slur/key lookups still line up).
+  const skippedTextBars = (solfaScore.parts?.[0]?.measures || []).filter(isTextBar).length
+  if (skippedTextBars) warnings.push(`${skippedTextBars} instruction bar${skippedTextBars === 1 ? '' : 's'} skipped (the Staff app has no text bars).`)
+
   const staffScore = {
     id: crypto.randomUUID(),
     title: solfaScore.title || 'Untitled',
@@ -320,6 +325,7 @@ export function convertSolfaScoreToStaff(solfaScore) {
     // Score's own slurStart/slurEnd note flags once conversion is done.
     const positionToNoteId = new Map()
     for (let mi = 0; mi < partMeasures.length; mi++) {
+      if (isTextBar(partMeasures[mi])) continue
       const migrated = migrateMeasure(partMeasures[mi])
       const ts = migrated.timeSignature || startTs
       // The key actually in effect AT this measure — not just the score's

@@ -190,7 +190,9 @@ function buildSchedule(score, tempo, partMutes) {
     let cum = 0
     for (let i = 0; i < numM; i++) {
       measureBeatStart.push(cum)
-      cum += migrateMeasure(parts[0]?.measures[i])?.timeSignature?.beats || 4
+      // instruction (text) bars take no time
+      const mm = migrateMeasure(parts[0]?.measures[i])
+      cum += mm?.kind === 'text' ? 0 : (mm?.timeSignature?.beats || 4)
     }
   }
 
@@ -220,6 +222,7 @@ function buildSchedule(score, tempo, partMutes) {
     }
 
     const refM     = migrateMeasure(parts[0]?.measures[mIdx])
+    if (refM?.kind === 'text') continue   // instruction bar: no events, no segment, no time
     const numBeats = refM?.timeSignature?.beats || 4
     segments.push({ playStartSec: globalSec, scoreStartBeat: measureBeatStart[mIdx] ?? 0, beats: numBeats })
 

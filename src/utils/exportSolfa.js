@@ -144,6 +144,7 @@ function buildEventList(score, tempo) {
 
   for (let mIdx = 0; mIdx < numM; mIdx++) {
     const refM     = migrateMeasure(parts[0]?.measures[mIdx])
+    if (refM?.kind === 'text') continue   // instruction bar: no time
     const numBeats = refM?.timeSignature?.beats || 4
 
     for (const part of parts) {

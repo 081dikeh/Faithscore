@@ -127,6 +127,14 @@ function PalettesTab({ search }) {
   const removeKeyChangeAt    = useSolfaStore(s => s.removeKeyChangeAt)
   const addMark               = useSolfaStore(s => s.addMark)
   const addNavigationMarker   = useSolfaStore(s => s.addNavigationMarker)
+  const insertTextBar         = useSolfaStore(s => s.insertTextBar)
+  const setTextBar            = useSolfaStore(s => s.setTextBar)
+  const deleteMeasure         = useSolfaStore(s => s.deleteMeasure)
+  const selMeasure   = selectedMeasureIdx !== null ? score.parts[0]?.measures?.[selectedMeasureIdx] : null
+  const selIsTextBar = selMeasure?.kind === 'text'
+  // bar number as printed: instruction bars aren't counted
+  const barNo = selectedMeasureIdx === null ? 0
+    : (score.parts[0]?.measures || []).slice(0, selectedMeasureIdx + 1).filter(m => m.kind !== 'text').length
 
   const hasSelection = selectedPartId !== null && selectedMeasureIdx !== null && selectedBeatIdx !== null
   // Time signature only needs a BAR selected (not a specific beat) — it's
@@ -250,9 +258,43 @@ function PalettesTab({ search }) {
         color: hasSelection ? '#1d4ed8' : '#9a5b13',
         borderBottom:'1px solid #f0f0f0',
       }}>
-        {!hasBarSelection && 'Select a bar for a time signature change, or a note for a key modulation / tempo / dynamics / text mark.'}
-        {hasBarSelection && !hasSelection && `Bar ${selectedMeasureIdx+1} selected — Time Signature will insert a change here, in effect until the next change. Select a note (not just a bar) to modulate the key there.`}
-        {hasSelection && `Applying to bar ${selectedMeasureIdx+1}, beat ${selectedBeatIdx+1}. Key Signature will modulate starting at this exact note; Time Signature will insert a change at bar ${selectedMeasureIdx+1}.`}
+        {selIsTextBar && 'Instruction bar selected — click it on the score to edit its text.'}
+        {!selIsTextBar && !hasBarSelection && 'Select a bar for a time signature change, or a note for a key modulation / tempo / dynamics / text mark.'}
+        {!selIsTextBar && hasBarSelection && !hasSelection && `Bar ${barNo} selected — Time Signature will insert a change here, in effect until the next change. Select a note (not just a bar) to modulate the key there.`}
+        {hasSelection && `Applying to bar ${barNo}, beat ${selectedBeatIdx+1}. Key Signature will modulate starting at this exact note; Time Signature will insert a change at bar ${barNo}.`}
+      </div>
+
+      {/* Instruction (text) bar — a box for written instructions, no beats */}
+      <div style={{ padding:'8px 12px', borderBottom:'1px solid #f0f0f0' }}>
+        <div style={{ fontSize:11.5, fontWeight:600, color:'#374151', marginBottom:6 }}>Instruction bar</div>
+        <div style={{ display:'flex', gap:6, marginBottom:6 }}>
+          <button
+            disabled={selectedMeasureIdx === null}
+            onClick={() => insertTextBar(selectedMeasureIdx)}
+            style={{ flex:1, fontSize:11, fontWeight:600, padding:'6px 4px', borderRadius:6, border:'1px solid #e5e7eb', background:'white', color:'#374151',
+              cursor: selectedMeasureIdx === null ? 'not-allowed' : 'pointer', opacity: selectedMeasureIdx === null ? 0.55 : 1 }}>
+            Insert after bar
+          </button>
+          <button
+            onClick={() => insertTextBar(null)}
+            style={{ flex:1, fontSize:11, fontWeight:600, padding:'6px 4px', borderRadius:6, border:'1px solid #e5e7eb', background:'white', color:'#374151', cursor:'pointer' }}>
+            Add at end
+          </button>
+        </div>
+        {selIsTextBar && (
+          <>
+            <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:11, color:'#374151', marginBottom:6, cursor:'pointer' }}>
+              <input type="checkbox" checked={!!selMeasure.wide}
+                onChange={(e) => setTextBar(selectedMeasureIdx, { wide: e.target.checked })} />
+              Full line width
+            </label>
+            <button
+              onClick={() => deleteMeasure(selectedMeasureIdx)}
+              style={{ width:'100%', fontSize:11, fontWeight:600, padding:'6px 0', borderRadius:6, border:'1px solid #dc2626', background:'#fef2f2', color:'#dc2626', cursor:'pointer' }}>
+              Delete instruction bar
+            </button>
+          </>
+        )}
       </div>
       {filtered.map((p, i) => (
         <PaletteSection key={p.title} title={p.title} defaultOpen={!!p.defaultOpen}>
@@ -509,7 +551,7 @@ function LyricsTab() {
         </div>
         <div style={{ fontSize:10.5, color:'#9ca3af', marginBottom:6, lineHeight:1.4 }}>
           {selectedMeasureIdx !== null
-            ? `Bar ${selectedMeasureIdx+1} selected.`
+            ? (selIsTextBar ? 'Instruction bar selected.' : `Bar ${barNo} selected.`)
             : 'Select a bar on the score first.'}
         </div>
         <button

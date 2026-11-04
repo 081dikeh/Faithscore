@@ -809,12 +809,16 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
   const posDisp = (() => {
     if (selectedBeatIdx === null || selectedMeasureIdx === null) return "";
     const part = score.parts.find((p) => p.id === selectedPartId);
+    const realNo =
+      (part?.measures || [])
+        .slice(0, selectedMeasureIdx + 1)
+        .filter((m) => m.kind !== "text").length;
     const beat = migrateMeasure(part?.measures[selectedMeasureIdx])?.beats[
       selectedBeatIdx
     ];
     const used = beat?.events?.reduce((s, e) => s + e.duration, 0) || 0;
     const free = 4 - used;
-    return `Bar ${selectedMeasureIdx + 1} · Beat ${selectedBeatIdx + 1} · ${free} quarter${free === 1 ? "" : "s"} free`;
+    return `Bar ${realNo} · Beat ${selectedBeatIdx + 1} · ${free} quarter${free === 1 ? "" : "s"} free`;
   })();
 
   const Sep = () => (

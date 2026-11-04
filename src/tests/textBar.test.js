@@ -87,3 +87,15 @@ test('a text bar takes the meter of the bar before it, and a meter change flows 
   assert.equal(parts()[0].measures[2].timeSignature.beats, 3)
   assert.equal(parts()[0].measures[2].beats.length, 0)   // still no beats
 })
+// ── navigation steps over instruction bars ─────────────────────────────────
+test('navigateEvent skips text bars both ways', () => {
+  const st = useSolfaStore.getState()
+  st.loadScore(buildEmptySolfaScore('satb', 'C', 4, 3))
+  st.insertTextBar(0, 'note') // bars: real, text, real, real
+  const id = useSolfaStore.getState().score.parts[0].id
+  useSolfaStore.getState().selectEvent(id, 0, 3, 0)
+  useSolfaStore.getState().navigateEvent('right')
+  assert.equal(useSolfaStore.getState().selectedMeasureIdx, 2)
+  useSolfaStore.getState().navigateEvent('left')
+  assert.equal(useSolfaStore.getState().selectedMeasureIdx, 0)
+})
