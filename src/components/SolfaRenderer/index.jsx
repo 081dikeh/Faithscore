@@ -33,6 +33,7 @@ import {
   resolveKeyBefore,
   bridgeSyllable,
   isTextBar,
+  voltaLabel,
 } from "../../store/solfaStore";
 import {
   getNoteLyric,
@@ -631,7 +632,15 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
       const raw = PAD * 2 + beatW.reduce((a, b) => a + b, 0) + SEP_W * (nb - 1);
       return { beatW, cells, raw };
     });
-    const rawMWs = colLayout.map((c) => c.raw);
+    // Repeat signs (|: and :|) need a little room at the bar's edge.
+    const RS_W = 9;
+    const repStartCols = new Set((score.repeats || []).map((r) => r.start));
+    const repEndCols = new Set((score.repeats || []).map((r) => r.end));
+    const rawMWs = colLayout.map(
+      (c, col) => c.raw + (c.text ? 0 : (repStartCols.has(col) ? RS_W : 0) + (repEndCols.has(col) ? RS_W : 0)),
+    );
+    const hasVoltas = (score.voltas || []).length > 0;
+    const VOLTA_TOP = hasVoltas ? 24 : 0; // headroom above the first system
 
     const lines = (() => {
       const ls = [];
@@ -691,9 +700,9 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
       : 0;
 
     const systemH = systemContentH + SYS_GAP;
-    const totalH = HDR_H + lines.length * systemH + 40 + versesExtraH;
+    const totalH = HDR_H + VOLTA_TOP + lines.length * systemH + 40 + versesExtraH;
     const elems = [];
-    let sysY = HDR_H + 20;
+    let sysY = HDR_H + 20 + VOLTA_TOP;
     eventPosMap.current = {};
     beatPosMap.current = {};
     systemBoundsMap.current = {};
@@ -907,7 +916,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
             );
           }
 
-          let x = colXs[ci] + PAD * sc2;
+          let x = colXs[ci] + PAD * sc2 + (repStartCols.has(col) ? RS_W : 0);
 
           measure.beats.forEach((beat, bi) => {
             const events = beat?.events || [];
@@ -1567,6 +1576,81 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
           );
       });
 
+      // ── Repeat signs and numbered endings (1st / 2nd time brackets) ─────────
+      {
+        const dot = (key, x, y) => (
+          <circle key={key} cx={x} cy={y} r={1.7} fill={C.barline} />
+        );
+        (score.repeats || []).forEach((r) => {
+          const si = lineCols.indexOf(r.start);
+          if (si !== -1) {
+            const x0 = colXs[si];
+            elems.push(
+              <line key={`rps-t-${lineIdx}-${r.id}`} x1={x0 + 1.5} y1={lineTop} x2={x0 + 1.5} y2={lineBottom}
+                stroke={C.barline} strokeWidth={3} />,
+              <line key={`rps-n-${lineIdx}-${r.id}`} x1={x0 + 5.5} y1={lineTop} x2={x0 + 5.5} y2={lineBottom}
+                stroke={C.barline} strokeWidth={1} />,
+            );
+            parts.forEach((_, pIdx) => {
+              const ry = sysY + partOff[pIdx];
+              elems.push(
+                dot(`rps-d1-${lineIdx}-${r.id}-${pIdx}`, x0 + 9.5, ry - 9),
+                dot(`rps-d2-${lineIdx}-${r.id}-${pIdx}`, x0 + 9.5, ry - 2),
+              );
+            });
+          }
+          const ei = lineCols.indexOf(r.end);
+          if (ei !== -1) {
+            const x1 = colXs[ei] + rawMWs[r.end] * sc2;
+            elems.push(
+              <line key={`rpe-t-${lineIdx}-${r.id}`} x1={x1 - 1.5} y1={lineTop} x2={x1 - 1.5} y2={lineBottom}
+                stroke={C.barline} strokeWidth={3} />,
+              <line key={`rpe-n-${lineIdx}-${r.id}`} x1={x1 - 5.5} y1={lineTop} x2={x1 - 5.5} y2={lineBottom}
+                stroke={C.barline} strokeWidth={1} />,
+            );
+            parts.forEach((_, pIdx) => {
+              const ry = sysY + partOff[pIdx];
+              elems.push(
+                dot(`rpe-d1-${lineIdx}-${r.id}-${pIdx}`, x1 - 9.5, ry - 9),
+                dot(`rpe-d2-${lineIdx}-${r.id}-${pIdx}`, x1 - 9.5, ry - 2),
+              );
+            });
+          }
+        });
+
+        const allVoltas = score.voltas || [];
+        allVoltas.forEach((v) => {
+          const inLine = lineCols.filter((c) => c >= v.startMeasure && c <= v.endMeasure);
+          if (!inLine.length) return;
+          const first = lineCols.indexOf(inLine[0]);
+          const lastCi = lineCols.indexOf(inLine[inLine.length - 1]);
+          const bx0 = colXs[first] + 2;
+          const bx1 = colXs[lastCi] + rawMWs[inLine[inLine.length - 1]] * sc2 - 2;
+          const startsHere = inLine[0] === v.startMeasure;
+          const endsHere = inLine[inLine.length - 1] === v.endMeasure;
+          // all but the last ending of a repeat are closed on the right
+          const closed = endsHere && allVoltas.some((o) => o.startMeasure === v.endMeasure + 1);
+          const yT = lineTop - 24;
+          const yB = lineTop - 11;
+          const d =
+            `M ${bx0},${startsHere ? yB : yT} ` +
+            (startsHere ? `L ${bx0},${yT} ` : "") +
+            `L ${bx1},${yT}` +
+            (closed ? ` L ${bx1},${yB}` : "");
+          elems.push(
+            <g key={`volta-${lineIdx}-${v.id}`} data-volta={v.id}>
+              <title>{`${voltaLabel(v)} ending`}</title>
+              <path d={d} fill="none" stroke={C.barline} strokeWidth={1.2} />
+              {startsHere && (
+                <text x={bx0 + 4} y={yT + 11} fontFamily={FONT} fontSize={11} fontWeight={600} fill="#111">
+                  {voltaLabel(v)}
+                </text>
+              )}
+            </g>,
+          );
+        });
+      }
+
       // ── Navigation markers for this system ──────────────────────────────────
       (score.navigationMarkers || []).forEach((mk) => {
         const ci = lineCols.indexOf(mk.atMeasure);
@@ -1578,7 +1662,10 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
         // text: U+1D10B / U+1D10C aren't in the score's serif font, so as
         // <text> they render as nothing at all.
         if (mk.type === "segno" || mk.type === "coda") {
-          const gy = lineTop - 22; // top of a ~18px-tall symbol box
+          const underVolta = (score.voltas || []).some(
+            (v) => mk.atMeasure >= v.startMeasure && mk.atMeasure <= v.endMeasure,
+          );
+          const gy = lineTop - 22 - (underVolta ? 18 : 0); // top of a ~18px-tall symbol box
           elems.push(
             <g
               key={`navmk-${mk.id}`}

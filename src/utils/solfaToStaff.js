@@ -39,9 +39,9 @@
 // algorithm normalizeMeasure() already uses when a note needs to be split
 // across a measure boundary.
 
-import { solfaToMidiForVoice, migrateMeasure, resolveKeyAt, isTextBar } from '../store/solfaStore'
-import { spellPitch, spellingOctaveDelta, MAJOR_SCALES, beatsToRest, DURATION_BEATS, EMPTY_SCORE } from '../store/scoreStore'
-import { portableVerses } from './lyricVerses'
+import { solfaToMidiForVoice, migrateMeasure, resolveKeyAt, isTextBar } from '../store/solfaStore.js'
+import { spellPitch, spellingOctaveDelta, MAJOR_SCALES, beatsToRest, DURATION_BEATS, EMPTY_SCORE } from '../store/scoreStore.js'
+import { portableVerses } from './lyricVerses.js'
 
 // ─── Pitch ──────────────────────────────────────────────────────────────────
 
@@ -301,12 +301,25 @@ export function convertSolfaScoreToStaff(solfaScore) {
   const skippedTextBars = (solfaScore.parts?.[0]?.measures || []).filter(isTextBar).length
   if (skippedTextBars) warnings.push(`${skippedTextBars} instruction bar${skippedTextBars === 1 ? '' : 's'} skipped (the Staff app has no text bars).`)
 
+  // Repeats / endings: Solfa bar indices count instruction bars, Staff ones don't.
+  const textBefore = (i) => (solfaScore.parts?.[0]?.measures || []).slice(0, i).filter(isTextBar).length
+  const toStaffIdx = (i) => i - textBefore(i)
+  const mapRange = (o, ks, ke) => {
+    const a = toStaffIdx(o[ks])
+    const b = toStaffIdx(o[ke] + 1) - 1
+    return b >= a ? { ...o, [ks]: a, [ke]: b } : null
+  }
+  const staffRepeats = (solfaScore.repeats || []).map(r => mapRange(r, 'start', 'end')).filter(Boolean)
+  const staffVoltas = (solfaScore.voltas || []).map(v => mapRange(v, 'startMeasure', 'endMeasure')).filter(Boolean)
+
+
   const staffScore = {
     id: crypto.randomUUID(),
     title: solfaScore.title || 'Untitled',
     composer: solfaScore.composer || '',
     tempo: solfaScore.tempo || 120,
     dynamics: [], hairpins: [], rehearsalMarks: [], staffTexts: [], barlines: [], octaveLines: [],
+    repeats: staffRepeats, voltas: staffVoltas,
     pageSettings: { ...EMPTY_SCORE.pageSettings },
     parts: [],
     ...(Array.isArray(solfaScore.verses) && solfaScore.verses.length ? { verses: portableVerses(solfaScore) } : {}),

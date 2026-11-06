@@ -81,6 +81,100 @@ export function buildMeasureOrder(markers, totalMeasures) {
   return order
 }
 
+// ── Repeats & numbered endings (volta brackets) ───────────────────────────
+// repeats: [{ id, start, end }]  — |: before bar `start`, :| after bar `end`
+// voltas:  [{ id, startMeasure, endMeasure, numbers:[1], label }]
+//   — a bracket over bars startMeasure..endMeasure that plays only on the
+//     listed passes (1 = first time through, 2 = the repeat, …).
+// A repeat's endings are the chain of voltas that starts inside the repeat
+// (first one reaches the :|) and continues bar-to-bar after it. The repeat
+// runs as many times as the highest ending number (min. 2; a repeat with no
+// endings plays twice). Applied to a measure order (e.g. the Segno order) and
+// returns a new, finite order — repeats are only taken on the first
+// traversal; once finished, a later pass (after a D.S.) plays the LAST ending.
+export function expandRepeats(order, repeats, voltas) {
+  const reps = [...(repeats || [])].sort((a, b) => a.start - b.start)
+  const vs = [...(voltas || [])].sort((a, b) => a.startMeasure - b.startMeasure)
+  if (!reps.length && !vs.length) return order
+
+  const info = reps.map((r) => {
+    const chain = []
+    let v = vs.find((x) => x.startMeasure >= r.start && x.startMeasure <= r.end && x.endMeasure >= r.end)
+    while (v) {
+      chain.push(v)
+      v = vs.find((x) => x.startMeasure === v.endMeasure + 1 && !chain.includes(x))
+    }
+    const top = Math.max(2, ...chain.flatMap((c) => c.numbers || [1]))
+    return { r, chain, top }
+  })
+  const pass = new Map(info.map((x) => [x.r.id, 1]))
+  const out = []
+  const LIMIT = order.length * 40 + 1000
+  let i = 0
+  let guard = 0
+  while (i < order.length && guard++ < LIMIT) {
+    const m = order[i]
+    let skip = null
+    for (const x of info) {
+      const p = pass.get(x.r.id)
+      const hit = x.chain.find(
+        (v) => m >= v.startMeasure && m <= v.endMeasure && !(v.numbers || [1]).includes(p),
+      )
+      if (hit) { skip = hit; break }
+    }
+    if (skip) {
+      while (i < order.length && order[i] >= skip.startMeasure && order[i] <= skip.endMeasure) i++
+      continue
+    }
+    out.push(m)
+    // :| at the repeat's end — and at the end of every ending except the last
+    // (a 2nd ending that has a 3rd after it also returns to the start).
+    const x = info.find(
+      (y) => y.r.end === m || y.chain.some((v, k) => k < y.chain.length - 1 && v.endMeasure === m),
+    )
+    if (x && pass.get(x.r.id) < x.top) {
+      pass.set(x.r.id, pass.get(x.r.id) + 1)
+      let j = i
+      while (j >= 0 && order[j] !== x.r.start) j--
+      if (j >= 0) { i = j; continue }
+    }
+    i++
+  }
+  return out
+}
+
+// Printed bar number of measure index `i` (instruction/text bars aren't counted),
+// and back. In the Staff app there are no text bars, so this is just i + 1.
+export const barNumberOf = (measures, i) => (measures || []).slice(0, i + 1).filter((m) => m.kind !== 'text').length
+export const indexOfBarNumber = (measures, n) => {
+  let c = 0
+  for (let i = 0; i < (measures || []).length; i++) { if (measures[i].kind !== 'text' && ++c === n) return i }
+  return -1
+}
+
+// Label printed on an ending bracket: "1.", "1, 2." ... (or the custom label).
+export const voltaLabel = (v) => v?.label || `${(v?.numbers || [1]).join(', ')}.`
+
+// Staff scores can also carry plain repeat BARLINES (score.barlines with type
+// 'repeat-start' | 'repeat-end' | 'repeat-both'). Those become repeats too, so
+// a score drawn with the old barline palette plays correctly. An explicit
+// repeat that already ends on the same bar wins.
+export function effectiveRepeats(score) {
+  const explicit = score?.repeats || []
+  const bl = [...(score?.barlines || [])]
+    .filter((b) => b.type === 'repeat-start' || b.type === 'repeat-end' || b.type === 'repeat-both')
+    .sort((a, b) => a.measureIndex - b.measureIndex)
+  const derived = []
+  let lastStart = 0
+  bl.forEach((b) => {
+    if (b.type === 'repeat-start') { lastStart = b.measureIndex; return }
+    if (b.measureIndex >= lastStart) derived.push({ id: `bl-${b.id}`, start: lastStart, end: b.measureIndex })
+    lastStart = b.measureIndex + 1
+  })
+  const ends = new Set(explicit.map((r) => r.end))
+  return [...explicit, ...derived.filter((d) => !ends.has(d.end))]
+}
+
 // ── Staff app: markers live as free text (score.staffTexts), since that's
 // the Staff app's existing annotation model — this recognizes the exact
 // strings the Sidebar's Text palette places, so a plain text label stays a

@@ -127,6 +127,12 @@ function makeEmptyMeasure(numBeats=4) {
 // meter-change marker doesn't fire around it.
 export const isTextBar = (m) => m?.kind === 'text'
 
+import { barNumberOf as _bn, indexOfBarNumber as _ib } from '../utils/segnoNavigation.js'
+export const barNumberOf = _bn
+export const indexOfBarNumber = _ib
+
+export { voltaLabel } from '../utils/segnoNavigation.js'
+
 function makeTextMeasure(text, ts) {
   return {
     id: uid(),
@@ -142,6 +148,12 @@ function makeTextMeasure(text, ts) {
 // deletion (delta -1 at `at`), so markers, marks, slurs, ties, key changes,
 // sections and instrumental bars keep pointing at the bar they were on.
 // Things that pointed AT a deleted bar are dropped.
+function shiftRange(s, e, at, delta, ks, ke, obj) {
+  if (delta > 0) return { ...obj, [ks]: s >= at ? s + 1 : s, [ke]: e >= at ? e + 1 : e }
+  if (s === at && e === at) return null
+  return { ...obj, [ks]: s > at ? s - 1 : s, [ke]: e >= at ? e - 1 : e }
+}
+
 function shiftMeasureRefs(score, at, delta) {
   const mv = (i) => (typeof i !== 'number' ? i : i >= at ? i + delta : i)
   const gone = (i) => delta < 0 && i === at
@@ -153,6 +165,10 @@ function shiftMeasureRefs(score, at, delta) {
     navigationMarkers: (score.navigationMarkers || []).filter(m => !gone(m.atMeasure)).map(m => ({ ...m, atMeasure: delta < 0 ? (m.atMeasure > at ? m.atMeasure + delta : m.atMeasure) : mv(m.atMeasure) })),
     instrumentalMeasures: (score.instrumentalMeasures || []).filter(i => !gone(i)).map(i => delta < 0 ? (i > at ? i + delta : i) : mv(i)),
     keyChanges: (score.keyChanges || []).filter(k => !gone(k.measureIdx)).map(k => ({ ...k, measureIdx: delta < 0 ? (k.measureIdx > at ? k.measureIdx + delta : k.measureIdx) : mv(k.measureIdx) })),
+    // repeats & numbered endings: ranges of bars. Inserting inside a range
+    // grows it; deleting a bar shrinks it; a range of just that bar is dropped.
+    repeats: (score.repeats || []).map(r => shiftRange(r.start, r.end, at, delta, 'start', 'end', r)).filter(Boolean),
+    voltas: (score.voltas || []).map(v => shiftRange(v.startMeasure, v.endMeasure, at, delta, 'startMeasure', 'endMeasure', v)).filter(Boolean),
     sections: (score.sections || []).map(sec => ({
       ...sec,
       startMeasure: delta < 0 ? (sec.startMeasure > at ? sec.startMeasure + delta : sec.startMeasure) : mv(sec.startMeasure),
@@ -184,7 +200,7 @@ export function buildEmptySolfaScore(voiceComboKey='satb',key='C',beats=4,numMea
     parts:combo.voices.map(v=>makePart(v,numMeasures,beats)),
     sections:[], slurs:[], ties:[], marks:[], _savedAt:null, _cloudId:null,
     lyricLayout:'inline', lyricDuplication:'per-voice-copy',
-    verses:[], navigationMarkers:[], instrumentalMeasures:[],
+    verses:[], navigationMarkers:[], instrumentalMeasures:[], repeats:[], voltas:[],
     // Modulations — a SPECIFIC NOTE's position where the key changes,
     // not a measure boundary. `key` is what's active starting exactly at
     // that note (and every note after it, until the next entry or the
@@ -296,6 +312,8 @@ export function migrateScore(score) {
     lyricDuplication: score.lyricDuplication || 'per-voice-copy',
     verses: score.verses || [],
     navigationMarkers: score.navigationMarkers || [],
+    repeats: score.repeats || [],
+    voltas: score.voltas || [],
     instrumentalMeasures: score.instrumentalMeasures || [],
     parts:(score.parts||[]).map(p=>({
       ...p,measures:(p.measures||[]).map(m=>migrateMeasure(m)),
@@ -562,6 +580,49 @@ export const useSolfaStore = create((set,get) => ({
     if (atMeasure==null) return
     get()._snapshot()
     set(s => ({ score: { ...s.score, navigationMarkers: [...(s.score.navigationMarkers||[]), { id: uid(), type, atMeasure, label, verseNumber }] } }))
+  },
+
+  // ── Repeats & numbered endings (1st / 2nd time brackets) ──────────────────
+  addRepeat: (start, end) => {
+    if (start == null) return
+    const e = Math.max(start, end ?? start)
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, repeats: [...(s.score.repeats||[]), { id: uid(), start, end: e }] } }))
+  },
+  updateRepeat: (id, patch) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, repeats: (s.score.repeats||[]).map(r => r.id === id ? { ...r, ...patch } : r) } }))
+  },
+  removeRepeat: (id) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, repeats: (s.score.repeats||[]).filter(r => r.id !== id) } }))
+  },
+  // numbers: passes the bracket plays on, e.g. [1] or [1,2]. A bracket that
+  // plays on pass 1 and ends where no repeat ends gets a repeat added there
+  // (back to the start of the piece, or just after the previous repeat).
+  addVolta: (startMeasure, endMeasure, numbers=[1], label=null) => {
+    if (startMeasure == null) return
+    const end = Math.max(startMeasure, endMeasure ?? startMeasure)
+    const nums = [...new Set((numbers||[1]).map(Number).filter(n => n >= 1))].sort((a,b)=>a-b)
+    if (!nums.length) return
+    get()._snapshot()
+    set(s => {
+      const sc = s.score
+      let repeats = sc.repeats || []
+      if (nums[0] === 1 && !repeats.some(r => r.end === end)) {
+        const prev = repeats.filter(r => r.end < startMeasure).reduce((m, r) => Math.max(m, r.end + 1), 0)
+        repeats = [...repeats, { id: uid(), start: Math.min(prev, startMeasure), end }]
+      }
+      return { score: { ...sc, repeats, voltas: [...(sc.voltas||[]), { id: uid(), startMeasure, endMeasure: end, numbers: nums, label: label || null }] } }
+    })
+  },
+  updateVolta: (id, patch) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, voltas: (s.score.voltas||[]).map(v => v.id === id ? { ...v, ...patch } : v) } }))
+  },
+  removeVolta: (id) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, voltas: (s.score.voltas||[]).filter(v => v.id !== id) } }))
   },
 
   removeNavigationMarker: (markerId) => {

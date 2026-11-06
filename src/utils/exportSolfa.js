@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
+import { buildMeasureOrder, expandRepeats, markersFromNavigationMarkers } from './segnoNavigation'
 import { PAGE_SIZES_MM } from '../store/scoreStore'
 import { dialog } from './dialog.js'
 
@@ -142,7 +143,14 @@ function buildEventList(score, tempo) {
   const parts = score.parts || []
   const numM  = Math.max(...parts.map(p => p.measures.length), 0)
 
-  for (let mIdx = 0; mIdx < numM; mIdx++) {
+  // Play order: Segno/D.S. jumps, then repeats and 1st/2nd endings unrolled.
+  const playOrder = expandRepeats(
+    buildMeasureOrder(markersFromNavigationMarkers(score.navigationMarkers), numM),
+    score.repeats,
+    score.voltas,
+  )
+
+  for (const mIdx of playOrder) {
     const refM     = migrateMeasure(parts[0]?.measures[mIdx])
     if (refM?.kind === 'text') continue   // instruction bar: no time
     const numBeats = refM?.timeSignature?.beats || 4

@@ -8,8 +8,9 @@
 
 import { useState } from 'react'
 import { Search } from 'lucide-react'
-import { useSolfaStore, VOICE_COMBOS, migrateMeasure, resolveKeyAt } from '../../store/solfaStore'
+import { useSolfaStore, VOICE_COMBOS, migrateMeasure, resolveKeyAt, barNumberOf } from '../../store/solfaStore'
 import VersePanel from '../VersePanel'
+import RepeatsPanel from '../RepeatsPanel'
 
 const TABS = [
   { id:'palettes',   label:'Palettes'   },
@@ -130,6 +131,12 @@ function PalettesTab({ search }) {
   const insertTextBar         = useSolfaStore(s => s.insertTextBar)
   const setTextBar            = useSolfaStore(s => s.setTextBar)
   const deleteMeasure         = useSolfaStore(s => s.deleteMeasure)
+  const addRepeat         = useSolfaStore(s => s.addRepeat)
+  const updateRepeat      = useSolfaStore(s => s.updateRepeat)
+  const removeRepeat      = useSolfaStore(s => s.removeRepeat)
+  const addVolta          = useSolfaStore(s => s.addVolta)
+  const updateVolta       = useSolfaStore(s => s.updateVolta)
+  const removeVolta       = useSolfaStore(s => s.removeVolta)
   const selMeasure   = selectedMeasureIdx !== null ? score.parts[0]?.measures?.[selectedMeasureIdx] : null
   const selIsTextBar = selMeasure?.kind === 'text'
   // bar number as printed: instruction bars aren't counted
@@ -296,6 +303,13 @@ function PalettesTab({ search }) {
           </>
         )}
       </div>
+      <RepeatsPanel
+        measures={score.parts[0]?.measures || []}
+        repeats={score.repeats || []}
+        voltas={score.voltas || []}
+        range={selectedMeasureIdx === null ? null : [selectedMeasureIdx, selectedMeasureIdx]}
+        actions={{ addRepeat, updateRepeat, removeRepeat, addVolta, updateVolta, removeVolta }}
+      />
       {filtered.map((p, i) => (
         <PaletteSection key={p.title} title={p.title} defaultOpen={!!p.defaultOpen}>
           {p.items.map(item => (

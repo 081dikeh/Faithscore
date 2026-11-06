@@ -31,7 +31,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import * as Tone from 'tone'
 import { useSolfaStore, solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
-import { buildMeasureOrder, markersFromNavigationMarkers } from '../utils/segnoNavigation'
+import { buildMeasureOrder, expandRepeats, markersFromNavigationMarkers } from '../utils/segnoNavigation'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SAMPLE MAPS
@@ -198,7 +198,12 @@ function buildSchedule(score, tempo, partMutes) {
 
   // Dal Segno navigation: the order measures are actually played in. With no
   // Segno/D.S. markers this is just 0..numM-1, so behaviour is unchanged.
-  const playOrder = buildMeasureOrder(markersFromNavigationMarkers(score.navigationMarkers), numM)
+  // then repeats and 1st/2nd endings are unrolled on top of that order.
+  const playOrder = expandRepeats(
+    buildMeasureOrder(markersFromNavigationMarkers(score.navigationMarkers), numM),
+    score.repeats,
+    score.voltas,
+  )
 
   // Per-part "open note" carry state — a note whose sustain (`-`) chain ran
   // off the end of a measure without hitting a new note/rest. Cross-barline
