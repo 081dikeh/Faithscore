@@ -5,7 +5,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import * as Tone from 'tone'
 import { useScoreStore, noteDuration, measureCapacity } from '../store/scoreStore'
-import { buildMeasureOrder, markersFromStaffTexts } from '../utils/segnoNavigation'
+import { buildMeasureOrder, expandRepeats, effectiveRepeats, markersFromStaffTexts } from '../utils/segnoNavigation'
 
 // ── SAMPLER CONFIG ────────────────────────────────────────────────────────────
 const SAMPLE_BASE_URL = 'https://tonejs.github.io/audio/salamander/'
@@ -150,7 +150,11 @@ function buildSchedule(score, tempo) {
   // Dal Segno navigation: the order measures are actually played in. For a
   // score with no Segno/D.S. markers this is just 0..numMeasures-1, so
   // behaviour is unchanged.
-  const playOrder = buildMeasureOrder(markersFromStaffTexts(score.staffTexts), numMeasures)
+  const playOrder = expandRepeats(
+    buildMeasureOrder(markersFromStaffTexts(score.staffTexts), numMeasures),
+    effectiveRepeats(score),
+    score.voltas,
+  )
 
   for (let k = 0; k < playOrder.length; k++) {
     const mIdx = playOrder[k]

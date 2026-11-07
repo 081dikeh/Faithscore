@@ -38,9 +38,10 @@
 // many further beats it spans. That splitting is what most of this file is
 // actually doing.
 
-import { KEY_ROOTS, SOLFA_SEMITONES, buildEmptySolfaScore, VOICE_COMBOS, VOICE_OCTAVE_OFFSET } from '../store/solfaStore'
-import { noteDuration, MAJOR_SCALES } from '../store/scoreStore'
-import { portableVerses } from './lyricVerses'
+import { KEY_ROOTS, SOLFA_SEMITONES, buildEmptySolfaScore, VOICE_COMBOS, VOICE_OCTAVE_OFFSET } from '../store/solfaStore.js'
+import { noteDuration, MAJOR_SCALES } from '../store/scoreStore.js'
+import { portableVerses } from './lyricVerses.js'
+import { effectiveRepeats } from './segnoNavigation.js'
 
 // ─── Pitch ──────────────────────────────────────────────────────────────────
 
@@ -543,6 +544,9 @@ export function convertStaffScoreToSolfa(staffScore) {
     return { id: voice.id, name: voice.name, label: voice.label, measures }
   })
   solfaScore.slurs = allSlurs
+  // repeats (including plain repeat barlines) and 1st/2nd endings — bar indices are identical
+  solfaScore.repeats = effectiveRepeats(staffScore).map(r => ({ id: r.id, start: r.start, end: r.end }))
+  solfaScore.voltas = (staffScore.voltas || []).map(v => ({ ...v }))
   if (Array.isArray(staffScore.verses) && staffScore.verses.length) solfaScore.verses = portableVerses(staffScore)
 
   return { score: solfaScore, warnings: [...new Set(warnings)] }

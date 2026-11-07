@@ -1,6 +1,7 @@
 // src/store/scoreStore.js
 import { create } from 'zustand'
 import { withNoteLyric, splitLyricText, nextVerseNumber } from '../utils/lyricVerses.js'
+import { effectiveRepeats } from '../utils/segnoNavigation.js'
 
 // ── Auto-save helpers ─────────────────────────────────────────────────────────
 const AUTOSAVE_KEY = 'scoreai_autosave'
@@ -388,6 +389,8 @@ export const EMPTY_SCORE = {
   hairpins:         [],   // { id, partId, startMeasure, startBeat, endMeasure, endBeat, type:'cresc'|'decresc' }
   rehearsalMarks:   [],   // { id, measureIndex, text } e.g. text:'A'
   staffTexts:       [],   // { id, partId, measureIndex, beat, text }
+  repeats:          [],   // { id, start, end }  |: bar start ... :| bar end
+  voltas:           [],   // { id, startMeasure, endMeasure, numbers:[1], label }  1st/2nd-time brackets
   barlines:         [],   // { id, measureIndex, type: 'double'|'final'|'repeat-start'|'repeat-end'|'repeat-both' }
   octaveLines:      [],   // { id, partId, startMeasure, endMeasure, type: '8va'|'8vb' }
   // Print/page layout — read by printScore() in utils/exportScore.js.
@@ -448,7 +451,7 @@ export const useScoreStore = create((set, get) => ({
     }))
 
     return {
-      dynamics: [], hairpins: [], rehearsalMarks: [], staffTexts: [], barlines: [], octaveLines: [],
+      dynamics: [], hairpins: [], rehearsalMarks: [], staffTexts: [], barlines: [], repeats: [], voltas: [], octaveLines: [],
       ...saved,
       pageSettings: { ...EMPTY_SCORE.pageSettings, ...(saved.pageSettings || {}) },
       showSolfaAbove: saved.showSolfaAbove ?? false,
@@ -1626,11 +1629,16 @@ export const useScoreStore = create((set, get) => ({
 
   deleteMeasureColumn: (colIndex) => {
     if (get().score.parts[0]?.measures.length <= 1) return
+    // repeats / endings are bar ranges: shrink them, drop one that was only this bar
+    const shrink = (s0, e0, ks, ke, o) => (s0 === colIndex && e0 === colIndex) ? null
+      : ({ ...o, [ks]: s0 > colIndex ? s0 - 1 : s0, [ke]: e0 >= colIndex ? e0 - 1 : e0 })
     set(s => ({
       selectedNoteId: null,
       selectedMeasureIndex: Math.max(0, colIndex - 1),
       score: {
         ...s.score,
+        repeats: (s.score.repeats || []).map(r => shrink(r.start, r.end, 'start', 'end', r)).filter(Boolean),
+        voltas: (s.score.voltas || []).map(v => shrink(v.startMeasure, v.endMeasure, 'startMeasure', 'endMeasure', v)).filter(Boolean),
         parts: s.score.parts.map(p => ({
           ...p,
           measures: p.measures.filter((_, i) => i !== colIndex),
@@ -2034,6 +2042,56 @@ export const useScoreStore = create((set, get) => ({
       if (type === 'normal') return { score: { ...s.score, barlines: filtered } }
       return { score: { ...s.score, barlines: [...filtered, { id: crypto.randomUUID(), measureIndex, type }] } }
     })
+    saveToStorage(get().score)
+  },
+
+  // -- Repeats & 1st / 2nd-time endings (same model as the Solfa app) ----------
+  addRepeat: (start, end) => {
+    if (start == null) return
+    get()._snapshot()
+    const e = Math.max(start, end ?? start)
+    set(s => ({ score: { ...s.score, repeats: [...(s.score.repeats||[]), { id: crypto.randomUUID(), start, end: e }] } }))
+    saveToStorage(get().score)
+  },
+  updateRepeat: (id, patch) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, repeats: (s.score.repeats||[]).map(r => r.id === id ? { ...r, ...patch } : r) } }))
+    saveToStorage(get().score)
+  },
+  removeRepeat: (id) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, repeats: (s.score.repeats||[]).filter(r => r.id !== id) } }))
+    saveToStorage(get().score)
+  },
+  // numbers: the passes the bracket plays on ([1], [2], [1,2] ...). A bracket that
+  // plays on pass 1 and ends where no repeat ends gets a repeat added there
+  // (back to the start of the piece, or just after the previous repeat).
+  addVolta: (startMeasure, endMeasure, numbers = [1], label = null) => {
+    if (startMeasure == null) return
+    const end = Math.max(startMeasure, endMeasure ?? startMeasure)
+    const nums = [...new Set((numbers || [1]).map(Number).filter(n => n >= 1))].sort((a, b) => a - b)
+    if (!nums.length) return
+    get()._snapshot()
+    set(s => {
+      const sc = s.score
+      let repeats = sc.repeats || []
+      const hasEnd = effectiveRepeats(sc).some(r => r.end === end)
+      if (nums[0] === 1 && !hasEnd) {
+        const prev = repeats.filter(r => r.end < startMeasure).reduce((m, r) => Math.max(m, r.end + 1), 0)
+        repeats = [...repeats, { id: crypto.randomUUID(), start: Math.min(prev, startMeasure), end }]
+      }
+      return { score: { ...sc, repeats, voltas: [...(sc.voltas || []), { id: crypto.randomUUID(), startMeasure, endMeasure: end, numbers: nums, label: label || null }] } }
+    })
+    saveToStorage(get().score)
+  },
+  updateVolta: (id, patch) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, voltas: (s.score.voltas||[]).map(v => v.id === id ? { ...v, ...patch } : v) } }))
+    saveToStorage(get().score)
+  },
+  removeVolta: (id) => {
+    get()._snapshot()
+    set(s => ({ score: { ...s.score, voltas: (s.score.voltas||[]).filter(v => v.id !== id) } }))
     saveToStorage(get().score)
   },
 

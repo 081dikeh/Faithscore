@@ -3,8 +3,9 @@
 // Export utilities: MusicXML, MIDI (via binary), Print/PDF
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { DURATION_BEATS, noteDuration, measureCapacity, normalizeMeasure, PAGE_SIZES_MM, useScoreStore } from '../store/scoreStore'
+import { DURATION_BEATS, noteDuration, measureCapacity, normalizeMeasure, PAGE_SIZES_MM, useScoreStore } from '../store/scoreStore.js'
 import { dialog } from './dialog.js'
+import { buildMeasureOrder, expandRepeats, effectiveRepeats, markersFromStaffTexts } from './segnoNavigation.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function xml(tag, attrs, ...children) {
@@ -176,22 +177,36 @@ export function exportMusicXML(score) {
       // Anything still pending belongs at the very end of the measure
       flushPendingUpTo(capacity)
 
-      // ── Barline (double / final / repeat marks) ───────────────────────────
+      // -- Barlines: double / final / repeat marks, plus 1st/2nd-time endings ----
       const barlineEntry = (score.barlines||[]).find(b => b.measureIndex === mi)
+      const reps = score.repeats || []
+      const vts  = score.voltas  || []
+      const isStart = barlineEntry?.type === 'repeat-start' || reps.some(r => r.start === mi)
+      const isEnd   = barlineEntry?.type === 'repeat-end' || barlineEntry?.type === 'repeat-both' || reps.some(r => r.end === mi)
+      const vStart  = vts.filter(v => v.startMeasure === mi)
+      const vEnd    = vts.filter(v => v.endMeasure === mi)
+      const escX = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      const vNum = (v) => (v.numbers || [1]).join(',')
+      const vText = (v) => escX(v.label || `${(v.numbers || [1]).join(', ')}.`)
       let barlineElements = []
-      if (barlineEntry) {
-        if (barlineEntry.type === 'repeat-start') {
-          barlineElements.push(xml('barline', { location: 'left' },
-            xmlLeaf('bar-style', 'heavy-light'),
-            xml('repeat', { direction: 'forward' })
-          ))
-        } else {
-          const styleMap = { double: 'light-light', final: 'light-heavy', 'repeat-end': 'light-heavy', 'repeat-both': 'light-heavy' }
-          barlineElements.push(xml('barline', { location: 'right' },
-            xmlLeaf('bar-style', styleMap[barlineEntry.type] || 'regular'),
-            (barlineEntry.type === 'repeat-end' || barlineEntry.type === 'repeat-both') ? xml('repeat', { direction: 'backward' }) : ''
-          ))
-        }
+      if (isStart || vStart.length) {
+        barlineElements.push(xml('barline', { location: 'left' },
+          isStart ? xmlLeaf('bar-style', 'heavy-light') : '',
+          ...vStart.map(v => xmlLeaf('ending', vText(v), { number: vNum(v), type: 'start' })),
+          isStart ? xml('repeat', { direction: 'forward' }) : ''
+        ))
+      }
+      if (isEnd || vEnd.length || (barlineEntry && barlineEntry.type !== 'repeat-start')) {
+        const styleMap = { double: 'light-light', final: 'light-heavy' }
+        const style = isEnd ? 'light-heavy' : (styleMap[barlineEntry?.type] || 'regular')
+        barlineElements.push(xml('barline', { location: 'right' },
+          xmlLeaf('bar-style', style),
+          ...vEnd.map(v => xmlLeaf('ending', '', {
+            number: vNum(v),
+            type: vts.some(o => o.startMeasure === v.endMeasure + 1) ? 'stop' : 'discontinue',
+          })),
+          isEnd ? xml('repeat', { direction: 'backward' }) : ''
+        ))
       }
 
       measures.push(xml('measure', { number: mi + 1 }, attrs, ...noteElements, ...barlineElements))
@@ -280,7 +295,7 @@ export function importMusicXML(xmlText) {
   const partEls = Array.from(root.querySelectorAll('part'))
   if (!partEls.length) return { score: null, warnings: ['No parts found in this file.'] }
 
-  const dynamics = [], hairpins = [], rehearsalMarks = [], staffTexts = [], barlines = []
+  const dynamics = [], hairpins = [], rehearsalMarks = [], staffTexts = [], barlines = [], voltas = [], openVoltas = []
   let skippedVoiceNotes = 0, sawGraceNotes = false, sawUnsupportedDur = false
 
   const parts = partEls.map((partEl, pi) => {
@@ -357,6 +372,23 @@ export function importMusicXML(xmlText) {
           else if (style === 'light-light') type = 'double'
           else if (style === 'light-heavy') type = 'final'
           if (type) barlines.push({ id: importUid(), measureIndex: mi, type })
+          // 1st / 2nd-time endings: <ending number="1,2" type="start|stop|discontinue">
+          child.querySelectorAll('ending').forEach(en => {
+            const et = en.getAttribute('type')
+            const nums = (en.getAttribute('number') || '1').split(',').flatMap(tok => {
+              const m = tok.trim().match(/^(\d+)\s*-\s*(\d+)$/)
+              if (m) return Array.from({ length: Math.max(0, +m[2] - +m[1] + 1) }, (_, k) => +m[1] + k)
+              return /^\d+$/.test(tok.trim()) ? [+tok.trim()] : []
+            })
+            if (et === 'start') {
+              const label = (en.textContent || '').trim()
+              const v = { id: importUid(), startMeasure: mi, endMeasure: mi, numbers: nums.length ? nums : [1], label: label || null }
+              voltas.push(v); openVoltas.push(v)
+            } else if (et === 'stop' || et === 'discontinue') {
+              const v = openVoltas.shift()
+              if (v) v.endMeasure = mi
+            }
+          })
         } else if (tag === 'backup') {
           skippedVoiceNotes++
         } else if (tag === 'note') {
@@ -457,7 +489,7 @@ export function importMusicXML(xmlText) {
     id: importUid(),
     title, composer, tempo,
     parts: paddedParts,
-    dynamics, hairpins, rehearsalMarks, staffTexts, barlines, octaveLines: [],
+    dynamics, hairpins, rehearsalMarks, staffTexts, barlines, voltas, octaveLines: [],
   }
 
   return { score, warnings }
@@ -491,8 +523,15 @@ export function exportMIDI(score) {
   const parts = score.parts
   const numM  = Math.max(...parts.map(p => p.measures.length), 0)
 
+  // Play order: Segno / D.S. jumps, then repeats and 1st/2nd endings unrolled.
+  const playOrder = expandRepeats(
+    buildMeasureOrder(markersFromStaffTexts(score.staffTexts), numM),
+    effectiveRepeats(score),
+    score.voltas,
+  )
+
   let globalTick = 0
-  for (let mi = 0; mi < numM; mi++) {
+  for (const mi of playOrder) {
     const beats = measureCapacity(parts[0]?.measures[mi]?.timeSignature)
 
     for (const part of parts) {

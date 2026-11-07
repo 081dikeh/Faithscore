@@ -30,6 +30,7 @@ import {
   resolveVerses,
   wrapLyricBlock,
 } from "../../utils/lyricVerses";
+import { voltaLabel } from "../../utils/segnoNavigation";
 import {
   pitchFromStaffPos,
   staffPosFromY,
@@ -1191,6 +1192,12 @@ export default function ScoreRenderer() {
             }
           }
 
+          // -- Repeat signs from score.repeats (|: at the start bar, :| at the end bar)
+          if ((score.repeats || []).some((r) => r.start === col))
+            stave.setBegBarType(Barline.type.REPEAT_BEGIN);
+          if ((score.repeats || []).some((r) => r.end === col))
+            stave.setEndBarType(Barline.type.REPEAT_END);
+
           const isMeasureSel =
             col === selectedMeasureIndex &&
             part.id === selectedPartId &&
@@ -1198,6 +1205,44 @@ export default function ScoreRenderer() {
           if (isMeasureSel)
             stave.setStyle({ fillStyle: "#1d4ed8", strokeStyle: "#1d4ed8" });
           stave.setContext(ctx).draw();
+
+          // 1st / 2nd-time ending brackets -- only above the first part. Each bar
+          // draws its own stretch of the bracket, so a bracket over several
+          // bars (or across a line break) reads as one continuous line.
+          if (pIdx === 0) {
+            const allVoltas = score.voltas || [];
+            allVoltas.forEach((v) => {
+              if (col < v.startMeasure || col > v.endMeasure) return;
+              const yL = stave.getYForLine(0);
+              const yT = yL - 40;
+              const yB = yL - 26;
+              const startsHere = col === v.startMeasure;
+              const closed =
+                col === v.endMeasure &&
+                allVoltas.some((o) => o.startMeasure === v.endMeasure + 1);
+              const x0 = startsHere || isFirst ? x + 3 : x;
+              const x1 = x + width - (closed ? 3 : 0);
+              ctx.save();
+              ctx.setStrokeStyle("#111");
+              ctx.setLineWidth(1.5);
+              ctx.beginPath();
+              if (startsHere) {
+                ctx.moveTo(x0, yB);
+                ctx.lineTo(x0, yT);
+              } else {
+                ctx.moveTo(x0, yT);
+              }
+              ctx.lineTo(x1, yT);
+              if (closed) ctx.lineTo(x1, yB);
+              ctx.stroke();
+              if (startsHere) {
+                ctx.setFont("Times New Roman", 13, "bold");
+                ctx.setFillStyle("#111");
+                ctx.fillText(voltaLabel(v), x0 + 5, yT + 13);
+              }
+              ctx.restore();
+            });
+          }
 
           // Rehearsal mark (square box above staff) — only on first part
           if (pIdx === 0) {

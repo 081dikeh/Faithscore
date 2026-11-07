@@ -13,6 +13,7 @@ import { useState } from 'react'
 import { Search } from 'lucide-react'
 import { useScoreStore, measureCapacity } from '../../store/scoreStore'
 import VersePanel from '../VersePanel'
+import RepeatsPanel from '../RepeatsPanel'
 import { verseNumbersInNotes } from '../../utils/lyricVerses'
 
 const TABS = [
@@ -100,6 +101,12 @@ function PalettesTab({ search }) {
   const addHairpin          = useScoreStore(s => s.addHairpin)
   const addStaffText        = useScoreStore(s => s.addStaffText)
   const setBarline          = useScoreStore(s => s.setBarline)
+  const addRepeat           = useScoreStore(s => s.addRepeat)
+  const updateRepeat        = useScoreStore(s => s.updateRepeat)
+  const removeRepeat        = useScoreStore(s => s.removeRepeat)
+  const addVolta            = useScoreStore(s => s.addVolta)
+  const updateVolta         = useScoreStore(s => s.updateVolta)
+  const removeVolta         = useScoreStore(s => s.removeVolta)
   const addOctaveLine       = useScoreStore(s => s.addOctaveLine)
   const setArticulation     = useScoreStore(s => s.setArticulation)
   const applyArticulationToRange = useScoreStore(s => s.applyArticulationToRange)
@@ -335,6 +342,13 @@ function PalettesTab({ search }) {
         {hasSelection && !noteIsUsable && range[0] === range[1] && `Applying to bar ${range[0]+1}.`}
         {hasSelection && !noteIsUsable && range[0] !== range[1] && `Applying to bars ${range[0]+1}–${range[1]+1}.`}
       </div>
+      <RepeatsPanel
+        measures={score.parts[0]?.measures || []}
+        repeats={score.repeats || []}
+        voltas={score.voltas || []}
+        range={range}
+        actions={{ addRepeat, updateRepeat, removeRepeat, addVolta, updateVolta, removeVolta }}
+      />
       {filtered.map((p, i) => (
         <PaletteSection key={p.title} title={p.title}>
           {p.items.map(item => (
