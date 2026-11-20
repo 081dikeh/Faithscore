@@ -634,8 +634,11 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
     });
     // Repeat signs (|: and :|) need a little room at the bar's edge.
     const RS_W = 9;
-    const repStartCols = new Set((score.repeats || []).map((r) => r.start));
-    const repEndCols = new Set((score.repeats || []).map((r) => r.end));
+    // (repeats created by adding endings are "implicit": they play back, but the
+    // barlines of those bars are left untouched)
+    const drawnRepeats = (score.repeats || []).filter((r) => !r.implicit);
+    const repStartCols = new Set(drawnRepeats.map((r) => r.start));
+    const repEndCols = new Set(drawnRepeats.map((r) => r.end));
     const rawMWs = colLayout.map(
       (c, col) => c.raw + (c.text ? 0 : (repStartCols.has(col) ? RS_W : 0) + (repEndCols.has(col) ? RS_W : 0)),
     );
@@ -1581,7 +1584,7 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
         const dot = (key, x, y) => (
           <circle key={key} cx={x} cy={y} r={1.7} fill={C.barline} />
         );
-        (score.repeats || []).forEach((r) => {
+        drawnRepeats.forEach((r) => {
           const si = lineCols.indexOf(r.start);
           if (si !== -1) {
             const x0 = colXs[si];

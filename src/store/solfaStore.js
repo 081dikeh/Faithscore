@@ -611,7 +611,8 @@ export const useSolfaStore = create((set,get) => ({
       let repeats = sc.repeats || []
       if (nums[0] === 1 && !repeats.some(r => r.end === end)) {
         const prev = repeats.filter(r => r.end < startMeasure).reduce((m, r) => Math.max(m, r.end + 1), 0)
-        repeats = [...repeats, { id: uid(), start: Math.min(prev, startMeasure), end }]
+        // implicit: only drives playback — no repeat signs are drawn, the barlines stay as they are
+        repeats = [...repeats, { id: uid(), start: Math.min(prev, startMeasure), end, implicit: true }]
       }
       return { score: { ...sc, repeats, voltas: [...(sc.voltas||[]), { id: uid(), startMeasure, endMeasure: end, numbers: nums, label: label || null }] } }
     })
