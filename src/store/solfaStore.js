@@ -576,10 +576,13 @@ export const useSolfaStore = create((set,get) => ({
     }))
   },
 
-  addNavigationMarker: (type, atMeasure, label, verseNumber=null) => {
+  // beatIdx / eventIdx / partId: the NOTE the marker sits on (Segno, Coda, D.S., D.C.,
+  // Fine, To Coda ... act at that note, not at the bar). Omit them for a bar-level marker.
+  addNavigationMarker: (type, atMeasure, label, verseNumber=null, beatIdx=null, eventIdx=null, partId=null) => {
     if (atMeasure==null) return
     get()._snapshot()
-    set(s => ({ score: { ...s.score, navigationMarkers: [...(s.score.navigationMarkers||[]), { id: uid(), type, atMeasure, label, verseNumber }] } }))
+    const onNote = beatIdx != null
+    set(s => ({ score: { ...s.score, navigationMarkers: [...(s.score.navigationMarkers||[]), { id: uid(), type, atMeasure, label, verseNumber, ...(onNote ? { beatIdx, eventIdx: eventIdx || 0, partId } : {}) }] } }))
   },
 
   // ── Repeats & numbered endings (1st / 2nd time brackets) ──────────────────

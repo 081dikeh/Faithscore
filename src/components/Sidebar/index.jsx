@@ -151,7 +151,8 @@ function PalettesTab({ search }) {
   const handleText = (label) => {
     const t = pointTarget()
     if (!t) return
-    addStaffText(selectedPartId, t.measureIndex, t.beat, label)
+    // onNote: a text placed on a selected note belongs to THAT note (Segno, D.S., D.C., Fine ... jump there)
+    addStaffText(selectedPartId, t.measureIndex, t.beat, label, !!selectedNoteId)
   }
 
   const handleBarline = (type) => {
@@ -290,6 +291,8 @@ function PalettesTab({ search }) {
       title:'Text', items:[
         { symbol:'𝄐', label:'Fermata',    onClick:()=>handleArticulation('fermata'), disabled:!hasSelection, active:isArtActive('fermata') },
         { symbol:'D.C', label:'D.C.',     onClick:()=>handleText('D.C.'), disabled:!hasSelection },
+        { symbol:'D.C.al Fine', label:'D.C. al Fine', onClick:()=>handleText('D.C. al Fine'), disabled:!hasSelection },
+        { symbol:'D.C.al Coda', label:'D.C. al Coda', onClick:()=>handleText('D.C. al Coda'), disabled:!hasSelection },
         { symbol:'D.S', label:'D.S.',     onClick:()=>handleText('D.S.'), disabled:!hasSelection },
         { symbol:'𝄋', label:'Segno',     onClick:()=>handleText('𝄋'),   disabled:!hasSelection },
         { symbol:'𝄌', label:'Coda',      onClick:()=>handleText('𝄌'),   disabled:!hasSelection },

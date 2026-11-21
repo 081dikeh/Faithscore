@@ -5,7 +5,7 @@
 
 import { DURATION_BEATS, noteDuration, measureCapacity, normalizeMeasure, PAGE_SIZES_MM, useScoreStore } from '../store/scoreStore.js'
 import { dialog } from './dialog.js'
-import { buildMeasureOrder, expandRepeats, effectiveRepeats, markersFromStaffTexts } from './segnoNavigation.js'
+import { buildPlaySegments, expandRepeats, effectiveRepeats, markersFromStaffTexts } from './segnoNavigation.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function xml(tag, attrs, ...children) {
@@ -525,14 +525,27 @@ export function exportMIDI(score) {
 
   // Play order: Segno / D.S. jumps, then repeats and 1st/2nd endings unrolled.
   const playOrder = expandRepeats(
-    buildMeasureOrder(markersFromStaffTexts(score.staffTexts), numM),
+    buildPlaySegments(markersFromStaffTexts(score.staffTexts, (partId, mi, beat) => {
+      const part = parts.find(p => p.id === partId) || parts[0]
+      let cursor = 0
+      for (const n of (part?.measures[mi]?.notes || []).filter(n => !n.chordWith)) {
+        const d = noteDuration(n)
+        if (Math.abs(cursor - beat) < 1e-6) return cursor + d
+        cursor += d
+      }
+      return null
+    }), numM),
     effectiveRepeats(score),
     score.voltas,
   )
 
   let globalTick = 0
-  for (const mi of playOrder) {
-    const beats = measureCapacity(parts[0]?.measures[mi]?.timeSignature)
+  for (const entry of playOrder) {
+    const mi = entry.m
+    const capacity = measureCapacity(parts[0]?.measures[mi]?.timeSignature)
+    // slice of the bar to play (Segno/Coda note ... D.S./D.C./Fine/To Coda note)
+    const fromBeat = entry.from || 0
+    const beats = Math.min(capacity, entry.lastEnd) - fromBeat
 
     for (const part of parts) {
       const m = part.measures[mi]
@@ -544,10 +557,11 @@ export function exportMIDI(score) {
       for (const note of m.notes.filter(n => !n.chordWith)) {
         const durBeats = noteDuration(note)
         const durTicks = Math.round(durBeats * TPQ)
+        if (beatCursor < fromBeat - 1e-6 || beatCursor > entry.lastStart + 1e-6) { beatCursor += durBeats; continue }
 
         if (!note.isRest && note.pitch) {
           const midi = pitchToMidi(note.pitch)
-          const tick = globalTick + Math.round(beatCursor * TPQ)
+          const tick = globalTick + Math.round((beatCursor - fromBeat) * TPQ)
           events.push({ tick, data: [NOTE_ON | ch, midi, 80] })
           events.push({ tick: tick + durTicks - 10, data: [NOTE_OFF | ch, midi, 0] })
         }

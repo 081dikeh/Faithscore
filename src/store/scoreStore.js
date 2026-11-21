@@ -2002,11 +2002,11 @@ export const useScoreStore = create((set, get) => ({
   },
 
   // ── Staff text ────────────────────────────────────────────────────────────
-  addStaffText: (partId, measureIndex, beat, text) => {
+  addStaffText: (partId, measureIndex, beat, text, onNote = false) => {
     get()._snapshot()
     const id = crypto.randomUUID()
     set(s => ({ score: { ...s.score,
-      staffTexts: [...(s.score.staffTexts||[]), { id, partId, measureIndex, beat, text }]
+      staffTexts: [...(s.score.staffTexts||[]), { id, partId, measureIndex, beat, text, onNote }]
     }}))
     saveToStorage(get().score)
   },

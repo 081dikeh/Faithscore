@@ -5,7 +5,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import * as Tone from 'tone'
 import { useScoreStore, noteDuration, measureCapacity } from '../store/scoreStore'
-import { buildMeasureOrder, expandRepeats, effectiveRepeats, markersFromStaffTexts } from '../utils/segnoNavigation'
+import { buildPlaySegments, expandRepeats, effectiveRepeats, markersFromStaffTexts } from '../utils/segnoNavigation'
 
 // ── SAMPLER CONFIG ────────────────────────────────────────────────────────────
 const SAMPLE_BASE_URL = 'https://tonejs.github.io/audio/salamander/'
@@ -150,23 +150,42 @@ function buildSchedule(score, tempo) {
   // Dal Segno navigation: the order measures are actually played in. For a
   // score with no Segno/D.S. markers this is just 0..numMeasures-1, so
   // behaviour is unchanged.
+  // End beat of the note that starts at `beat` in a part's bar (for markers placed on a note)
+  function staffNoteEndAt(partId, measureIndex, beat) {
+    const part = score.parts.find(p => p.id === partId) || score.parts[0]
+    let cursor = 0
+    for (const n of (part?.measures[measureIndex]?.notes || []).filter(n => !n.chordWith)) {
+      const d = noteDuration(n)
+      if (Math.abs(cursor - beat) < 1e-6) return cursor + d
+      cursor += d
+    }
+    return null
+  }
+
   const playOrder = expandRepeats(
-    buildMeasureOrder(markersFromStaffTexts(score.staffTexts), numMeasures),
+    buildPlaySegments(markersFromStaffTexts(score.staffTexts, staffNoteEndAt), numMeasures),
     effectiveRepeats(score),
     score.voltas,
   )
 
   for (let k = 0; k < playOrder.length; k++) {
-    const mIdx = playOrder[k]
+    // Each entry is a bar plus the slice of it to play: from a Segno/Coda note,
+    // and/or up to (and including) the note a D.S./D.C./Fine/To Coda sits on.
+    const entry = playOrder[k]
+    const mIdx = entry.m
+    const prevEntry = playOrder[k - 1]
+    const fromBeat = entry.from || 0
     // A jump (D.S., To Coda) breaks continuity — a note sustaining out of
     // the previous measure must not carry into the measure we jump to.
-    if (k > 0 && mIdx !== playOrder[k - 1] + 1) openTieByPart = {}
+    const continuous = prevEntry && prevEntry.m + 1 === mIdx && prevEntry.lastEnd === Infinity && fromBeat === 0
+    if (k > 0 && !continuous) openTieByPart = {}
 
     const refM     = score.parts[0]?.measures[mIdx]
     const maxBeats = measureCapacity(refM?.timeSignature)
+    const endBeat  = Math.min(maxBeats, entry.lastEnd)   // where the played slice of the bar ends
 
-    beatMap.push({ measureIndex: mIdx, startSec: globalSec, beats: maxBeats })
-    segments.push({ playStartSec: globalSec, scoreStartBeat: measureBeatStart[mIdx] ?? 0, beats: maxBeats })
+    beatMap.push({ measureIndex: mIdx, startSec: globalSec, beats: endBeat - fromBeat })
+    segments.push({ playStartSec: globalSec, scoreStartBeat: (measureBeatStart[mIdx] ?? 0) + fromBeat, beats: endBeat - fromBeat })
 
     for (const part of score.parts) {
       const measure = part.measures[mIdx]
@@ -179,6 +198,11 @@ function buildSchedule(score, tempo) {
       let beatCursor = 0
       for (const note of measure.notes.filter(n => !n.chordWith)) {
         const durBeats = noteDuration(note)
+        // outside the slice being played (before the Segno note / after the D.S. note)
+        if (beatCursor < fromBeat - 1e-6 || beatCursor > entry.lastStart + 1e-6) {
+          beatCursor += durBeats
+          continue
+        }
         const companions = chordMap[note.id] || []
         const openTie = openTieByPart[part.id]
 
@@ -206,7 +230,7 @@ function buildSchedule(score, tempo) {
             const { gate, holdMult, velocity } = gateAndVelocity(note, gb, part.id)
             const fullDurSec = durBeats * secPerBeat * holdMult
             events.push({
-              time:         globalSec + beatCursor * secPerBeat,
+              time:         globalSec + (beatCursor - fromBeat) * secPerBeat,
               dur:          Math.max(0.06, fullDurSec * gate * (holdMult > 1 ? 1 : 0.88)),
               notes:        companionTones,
               velocity,
@@ -229,7 +253,7 @@ function buildSchedule(score, tempo) {
 
             const fullDurSec = durBeats * secPerBeat * holdMult
             const scheduled = {
-              time:         globalSec + beatCursor * secPerBeat,
+              time:         globalSec + (beatCursor - fromBeat) * secPerBeat,
               dur:          Math.max(0.06, fullDurSec * gate * (holdMult > 1 ? 1 : 0.88)),
               notes:        toneNotes,
               velocity,
@@ -250,7 +274,7 @@ function buildSchedule(score, tempo) {
         beatCursor += durBeats
       }
     }
-    globalSec += maxBeats * secPerBeat
+    globalSec += (endBeat - fromBeat) * secPerBeat
   }
 
   return { events, totalSecs: globalSec, tempo: bpm, beatMap, segments }

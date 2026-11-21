@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
-import { buildMeasureOrder, expandRepeats, markersFromNavigationMarkers } from './segnoNavigation'
+import { buildPlaySegments, expandRepeats, markersFromNavigationMarkers } from './segnoNavigation'
 import { PAGE_SIZES_MM } from '../store/scoreStore'
 import { dialog } from './dialog.js'
 
@@ -145,15 +145,19 @@ function buildEventList(score, tempo) {
 
   // Play order: Segno/D.S. jumps, then repeats and 1st/2nd endings unrolled.
   const playOrder = expandRepeats(
-    buildMeasureOrder(markersFromNavigationMarkers(score.navigationMarkers), numM),
+    buildPlaySegments(markersFromNavigationMarkers(score.navigationMarkers, score), numM),
     score.repeats,
     score.voltas,
   )
 
-  for (const mIdx of playOrder) {
+  for (const entry of playOrder) {
+    const mIdx = entry.m
     const refM     = migrateMeasure(parts[0]?.measures[mIdx])
     if (refM?.kind === 'text') continue   // instruction bar: no time
     const numBeats = refM?.timeSignature?.beats || 4
+    // slice of the bar to play (Segno/Coda note … D.S./D.C./Fine/To Coda note)
+    const fromQ = entry.from || 0
+    const endQ  = Math.min(numBeats * 4, entry.lastEnd)
 
     for (const part of parts) {
       const measure = migrateMeasure(part.measures[mIdx])
@@ -174,13 +178,14 @@ function buildEventList(score, tempo) {
       while (i < flat.length) {
         const ev = flat[i]
         if (ev.type === 'note' && ev.syllable) {
+          if (ev.qAbs < fromQ - 1e-6 || ev.qAbs > entry.lastStart + 1e-6) { i++; continue }
           let totalQ = ev.duration
           let j = i + 1
           while (j < flat.length && flat[j].type === 'sustain') {
             totalQ += flat[j].duration
             j++
           }
-          const startSec = globalSec + ev.qAbs * secPerQUnit
+          const startSec = globalSec + (ev.qAbs - fromQ) * secPerQUnit
           const durSec   = Math.max(0.08, totalQ * secPerQUnit - 0.025)
           const midi     = solfaToMidiForVoice(ev.syllable, ev.octave || 0, resolveKeyAt(score, mIdx, ev.beatIdx, ev.eventIdx), part.id)
           const panPos   = STEREO_PAN[vtype] ?? 0
@@ -192,7 +197,7 @@ function buildEventList(score, tempo) {
       }
     }
 
-    globalSec += numBeats * secPerBeat
+    globalSec += (endQ - fromQ) * secPerQUnit
   }
 
   return { events, totalSecs: globalSec }

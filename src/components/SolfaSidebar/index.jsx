@@ -171,12 +171,18 @@ function PalettesTab({ search }) {
   const handleDynamic   = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'dynamic')
   const handleExpr      = (label) => hasSelection && addMark(selectedPartId, selectedMeasureIdx, selectedBeatIdx, label, 'text')
 
-  // Navigation markers attach to the selected BAR (no note needed) and drive
-  // playback order — see utils/segnoNavigation.js.
+  // Navigation markers drive playback order (see utils/segnoNavigation.js). With a
+  // NOTE selected the marker belongs to that note: Segno/Coda resume at it, and
+  // D.S./D.C./Fine/To Coda stop right after it. With only a bar selected it is
+  // bar-level: Segno/Coda at the start of the bar, the others at its end.
   const addNav = (type, label) => {
     if (!hasBarSelection) return
-    const exists = (score.navigationMarkers || []).some(m => m.type === type && m.atMeasure === selectedMeasureIdx)
-    if (!exists) addNavigationMarker(type, selectedMeasureIdx, label)
+    const onNote = hasSelection && selectedBeatIdx != null
+    const bi = onNote ? selectedBeatIdx : null
+    const ei = onNote ? (selectedEventIdx || 0) : null
+    const exists = (score.navigationMarkers || []).some(m => m.type === type && m.atMeasure === selectedMeasureIdx
+      && (m.beatIdx ?? null) === bi && (m.eventIdx ?? null) === (bi == null ? null : ei))
+    if (!exists) addNavigationMarker(type, selectedMeasureIdx, label, null, bi, ei, onNote ? selectedPartId : null)
   }
   const navItem = (type, label, symbol, markerLabel) => ({
     symbol, label, disabled: !hasBarSelection, disabledHint: 'Select a bar first',
@@ -193,6 +199,8 @@ function PalettesTab({ search }) {
         navItem('ds-al-fine', 'D.S. al Fine', 'D.S.'),
         navItem('ds-al-coda', 'D.S. al Coda', 'D.S.'),
         navItem('dc',         'D.C.',         'D.C.'),
+        navItem('dc-al-fine', 'D.C. al Fine', 'D.C. al Fine'),
+        navItem('dc-al-coda', 'D.C. al Coda', 'D.C. al Coda'),
         navItem('fine',       'Fine',         'Fine'),
       ],
     },
@@ -214,7 +222,7 @@ function PalettesTab({ search }) {
     {
       title:'Time Signature', items: TIME_SIGS.map(t => ({
         symbol:t.label, label:t.label, active: currentTS===t.label,
-        disabled: !hasBarSelection, disabledHint: 'Select a bar first',
+        disabled: !hasBarSelection, disabledHint: 'Select a note (or a bar) first',
         onClick:()=>hasBarSelection && changeTimeSigAt(selectedMeasureIdx, t.beats, t.beatType),
       })),
     },
@@ -599,6 +607,8 @@ const MARKER_TYPES = [
   { id:'repeat-to-refrain',  label:'D.S. → Refrain',            needsLabel:false },
   { id:'fine',               label:'Fine',                      needsLabel:false },
   { id:'dc',                 label:'D.C.',                      needsLabel:false },
+  { id:'dc-al-fine',         label:'D.C. al Fine',              needsLabel:false },
+  { id:'dc-al-coda',         label:'D.C. al Coda',              needsLabel:false },
   { id:'segno',              label:'Segno',                     needsLabel:false },
   { id:'ds',                 label:'D.S.',                      needsLabel:false },
   { id:'ds-al-fine',         label:'D.S. al Fine',              needsLabel:false },
@@ -615,18 +625,23 @@ function MarkersTab() {
   const [markerType, setMarkerType] = useState('verse-label')
   const [labelText,  setLabelText ] = useState('1.')
 
+  const selectedBeatIdx  = useSolfaStore(s => s.selectedBeatIdx)
+  const selectedEventIdx = useSolfaStore(s => s.selectedEventIdx)
+  const selectedPartId   = useSolfaStore(s => s.selectedPartId)
+  // a selected note makes the marker note-level; otherwise it stays bar-level
+  const notePos = selectedBeatIdx != null ? [selectedBeatIdx, selectedEventIdx || 0, selectedPartId] : []
   const markers = score.navigationMarkers || []
   const typeInfo = MARKER_TYPES.find(t => t.id===markerType)
 
   const handleAdd = () => {
     if (selectedMeasureIdx === null) return
     const defaultLabels = {
-      'repeat-to-refrain':'D.S. → Refrain', fine:'Fine', dc:'D.C.',
+      'repeat-to-refrain':'D.S. → Refrain', fine:'Fine', dc:'D.C.', 'dc-al-fine':'D.C. al Fine', 'dc-al-coda':'D.C. al Coda',
       segno:'𝄋', ds:'D.S.', 'ds-al-fine':'D.S. al Fine', 'ds-al-coda':'D.S. al Coda',
       'to-coda':'To Coda', coda:'𝄌',
     }
     const label = typeInfo.needsLabel ? (labelText || '1.') : defaultLabels[markerType]
-    addNavigationMarker(markerType, selectedMeasureIdx, label)
+    addNavigationMarker(markerType, selectedMeasureIdx, label, null, ...notePos)
   }
 
   return (
@@ -636,7 +651,7 @@ function MarkersTab() {
       </div>
       <div style={{ fontSize:10.5, color: selectedMeasureIdx===null ? '#9a5b13' : '#1d4ed8',
         marginBottom:8, lineHeight:1.4 }}>
-        {selectedMeasureIdx === null ? 'Select a bar on the score first.' : `Will attach to bar ${selectedMeasureIdx+1}.`}
+        {selectedMeasureIdx === null ? 'Select a bar on the score first.' : (selectedBeatIdx != null ? `Will attach to the selected note (bar ${selectedMeasureIdx+1}).` : `Will attach to bar ${selectedMeasureIdx+1}. Select a note to attach it to that note instead.`)}
       </div>
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6, marginBottom:8 }}>
         {[['segno','Segno'], ['coda','Coda'], ['ds-al-coda','D.S. al Coda'], ['to-coda','To Coda']].map(([id, name]) => (
@@ -644,7 +659,7 @@ function MarkersTab() {
             disabled={selectedMeasureIdx === null}
             onClick={() => {
               const labels = { segno:'𝄋', coda:'𝄌', 'ds-al-coda':'D.S. al Coda', 'to-coda':'To Coda' }
-              addNavigationMarker(id, selectedMeasureIdx, labels[id])
+              addNavigationMarker(id, selectedMeasureIdx, labels[id], null, ...notePos)
             }}
             style={{
               fontSize:11.5, fontWeight:600, padding:'6px 0', borderRadius:6,

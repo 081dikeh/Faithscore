@@ -1,84 +1,93 @@
-// ── Dal Segno navigation ──────────────────────────────────────────────────
-// Turns a flat list of navigation markers (segno, D.S./D.S. al Fine/D.S. al
-// Coda, To Coda, Coda, Fine) into the actual measure-by-measure PLAYBACK
-// ORDER — the sequence of measure indices to play, in order, including the
-// repeated Segno→D.S. span.
+// ── Dal Segno / Da Capo navigation ────────────────────────────────────────
+// Turns the navigation markers (Segno, D.S., D.S. al Fine, D.S. al Coda, D.C.,
+// D.C. al Fine, D.C. al Coda, To Coda, Coda, Fine) into the actual PLAYBACK
+// ORDER, computed once as a plain finite array — a jump marker is a label, not
+// something with state, so "the jump happens once" is structural.
 //
-// This is computed ONCE, as a plain finite array, rather than as runtime
-// jump/loop logic inside the scheduler. That's deliberate: a jump marker
-// is a label, not something with its own duration or state, and resolving
-// the whole path up front — rather than branching on it while scheduling
-// audio events — is what makes "the jump happens once" a structural
-// guarantee instead of something a loop-guard has to enforce. There is no
-// code path here that can revisit the same instruction twice, because the
-// result is just an array; nothing about building it is cyclic.
+// Markers belong to a NOTE, not a bar:
+//   • Segno / Coda      — playback resumes AT that note (the note itself plays).
+//   • D.S. / D.C. / Fine / To Coda — playback stops AFTER that note (its whole
+//     length, sustains included) and jumps; the rest of the bar is not played.
+// A marker placed on a bar with no note chosen behaves as before: Segno/Coda
+// at the start of the bar, the others at the end of it.
 //
-// markers: [{ type, measureIndex }], where type is one of:
-//   'segno' | 'ds' | 'ds-al-fine' | 'ds-al-coda' | 'fine' | 'to-coda' | 'coda'
-// totalMeasures: the piece's total measure count (for the no-markers /
-// plain-D.S. fallback cases, where playback simply runs to the end).
+// markers: [{ type, measureIndex, from?, lastStart?, lastEnd? }]
+//   from      — start offset of the note inside its bar (Segno / Coda)
+//   lastStart — start offset of the note playback stops after
+//   lastEnd   — end offset of that note
+//   (offsets use the calling app's unit; null/undefined = bar level)
 //
-// Returns: an array of measure indices (0-based), in playback order. May
-// repeat indices (the Segno→D.S. span plays twice). If there's no segno/
-// D.S. pair at all, returns the plain 0..totalMeasures-1 — i.e. this is a
-// no-op for every score that doesn't use these markers.
-export function buildMeasureOrder(markers, totalMeasures) {
-  const byType = (t) => markers.filter((m) => m.type === t).sort((a, b) => a.measureIndex - b.measureIndex)
+// Returns play ENTRIES in order: { m, from, lastStart, lastEnd } — measure
+// index plus the slice of that bar to play (notes whose start offset lies in
+// [from, lastStart]; the bar's sounding length ends at lastEnd). A whole bar is
+// { from: 0, lastStart: Infinity, lastEnd: Infinity }.
+const INF = Infinity
+const wholeBar = (m) => ({ m, from: 0, lastStart: INF, lastEnd: INF })
 
+export function buildPlaySegments(markers, totalMeasures) {
+  const total = Math.max(0, totalMeasures)
+  const q = (mk) => mk.from ?? mk.lastStart ?? 0
+  const pos = (a, b) => a.measureIndex - b.measureIndex || q(a) - q(b)
+  const byType = (...ts) => markers.filter((m) => ts.includes(m.type)).sort(pos)
+  const startPt = (mk) => ({ m: mk.measureIndex, from: mk.from ?? 0 })
+  const stopPt = (mk) => ({ m: mk.measureIndex, lastStart: mk.lastStart ?? INF, lastEnd: mk.lastEnd ?? INF })
+
+  const linear = () => Array.from({ length: total }, (_, m) => wholeBar(m))
+
+  // slice of the score from point `a` (inclusive) to stop point `b` (null = the end)
+  const span = (a, b) => {
+    const out = []
+    const endM = b ? b.m : total - 1
+    for (let m = a.m; m <= endM && m < total; m++) {
+      out.push({
+        m,
+        from: m === a.m ? a.from || 0 : 0,
+        lastStart: b && m === b.m ? b.lastStart : INF,
+        lastEnd: b && m === b.m ? b.lastEnd : INF,
+      })
+    }
+    return out
+  }
+
+  // The first D.S./D.C. in score order drives the one jump.
+  const jump = byType('ds', 'ds-al-fine', 'ds-al-coda', 'dc', 'dc-al-fine', 'dc-al-coda')[0]
+  if (!jump) return linear()
+  const isDC = jump.type.startsWith('dc')
   const segno = byType('segno')[0]
-  // The first D.S.-family instruction encountered, in score order — there's
-  // normally just one, but if a sheet writes it more than once, only the
-  // first drives the jump; a second one found later (e.g. inside what's
-  // now the second pass) would already be unreachable in the resulting
-  // order, which is correct — "unless the sheet writes the instruction
-  // again" still means only ONE jump is ever resolved per pass through
-  // this function, matching "the jump happens once."
-  const dsCandidates = [...byType('ds'), ...byType('ds-al-fine'), ...byType('ds-al-coda')]
-    .sort((a, b) => a.measureIndex - b.measureIndex)
-  const ds = dsCandidates[0]
+  if (!isDC && !segno) return linear()
 
-  const linear = () => Array.from({ length: Math.max(0, totalMeasures) }, (_, i) => i)
+  const origin = isDC ? { m: 0, from: 0 } : startPt(segno)
+  const originRef = isDC ? { measureIndex: 0, from: 0 } : segno
+  const atOrAfter = (mk, ref) => pos(mk, ref) >= 0
 
-  if (!segno || !ds) return linear()
+  // First pass: from the top through the jump note itself. "To Coda" is
+  // ordinary music on this pass — only the repeat pass looks at Coda markers.
+  const out = span({ m: 0, from: 0 }, stopPt(jump))
+  const kind = jump.type.replace(/^d[sc]/, '') // '' | '-al-fine' | '-al-coda'
 
-  const order = []
-  // First pass: straight through from the top, up to and including the
-  // D.S. instruction's own measure. This naturally already contains the
-  // segno→D.S. span once (segno precedes the D.S. marker in the score),
-  // and naturally plays through any "To Coda" measure as ordinary music
-  // on this pass — the jump-to-coda behavior is only ever applied below,
-  // for the SECOND pass, which is what "ignore the coda on the first
-  // pass" means here: there's no special-case needed for it, because nothing
-  // on the first pass ever looks at the Coda markers at all.
-  for (let i = 0; i <= ds.measureIndex && i < totalMeasures; i++) order.push(i)
-
-  if (ds.type === 'ds') {
-    // Plain Dal Segno: back to the segno, then straight through to the end.
-    for (let i = segno.measureIndex; i < totalMeasures; i++) order.push(i)
-    return order
+  if (kind === '') {
+    out.push(...span(origin, null))
+  } else if (kind === '-al-fine') {
+    const fine = byType('fine').find((f) => atOrAfter(f, originRef))
+    out.push(...span(origin, fine ? stopPt(fine) : null))
+  } else {
+    const toCoda = byType('to-coda').find((t) => atOrAfter(t, originRef))
+    const coda = byType('coda')[0]
+    if (!toCoda || !coda) {
+      // Can't resolve the coda jump without both markers: plain repeat instead.
+      out.push(...span(origin, null))
+    } else {
+      out.push(...span(origin, stopPt(toCoda)))
+      const fineInCoda = byType('fine').find((f) => atOrAfter(f, coda))
+      out.push(...span(startPt(coda), fineInCoda ? stopPt(fineInCoda) : null))
+    }
   }
+  return out
+}
 
-  if (ds.type === 'ds-al-fine') {
-    const fine = byType('fine').find((m) => m.measureIndex >= segno.measureIndex) || { measureIndex: totalMeasures - 1 }
-    for (let i = segno.measureIndex; i <= fine.measureIndex && i < totalMeasures; i++) order.push(i)
-    return order
-  }
-
-  // ds-al-coda
-  const toCoda = byType('to-coda').find((m) => m.measureIndex >= segno.measureIndex)
-  const coda = byType('coda')[0]
-  if (!toCoda || !coda) {
-    // Can't resolve the coda jump without both markers placed — fall back
-    // to a plain Dal Segno (repeat from the segno to the end) rather than
-    // silently dropping the repeat entirely.
-    for (let i = segno.measureIndex; i < totalMeasures; i++) order.push(i)
-    return order
-  }
-  for (let i = segno.measureIndex; i <= toCoda.measureIndex && i < totalMeasures; i++) order.push(i)
-  const fineInCoda = byType('fine').find((m) => m.measureIndex >= coda.measureIndex)
-  const codaEnd = fineInCoda ? fineInCoda.measureIndex : totalMeasures - 1
-  for (let i = coda.measureIndex; i <= codaEnd && i < totalMeasures; i++) order.push(i)
-  return order
+// Plain measure indices of the order (kept for callers that don't need slices).
+export function buildMeasureOrder(markers, totalMeasures) {
+  return buildPlaySegments(markers, totalMeasures).map((e) => e.m)
 }
 
 // ── Repeats & numbered endings (volta brackets) ───────────────────────────
@@ -93,6 +102,8 @@ export function buildMeasureOrder(markers, totalMeasures) {
 // returns a new, finite order — repeats are only taken on the first
 // traversal; once finished, a later pass (after a D.S.) plays the LAST ending.
 export function expandRepeats(order, repeats, voltas) {
+  // `order` holds measure indices or play entries ({ m, from, lastStart, lastEnd })
+  const mOf = (e) => (typeof e === 'number' ? e : e.m)
   const reps = [...(repeats || [])].sort((a, b) => a.start - b.start)
   const vs = [...(voltas || [])].sort((a, b) => a.startMeasure - b.startMeasure)
   if (!reps.length && !vs.length) return order
@@ -113,7 +124,7 @@ export function expandRepeats(order, repeats, voltas) {
   let i = 0
   let guard = 0
   while (i < order.length && guard++ < LIMIT) {
-    const m = order[i]
+    const m = mOf(order[i])
     let skip = null
     for (const x of info) {
       const p = pass.get(x.r.id)
@@ -123,10 +134,10 @@ export function expandRepeats(order, repeats, voltas) {
       if (hit) { skip = hit; break }
     }
     if (skip) {
-      while (i < order.length && order[i] >= skip.startMeasure && order[i] <= skip.endMeasure) i++
+      while (i < order.length && mOf(order[i]) >= skip.startMeasure && mOf(order[i]) <= skip.endMeasure) i++
       continue
     }
-    out.push(m)
+    out.push(order[i])   // keep the entry (bar + slice), not just its index
     // :| at the repeat's end — and at the end of every ending except the last
     // (a 2nd ending that has a 3rd after it also returns to the start).
     const x = info.find(
@@ -135,7 +146,7 @@ export function expandRepeats(order, repeats, voltas) {
     if (x && pass.get(x.r.id) < x.top) {
       pass.set(x.r.id, pass.get(x.r.id) + 1)
       let j = i
-      while (j >= 0 && order[j] !== x.r.start) j--
+      while (j >= 0 && mOf(order[j]) !== x.r.start) j--
       if (j >= 0) { i = j; continue }
     }
     i++
@@ -186,27 +197,69 @@ const STAFF_TEXT_MARKERS = {
   'D.S.': 'ds',
   'D.S. al Fine': 'ds-al-fine',
   'D.S. al Coda': 'ds-al-coda',
+  'D.C.': 'dc',
+  'D.C. al Fine': 'dc-al-fine',
+  'D.C. al Coda': 'dc-al-coda',
   'To Coda': 'to-coda',
   '𝄌': 'coda',
   'Coda': 'coda',
   'Fine': 'fine',
 }
 
-export function markersFromStaffTexts(staffTexts) {
+// noteEndAt(partId, measureIndex, beat) → end beat of the note starting at `beat`
+// (supplied by the caller, which knows note durations); optional.
+export function markersFromStaffTexts(staffTexts, noteEndAt) {
   return (staffTexts || [])
     .map((t) => {
       const type = STAFF_TEXT_MARKERS[t.text]
-      return type ? { type, measureIndex: t.measureIndex } : null
+      if (!type) return null
+      const mk = { type, measureIndex: t.measureIndex }
+      // Only a text placed ON A NOTE is note-level; one placed on a bar is bar-level.
+      if (t.onNote && typeof t.beat === 'number') {
+        mk.from = t.beat
+        mk.lastStart = t.beat
+        const end = noteEndAt ? noteEndAt(t.partId, t.measureIndex, t.beat) : null
+        mk.lastEnd = typeof end === 'number' ? end : t.beat + 1e-3
+      }
+      return mk
     })
     .filter(Boolean)
 }
 
-// ── Solfa app: markers live as score.navigationMarkers (a typed list) —
-// just renaming the field (atMeasure -> measureIndex) to the shape
-// buildMeasureOrder expects.
-export function markersFromNavigationMarkers(navigationMarkers) {
-  const KNOWN = new Set(['segno', 'ds', 'ds-al-fine', 'ds-al-coda', 'to-coda', 'coda', 'fine'])
+// ── Solfa app: markers live as score.navigationMarkers (a typed list). A marker
+// carries the note it was placed on (partId, beatIdx, eventIdx); its offset inside
+// the bar is worked out here from that voice's own events, in quarter-units
+// (1 beat = 4 units, the same unit the Solfa scheduler uses). A note's end
+// includes the sustain (-) events that continue it.
+export function solfaNoteSpan(score, partId, measureIdx, beatIdx, eventIdx) {
+  const part = (score?.parts || []).find((p) => p.id === partId) || score?.parts?.[0]
+  const m = part?.measures?.[measureIdx]
+  if (!m?.beats) return null
+  const flat = []
+  let q = 0
+  m.beats.forEach((beat, bi) => {
+    ;(beat.events || []).forEach((ev, ei) => {
+      flat.push({ q, end: q + (ev.duration || 0), type: ev.type, bi, ei })
+      q += ev.duration || 0
+    })
+  })
+  const idx = flat.findIndex((f) => f.bi === beatIdx && f.ei === (eventIdx || 0))
+  if (idx < 0) return null
+  let end = flat[idx].end
+  for (let j = idx + 1; j < flat.length && flat[j].type === 'sustain'; j++) end = flat[j].end
+  return { start: flat[idx].q, end }
+}
+
+export function markersFromNavigationMarkers(navigationMarkers, score) {
+  const KNOWN = new Set(['segno', 'ds', 'ds-al-fine', 'ds-al-coda', 'dc', 'dc-al-fine', 'dc-al-coda', 'to-coda', 'coda', 'fine'])
   return (navigationMarkers || [])
     .filter((m) => KNOWN.has(m.type))
-    .map((m) => ({ type: m.type, measureIndex: m.atMeasure }))
+    .map((m) => {
+      const mk = { type: m.type, measureIndex: m.atMeasure }
+      if (m.beatIdx != null && score) {
+        const span = solfaNoteSpan(score, m.partId, m.atMeasure, m.beatIdx, m.eventIdx)
+        if (span) { mk.from = span.start; mk.lastStart = span.start; mk.lastEnd = span.end }
+      }
+      return mk
+    })
 }

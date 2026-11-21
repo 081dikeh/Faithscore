@@ -1658,7 +1658,12 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
       (score.navigationMarkers || []).forEach((mk) => {
         const ci = lineCols.indexOf(mk.atMeasure);
         if (ci === -1) return;
-        const mx = colXs[ci] + 4;
+        // A marker placed on a note sits over that note; one placed on a bar sits at its start.
+        const notePos =
+          mk.beatIdx != null
+            ? eventPosMap.current[`${mk.partId || parts[0]?.id}:${mk.atMeasure}:${mk.beatIdx}:${mk.eventIdx || 0}`]
+            : null;
+        const mx = notePos ? notePos.cx - 8 : colXs[ci] + 4;
         const isVerseTag = mk.type === "verse-label";
 
         // Segno / Coda are drawn as vector symbols above the system, not as
@@ -1706,7 +1711,8 @@ const SolfaRenderer = forwardRef(function SolfaRenderer(
         elems.push(
           <text
             key={`navmk-${mk.id}`}
-            x={mx}
+            x={notePos ? notePos.cx : mx}
+            textAnchor={notePos ? "middle" : "start"}
             y={isVerseTag ? lineTop - 3 : lineBottom + 13}
             fontFamily={FONT}
             fontSize={10.5}

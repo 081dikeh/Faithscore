@@ -31,7 +31,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import * as Tone from 'tone'
 import { useSolfaStore, solfaToMidiForVoice, migrateMeasure, resolveKeyAt } from '../store/solfaStore'
-import { buildMeasureOrder, expandRepeats, markersFromNavigationMarkers } from '../utils/segnoNavigation'
+import { buildPlaySegments, expandRepeats, markersFromNavigationMarkers } from '../utils/segnoNavigation'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SAMPLE MAPS
@@ -200,7 +200,7 @@ function buildSchedule(score, tempo, partMutes) {
   // Segno/D.S. markers this is just 0..numM-1, so behaviour is unchanged.
   // then repeats and 1st/2nd endings are unrolled on top of that order.
   const playOrder = expandRepeats(
-    buildMeasureOrder(markersFromNavigationMarkers(score.navigationMarkers), numM),
+    buildPlaySegments(markersFromNavigationMarkers(score.navigationMarkers, score), numM),
     score.repeats,
     score.voltas,
   )
@@ -219,17 +219,28 @@ function buildSchedule(score, tempo, partMutes) {
   const openNoteByPart = {}
 
   for (let k = 0; k < playOrder.length; k++) {
-    const mIdx = playOrder[k]
+    // Each entry is a bar plus the slice of it to play: from a Segno/Coda note,
+    // and/or up to (and including) the note a D.S./D.C./Fine/To Coda sits on.
+    const entry = playOrder[k]
+    const mIdx = entry.m
+    const prevEntry = playOrder[k - 1]
+    const fromQ = entry.from || 0
     // A jump (D.S., To Coda) breaks continuity — a sustain running out of
     // the previous measure must not extend into the measure jumped to.
-    if (k > 0 && mIdx !== playOrder[k - 1] + 1) {
+    const continuous = prevEntry && prevEntry.m + 1 === mIdx && prevEntry.lastEnd === Infinity && fromQ === 0
+    if (k > 0 && !continuous) {
       for (const id of Object.keys(openNoteByPart)) openNoteByPart[id] = null
     }
 
     const refM     = migrateMeasure(parts[0]?.measures[mIdx])
     if (refM?.kind === 'text') continue   // instruction bar: no events, no segment, no time
     const numBeats = refM?.timeSignature?.beats || 4
-    segments.push({ playStartSec: globalSec, scoreStartBeat: measureBeatStart[mIdx] ?? 0, beats: numBeats })
+    const endQ = Math.min(numBeats * 4, entry.lastEnd)   // where the played slice of the bar ends
+    segments.push({
+      playStartSec: globalSec,
+      scoreStartBeat: (measureBeatStart[mIdx] ?? 0) + fromQ / 4,
+      beats: (endQ - fromQ) / 4,
+    })
 
     for (const part of parts) {
       if (partMutes?.[part.id]) continue
@@ -254,6 +265,22 @@ function buildSchedule(score, tempo, partMutes) {
           qAbs += ev.duration
         })
       })
+
+      // Sustains belong to the note they continue: a slice that includes a note
+      // includes its sustains, one that skips the note skips them too.
+      {
+        let owner = null
+        flat.forEach((ev) => {
+          if (ev.type !== 'sustain') owner = ev.qAbs
+          ev.ownerQ = ev.type === 'sustain' ? owner : ev.qAbs
+        })
+      }
+      if (fromQ > 0 || entry.lastStart !== Infinity) {
+        const keep = flat.filter((ev) =>
+          ev.ownerQ === null ? fromQ === 0 : ev.ownerQ >= fromQ - 1e-6 && ev.ownerQ <= entry.lastStart + 1e-6)
+        flat.length = 0
+        flat.push(...keep)
+      }
 
       let i = 0
 
@@ -285,7 +312,7 @@ function buildSchedule(score, tempo, partMutes) {
             j++
           }
 
-          const nominalStart = globalSec + ev.qAbs * secPerQUnit
+          const nominalStart = globalSec + (ev.qAbs - fromQ) * secPerQUnit
           const nominalDur   = totalQ * secPerQUnit
 
           // legato overlap — small, scaled to note length so short notes
@@ -333,7 +360,7 @@ function buildSchedule(score, tempo, partMutes) {
       }
     }
 
-    globalSec += numBeats * secPerBeat
+    globalSec += (endQ - fromQ) * secPerQUnit
   }
 
   events.sort((a, b) => a.time - b.time)
