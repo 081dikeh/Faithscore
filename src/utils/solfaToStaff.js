@@ -327,8 +327,9 @@ export function convertSolfaScoreToStaff(solfaScore) {
 
   staffScore.parts = (solfaScore.parts || []).map(voicePart => {
     const name = VOICE_ID_TO_NAME[voicePart.id] || voicePart.name || voicePart.label || 'Voice'
-    // tenor: treble clef with an 8 below (it sings an octave under what is written)
-    const clef = voicePart.id === 'b' ? 'bass' : voicePart.id === 't' ? 'treble8' : 'treble'
+    // Tenor stays a plain treble clef: the Solfa tenor line is already at the octave it is
+    // written in, so an 8-below clef would show every note an octave higher.
+    const clef = voicePart.id === 'b' ? 'bass' : 'treble'
 
     const partMeasures = voicePart.measures || []
     const measures = []

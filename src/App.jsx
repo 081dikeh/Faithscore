@@ -984,6 +984,7 @@ export default function App() {
   const [showViewMenu, setShowViewMenu] = useState(false);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [showPiano, setShowPiano] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [showMixer, setShowMixer] = useState(false);
   const [partVolumes, setPartVolumes] = useState({});
   const [showPublish, setShowPublish] = useState(false);
@@ -2911,7 +2912,7 @@ export default function App() {
         )}
 
         {/* ── Score info + status bar ── */}
-        <div className="bg-white border-b border-gray-200 px-5 py-2 flex items-center gap-5 flex-shrink-0">
+        <div className="bg-white border-b border-gray-200 px-4 py-1.5 flex items-center gap-4 flex-shrink-0">
           <input
             value={score.title}
             onChange={(e) => setTitle(e.target.value)}
@@ -2990,15 +2991,42 @@ export default function App() {
           >
             + Bar (M)
           </button>
-        </div>
-
-        {/* ── Toolbar ── */}
-        <Toolbar />
-
-        {/* ── Keyboard shortcuts hint ── */}
-        <div className="bg-white border-b border-gray-200 px-4 py-1 flex gap-3 flex-wrap text-xs text-gray-400 flex-shrink-0">
-          {[
-            ["N", "Note mode"],
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setShowShortcuts((v) => !v)}
+              title="Keyboard shortcuts"
+              className="text-xs border border-gray-300 text-gray-700 hover:bg-gray-100 px-2.5 py-1.5 rounded transition-colors"
+            >
+              ⌨ Shortcuts
+            </button>
+            {showShortcuts && (
+              <>
+                <div
+                  style={{ position: "fixed", inset: 0, zIndex: 40 }}
+                  onClick={() => setShowShortcuts(false)}
+                />
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 6px)",
+                    right: 0,
+                    zIndex: 50,
+                    width: 460,
+                    maxHeight: "70vh",
+                    overflowY: "auto",
+                    background: "white",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 10,
+                    boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
+                    padding: "12px 14px",
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", marginBottom: 8 }}>
+                    Keyboard shortcuts
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" }}>
+                    {[
+["N", "Note mode"],
             ["S", "Select"],
             ["A–G", "Natural note"],
             ["Enter", "Chromatic"],
@@ -3020,16 +3048,24 @@ export default function App() {
             ["Ctrl+V", "Paste"],
             ["Ctrl+↑↓", "Transpose ½"],
             ["Ctrl+←→", "Transpose 8ve"],
-            ["Ctrl+ +/-", "Zoom"],
-          ].map(([k, v]) => (
-            <span key={k}>
-              <kbd className="bg-gray-100 border border-gray-300 px-1 py-0.5 rounded text-gray-600 font-mono">
-                {k}
-              </kbd>{" "}
-              {v}
-            </span>
-          ))}
+            ["Ctrl+ +/-", "Zoom"]
+                    ].map(([k, v]) => (
+                      <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#4b5563" }}>
+                        <kbd className="bg-gray-100 border border-gray-300 px-1.5 py-0.5 rounded text-gray-600 font-mono" style={{ minWidth: 54, textAlign: "center" }}>
+                          {k}
+                        </kbd>
+                        {v}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
+
+        {/* ── Toolbar ── */}
+        <Toolbar />
 
         {/* ── Note editor panel (staff mode) or Solfa editor toolbar (solfa mode) ── */}
         <NoteEditor />
@@ -3048,9 +3084,9 @@ export default function App() {
 
         {/* ── Score canvas — A4 page layout ── */}
         <main
-          className="flex-1 overflow-auto bg-gray-300 p-6"
+          className="flex-1 overflow-auto p-6"
           id="score-main"
-          style={{ paddingBottom: showPiano ? 180 : 48 }}
+          style={{ paddingBottom: showPiano ? 180 : 48, background: "#c3c9d4" }}
         >
           {/*
           Zoom wrapper: scales the entire page (white paper + score) together.
@@ -3075,7 +3111,7 @@ export default function App() {
             >
               {/* Page 1 always has the title header */}
               <div
-                className="score-page bg-white mx-auto shadow-lg"
+                className="score-page bg-white mx-auto"
                 style={{
                   width: "100%",
                   maxWidth: 1100, // comfortable screen width for editing
@@ -3084,6 +3120,7 @@ export default function App() {
                   marginBottom: 24,
                   boxSizing: "border-box",
                   position: "relative",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.25), 0 6px 18px rgba(0,0,0,0.18)",
                 }}
                 onContextMenu={handleContextMenu}
               >
@@ -3093,8 +3130,7 @@ export default function App() {
                   style={{
                     textAlign: "center",
                     marginBottom: 20,
-                    borderBottom: "1px solid #e5e7eb",
-                    paddingBottom: 12,
+                    paddingBottom: 4,
                   }}
                 >
                   <div
