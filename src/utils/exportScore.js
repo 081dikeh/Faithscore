@@ -70,7 +70,8 @@ export function exportMusicXML(score) {
         xml('time', {}, xmlLeaf('beats', ts.beats), xmlLeaf('beat-type', ts.beatType)),
         xml('clef', {},
           xmlLeaf('sign', clef === 'bass' ? 'F' : 'G'),
-          xmlLeaf('line', clef === 'bass' ? '4' : '2')
+          xmlLeaf('line', clef === 'bass' ? '4' : '2'),
+          clef === 'treble8' ? xmlLeaf('clef-octave-change', '-1') : ''
         )
       ) : ''
 
@@ -323,7 +324,8 @@ export function importMusicXML(xmlText) {
         const clefSign = attrsEl.querySelector('clef > sign')
         if (clefSign) {
           const sign = clefSign.textContent
-          clef = sign === 'F' ? 'bass' : sign === 'C' ? 'alto' : 'treble'
+          const octChange = parseInt(attrsEl.querySelector('clef > clef-octave-change')?.textContent || '0', 10)
+          clef = sign === 'F' ? 'bass' : sign === 'C' ? 'alto' : (octChange === -1 ? 'treble8' : 'treble')
         }
       }
 

@@ -21,6 +21,7 @@ const LETTERS = ["C", "D", "E", "F", "G", "A", "B"];
 // Pitch on the TOP staff line for each clef.
 export const CLEF_TOP_LINE = {
   treble: { step: "F", octave: 5 },
+  treble8: { step: "F", octave: 4 }, // treble clef with an 8 below (tenor): sounds an octave under what is written
   bass: { step: "A", octave: 3 },
   alto: { step: "G", octave: 4 },
   tenor: { step: "E", octave: 4 },

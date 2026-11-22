@@ -114,6 +114,25 @@ const REST_KEYS = {
   },
 };
 
+// Treble clef with an 8 below (tenor): VexFlow draws it as a treble clef with an
+// "8vb" mark, and the notes are written an octave above where they sound.
+REST_KEYS.treble8 = REST_KEYS.treble;
+
+function addClefTo(stave, clef) {
+  if (clef === "treble8") stave.addClef("treble", "default", "8vb");
+  else stave.addClef(clef);
+}
+
+// A time signature is printed at the start of the piece and wherever it changes —
+// not again at the start of every system.
+function needsTimeSig(measures, col) {
+  const cur = measures?.[col]?.timeSignature;
+  const prev = measures?.[col - 1]?.timeSignature;
+  if (!cur) return false;
+  if (col === 0 || !prev) return true;
+  return prev.beats !== cur.beats || prev.beatType !== cur.beatType;
+}
+
 function keyNumToVexflow(num) {
   const map = {
     0: "C",
@@ -191,7 +210,7 @@ function slurCurveDepth(distancePx) {
 //   tenor  → A3 = 3×7+5 = 26  (tenor C-clef, middle line = A3)
 
 const STEP_IDX = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
-const MIDDLE_LINE = { treble: 34, bass: 22, alto: 28, tenor: 26 };
+const MIDDLE_LINE = { treble: 34, treble8: 27, bass: 22, alto: 28, tenor: 26 };
 
 function diatonicPos(pitch) {
   if (!pitch?.step) return 34; // treble middle line fallback
@@ -253,7 +272,7 @@ function buildVfNote(
   const defKey = clef === "bass" ? "f/3" : "b/4";
   const allNotes = [n, ...chordExtras];
   const keys = allNotes.map((nn) =>
-    nn.pitch ? `${nn.pitch.step.toLowerCase()}/${nn.pitch.octave}` : defKey,
+    nn.pitch ? `${nn.pitch.step.toLowerCase()}/${nn.pitch.octave + (clef === "treble8" ? 1 : 0)}` : defKey,
   );
 
   // ── Calculate stem direction from pitch position ──────────────────────────
@@ -315,6 +334,38 @@ function buildVfNote(
 const LYRIC_FONT_PX = (11 * 4) / 3;
 let _lyricMeasureCtx;
 const _lyricMeasureCache = new Map();
+// Width of a piece of text at a given pixel size (cached) — for instrument names.
+let _txtCtx;
+const _txtCache = new Map();
+function measureTextPx(text, px) {
+  const t = String(text || "");
+  if (!t) return 0;
+  const key = `${px}|${t}`;
+  const hit = _txtCache.get(key);
+  if (hit != null) return hit;
+  let w = t.length * px * 0.5;
+  try {
+    if (!_txtCtx && typeof document !== "undefined")
+      _txtCtx = document.createElement("canvas").getContext("2d");
+    if (_txtCtx) {
+      _txtCtx.font = `${px}px "Times New Roman", Times, serif`;
+      w = _txtCtx.measureText(t).width;
+    }
+  } catch (_) {}
+  _txtCache.set(key, w);
+  return w;
+}
+
+// "Soprano" -> "S.", "Violin II" -> "V. II" (a part's own shortName wins).
+function shortInstrumentName(name) {
+  const t = String(name || "").trim();
+  if (!t) return "";
+  return t
+    .split(/\s+/)
+    .map((w) => (/^[IVX]+$|^\d+$/.test(w) ? w : w[0].toUpperCase() + "."))
+    .join(" ");
+}
+
 function measureLyricPx(text) {
   const t = String(text || "");
   if (!t) return 0;
@@ -818,14 +869,15 @@ export default function ScoreRenderer() {
           const prevKs = prev?.keySignature;
           const ts = measure.timeSignature;
           if (isFirstInLine) {
-            st.addClef(part.clef || "treble");
+            addClefTo(st, part.clef || "treble");
             st.addKeySignature(
               keyNumToVexflow(ks),
               prevKs !== undefined && prevKs !== ks
                 ? keyNumToVexflow(prevKs)
                 : undefined,
             );
-            st.addTimeSignature(`${ts.beats}/${ts.beatType}`);
+            if (needsTimeSig(part.measures, colIdx))
+              st.addTimeSignature(`${ts.beats}/${ts.beatType}`);
           } else {
             if ((prevKs ?? 0) !== ks) {
               st.addKeySignature(keyNumToVexflow(ks), keyNumToVexflow(prevKs ?? 0));
@@ -848,7 +900,8 @@ export default function ScoreRenderer() {
     function estimateGlyphOverhead(colIdx, isFirstInLine) {
       if (isFirstInLine) {
         const keySig = score.parts[0]?.measures[colIdx]?.keySignature ?? 0;
-        return SP * 2.2 + Math.abs(keySig) * SP * 0.7 + SP * 1.6 + SP * 0.6;
+        const withTs = needsTimeSig(score.parts[0]?.measures, colIdx);
+        return SP * 2.2 + Math.abs(keySig) * SP * 0.7 + (withTs ? SP * 2.2 : SP * 0.4);
       }
       // Mid-line meter/key change: reserve room for whichever glyphs
       // actually land on this bar, even though it isn't first in its line.
@@ -885,7 +938,27 @@ export default function ScoreRenderer() {
     let SCALE = SP / 10;
     let DRAW_W = Math.round(PAGE_W / SCALE);
     let DRAW_H = Math.round((totalCols * 100) / SCALE); // temporary value for line breaking
-    const USABLE_W = DRAW_W - LEFT_MARGIN - RIGHT_MARGIN;
+    // Instrument names: full names on the first system, short names after it, in a
+    // column to the left of the staves (so each system's staves start further right).
+    const NAME_PT = 12;
+    const NAME_PX = (NAME_PT * 4) / 3;
+    const DEFAULT_NAMES = new Set(["treble", "bass", ""]);
+    const showNames =
+      score.showInstrumentNames ??
+      score.parts.some((p) => !DEFAULT_NAMES.has((p.name || "").trim().toLowerCase()));
+    const shortNameOf = (p) => p.shortName || shortInstrumentName(p.name);
+    const nameInsetFor = (li) => {
+      if (!showNames) return 0;
+      const w = Math.max(
+        ...score.parts.map((p) =>
+          measureTextPx(li === 0 ? p.name || "" : shortNameOf(p), NAME_PX),
+        ),
+      );
+      return Math.ceil(w + SP * 1.8);
+    };
+    const baseUsable = DRAW_W - LEFT_MARGIN - RIGHT_MARGIN;
+    const usableFor = (li) => baseUsable - nameInsetFor(li);
+    const USABLE_W = baseUsable - Math.max(nameInsetFor(0), nameInsetFor(1));
 
     // Build lines: each line is an array of column indices
     const lines = [];
@@ -907,7 +980,7 @@ export default function ScoreRenderer() {
         const needed = overhead + content + SP * 1.2;
 
         // Hard break: adding this measure would exceed usable width
-        if (colCount > 0 && lineWidth + needed > USABLE_W) break;
+        if (colCount > 0 && lineWidth + needed > usableFor(lines.length)) break;
         // Soft break: reached preferred bars-per-line (manual mode only)
         if (colCount >= preferredMax && preferredMax > 0) break;
 
@@ -1096,22 +1169,24 @@ export default function ScoreRenderer() {
       });
 
       // Justify: scale widths proportionally to fill full usable width
+      const lineLeft = LEFT_MARGIN + nameInsetFor(lineIdx);
+      const lineUsable = usableFor(lineIdx);
       const totalMinW = colMinWidths.reduce((a, b) => a + b, 0);
       const isLastLine = lineIdx === totalLines - 1;
       // Last line: don't stretch — leave natural spacing
       const justifyScale =
-        totalMinW > USABLE_W
-          ? USABLE_W / totalMinW // never run off the page
+        totalMinW > lineUsable
+          ? lineUsable / totalMinW // never run off the page
           : !isLastLine
-            ? USABLE_W / totalMinW
+            ? lineUsable / totalMinW
             : 1;
       const colWidths = colMinWidths.map((w) => Math.floor(w * justifyScale));
       // Distribute rounding remainder to last column
       const allocated = colWidths.reduce((a, b) => a + b, 0);
-      if (!isLastLine) colWidths[colWidths.length - 1] += USABLE_W - allocated;
+      if (!isLastLine) colWidths[colWidths.length - 1] += lineUsable - allocated;
 
       const colX = [];
-      let cx = LEFT_MARGIN;
+      let cx = lineLeft;
       for (const w of colWidths) {
         colX.push(cx);
         cx += w;
@@ -1120,6 +1195,11 @@ export default function ScoreRenderer() {
       score.parts.forEach((part, pIdx) => {
         const partY = sysY + partOff[pIdx];
         const clef = part.clef || "treble";
+        // Lyrics for this staff on this system are collected while the bars are
+        // drawn, then written on ONE baseline that clears the lowest note.
+        const lyricQueue = [];
+        let lowestBottom = -Infinity;
+        let rowBottomLineY = null;
 
         for (let colInLine = 0; colInLine < lineCols.length; colInLine++) {
           const col = lineCols[colInLine];
@@ -1131,7 +1211,7 @@ export default function ScoreRenderer() {
 
           const stave = new Stave(x, partY, width);
           if (isFirst) {
-            stave.addClef(clef);
+            addClefTo(stave, clef);
             // Courtesy cancellation: if this line's opening key differs
             // from whatever was active in the immediately preceding bar
             // (i.e. we're picking up mid-modulation, not just restating
@@ -1147,9 +1227,10 @@ export default function ScoreRenderer() {
                 ? keyNumToVexflow(prevKeyAtLineStart)
                 : undefined,
             );
-            stave.addTimeSignature(
-              `${measure.timeSignature.beats}/${measure.timeSignature.beatType}`,
-            );
+            if (needsTimeSig(part.measures, col))
+              stave.addTimeSignature(
+                `${measure.timeSignature.beats}/${measure.timeSignature.beatType}`,
+              );
           } else {
             // Mid-line meter/key change — VexFlow only auto-shows clef/key/
             // time at a line's first measure, so a change landing further
@@ -1261,6 +1342,16 @@ export default function ScoreRenderer() {
 
           // Part name labels removed — clean score appearance like MuseScore default
           // (names show in the parts panel/sidebar instead)
+
+          if (isFirst && showNames) {
+            const nm = lineIdx === 0 ? part.name || "" : shortNameOf(part);
+            if (nm) {
+              ctx.save();
+              ctx.setFont("Times New Roman", NAME_PT, "normal");
+              ctx.fillText(nm, x - SP * 1.3 - measureTextPx(nm, NAME_PX), stave.getYForLine(2) + 4);
+              ctx.restore();
+            }
+          }
 
           if (isFirst && numParts > 1) {
             if (pIdx === 0) firstStave = stave;
@@ -1736,12 +1827,24 @@ export default function ScoreRenderer() {
             // margin, so adding another offset on top of it was stacking
             // two paddings. getBottomLineY() has none of that, so there's
             // exactly one offset in play, not two compounding ones.
-            const lyricY = stave.getBottomLineY() + SP * 1.5;
             const verseRows = partVerseList[pIdx];
+            if (rowBottomLineY == null) rowBottomLineY = stave.getBottomLineY();
             if (verseRows.length) {
               ctx.setFont("Times New Roman", 11, "normal");
+              // Lowest thing hanging below this staff in this bar: low notes,
+              // ledger lines, down-stems — the lyric line has to clear it.
+              vfNotes.forEach((vn, ni) => {
+                if (renderSeq[ni]?.isRest) return;
+                try {
+                  let bt = Math.max(...vn.getYs());
+                  if (vn.hasStem && vn.hasStem()) {
+                    const e = vn.getStemExtents();
+                    bt = Math.max(bt, e.topY, e.baseY);
+                  }
+                  lowestBottom = Math.max(lowestBottom, bt);
+                } catch (_) {}
+              });
               verseRows.forEach((verse, vk) => {
-                const rowY = lyricY + vk * LYRIC_LINE_H;
                 renderSeq.forEach((seqNote, ni) => {
                   const text = getNoteLyric(seqNote, verse.number);
                   if (!text) return;
@@ -1750,21 +1853,13 @@ export default function ScoreRenderer() {
                     // syllable's real rendered width so centering is exact.
                     const { width } = ctx.measureText(text);
                     const noteX = vfNotes[ni].getAbsoluteX();
-                    ctx.fillText(text, noteX - width / 2, rowY);
+                    lyricQueue.push({ vk, text, x: noteX - width / 2 });
                   } catch (_) {}
                 });
                 // Verse number at the start of each system.
-                if (showVerseTags && isFirst) {
-                  try {
-                    ctx.setFont("Times New Roman", 11, "bold");
-                    ctx.fillText(verse.tag, stave.getX() + SP * 1.3, rowY);
-                    ctx.setFont("Times New Roman", 11, "normal");
-                  } catch (_) {}
-                }
+                if (showVerseTags && isFirst)
+                  lyricQueue.push({ vk, text: verse.tag, x: stave.getX() + SP * 1.3, bold: true });
               });
-              // Explicit reset (not save/restore) so whatever draws next —
-              // measure numbers, rehearsal marks — isn't left inheriting
-              // size-11 lyric text as its font.
               ctx.setFont("Times New Roman", 10);
             }
 
@@ -2435,16 +2530,34 @@ export default function ScoreRenderer() {
             });
           }
         }
+
+        // One lyric baseline per staff per system: 1.5 staff-spaces under the
+        // staff, lower only as far as the lowest note needs (never into the next staff).
+        if (lyricQueue.length && rowBottomLineY != null) {
+          const minBase = rowBottomLineY + SP * 1.5;
+          const need = lowestBottom > -Infinity ? lowestBottom + SP * 1.1 : minBase;
+          const base = Math.min(Math.max(minBase, need), rowBottomLineY + SP * 2.8);
+          ctx.save();
+          lyricQueue.forEach((q) => {
+            try {
+              ctx.setFont("Times New Roman", 11, q.bold ? "bold" : "normal");
+              ctx.fillText(q.text, q.x, base + q.vk * LYRIC_LINE_H);
+            } catch (_) {}
+          });
+          ctx.restore();
+          ctx.setFont("Times New Roman", 10);
+        }
       });
 
       if (numParts > 1 && firstStave && lastStave) {
         try {
+          // 3+ staves (a choir): a bracket. Exactly two (a grand staff): a brace.
           new StaveConnector(firstStave, lastStave)
-            .setType(StaveConnector.type.BRACKET)
+            .setType(StaveConnector.type.SINGLE_LEFT)
             .setContext(ctx)
             .draw();
           new StaveConnector(firstStave, lastStave)
-            .setType(StaveConnector.type.BRACE)
+            .setType(numParts === 2 ? StaveConnector.type.BRACE : StaveConnector.type.BRACKET)
             .setContext(ctx)
             .draw();
         } catch (_) {}

@@ -327,7 +327,8 @@ export function convertSolfaScoreToStaff(solfaScore) {
 
   staffScore.parts = (solfaScore.parts || []).map(voicePart => {
     const name = VOICE_ID_TO_NAME[voicePart.id] || voicePart.name || voicePart.label || 'Voice'
-    const clef = voicePart.id === 'b' ? 'bass' : 'treble'
+    // tenor: treble clef with an 8 below (it sings an octave under what is written)
+    const clef = voicePart.id === 'b' ? 'bass' : voicePart.id === 't' ? 'treble8' : 'treble'
 
     const partMeasures = voicePart.measures || []
     const measures = []
