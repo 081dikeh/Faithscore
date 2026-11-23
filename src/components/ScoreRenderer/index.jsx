@@ -704,7 +704,7 @@ export default function ScoreRenderer() {
       32: SP * 1.8,
       64: SP * 1.6,
     };
-    const MIN_MEASURE_WIDTH = SP * 11;
+    const MIN_MEASURE_WIDTH = SP * 8;
     const MAX_MEASURE_WIDTH = SP * 100;
 
     function getMeasureContentWidth(colIdx) {
@@ -750,7 +750,12 @@ export default function ScoreRenderer() {
       // VexFlow itself says its notes need (plus lyric room). It is only
       // limited by the page: a bar can't be wider than a whole line.
       const needed = getVexMinContent(colIdx);
-      const wanted = Math.max(estimate, needed);
+      const grid = getColumnGrid(colIdx);
+      // Natural width from the shared rhythmic grid (rhythm or symbol needs,
+      // whichever is larger). The old per-note table above is only a fallback.
+      const wanted = grid
+        ? Math.max(gridNaturalWidth(grid) + SP * 0.6, needed)
+        : Math.max(estimate, needed);
       const pageCap = USABLE_W - getGlyphOverhead(colIdx, true) - SP * 1.2;
       return Math.max(MIN_MEASURE_WIDTH, Math.min(wanted, pageCap));
     }
@@ -819,6 +824,150 @@ export default function ScoreRenderer() {
       // (this is what stops dense bars of 16ths / 32nds spilling over).
       best = best > 0 ? best + SP * 1.0 + SP * 0.8 : 0;
       return (vexMinCache[colIdx] = best);
+    }
+
+
+    // ── Shared rhythmic grid (one set of note positions per bar, all parts) ────
+    // Every part's notes at the same musical time must sit at the SAME x, and the
+    // space between two moments is the larger of
+    //   • the RHYTHMIC space for the time between them (longer → wider, but not
+    //     in proportion: ≈ duration^0.6, so a half note is ~1.5 quarter notes), and
+    //   • the GRAPHIC minimum: what the symbols (noteheads, accidentals, dots,
+    //     lyric syllables) need, taken from VexFlow's own metrics.
+    // The bar's natural width comes from the same model, so the number of bars
+    // that fit on a system and the final positions always agree.
+    const RHYTHM_Q = SP * 3.3; // space a quarter note "wants" at natural spacing
+    const rhythmSpace = (beats) => Math.pow(Math.max(beats, 0.03), 0.6);
+    const gridCache = {};
+    function getColumnGrid(colIdx) {
+      if (colIdx in gridCache) return gridCache[colIdx];
+      let grid = null;
+      try {
+        const tickW = getLyricTickWidths(colIdx);
+        const capacity = measureCapacity(score.parts[0]?.measures[colIdx]?.timeSignature);
+        const perPart = [];
+        const beatOfKey = new Map();
+        for (const part of score.parts) {
+          const measure = part.measures[colIdx];
+          if (!measure) continue;
+          const clef = part.clef || "treble";
+          const chordMap = {};
+          measure.notes.forEach((n) => {
+            if (n.chordWith) (chordMap[n.chordWith] ||= []).push(n);
+          });
+          const seq = measure.notes.filter((n) => !n.chordWith);
+          if (!seq.length) continue;
+          const keyAcc = keySignatureAccidentals(measure.keySignature ?? 0);
+          const accState = {};
+          const vfs = seq.map((n) =>
+            buildVfNote(n, clef, false, chordMap[n.id] || [], keyAcc, accState),
+          );
+          const voice = new Voice({
+            numBeats: measure.timeSignature.beats,
+            beatValue: measure.timeSignature.beatType,
+          }).setStrict(false);
+          voice.addTickables(vfs);
+          const f = new Formatter().joinVoices([voice]);
+          f.createTickContexts([voice]);
+          f.preFormat(0);
+          const tcs = vfs.map((v) => v.getTickContext());
+          let pos = 0;
+          const entries = seq.map((n, i) => {
+            const beat = pos;
+            const key = Math.round(beat * 1000);
+            pos += noteDuration(n);
+            beatOfKey.set(key, beat);
+            return {
+              key,
+              x: tcs[i].getX(),
+              L: tickW.get(key) || 0,
+              notePx: tcs[i].getMetrics().notePx || 0,
+            };
+          });
+          const last = entries[entries.length - 1];
+          perPart.push({
+            entries,
+            first: Math.max(entries[0].x, entries[0].L / 2 - entries[0].notePx / 2 + SP * 0.8),
+            trail:
+              Math.max(0, f.getMinTotalWidth() - last.x) +
+              Math.max(0, last.L / 2 - last.notePx / 2 + SP * 0.8) +
+              SP * 0.8,
+          });
+        }
+        if (perPart.length) {
+          const keys = [...new Set(perPart.flatMap((pp) => pp.entries.map((e) => e.key)))].sort((a, b) => a - b);
+          const first = Math.max(...perPart.map((pp) => pp.first));
+          // earliest x for every moment, honouring every part's own minimum
+          // spacing (longest path over the moments, so shared positions stay legal)
+          const minPos = new Map([[keys[0], first]]);
+          keys.forEach((k, ki) => {
+            if (ki === 0) return;
+            let best = minPos.get(keys[ki - 1]) + SP * 0.4;
+            for (const pp of perPart) {
+              const idx = pp.entries.findIndex((e) => e.key === k);
+              if (idx <= 0) continue;
+              const a = pp.entries[idx - 1];
+              const b = pp.entries[idx];
+              const need = Math.max(b.x - a.x, (a.L + b.L) / 2 + (a.L > 0 && b.L > 0 ? SP * 0.8 : 0));
+              best = Math.max(best, minPos.get(a.key) + need);
+            }
+            minPos.set(k, best);
+          });
+          let totalMin = 0;
+          for (const pp of perPart) {
+            const lastE = pp.entries[pp.entries.length - 1];
+            totalMin = Math.max(totalMin, minPos.get(lastE.key) + pp.trail);
+          }
+          const lastKey = keys[keys.length - 1];
+          const minGaps = keys.slice(0, -1).map((k, i) => minPos.get(keys[i + 1]) - minPos.get(k));
+          const rhythm = keys.slice(0, -1).map((k, i) => rhythmSpace(beatOfKey.get(keys[i + 1]) - beatOfKey.get(k)));
+          grid = {
+            keys,
+            first,
+            minGaps,
+            rhythm,
+            minTail: Math.max(totalMin - minPos.get(lastKey), SP * 0.8),
+            rhythmTail: rhythmSpace(Math.max(capacity - beatOfKey.get(lastKey), 0.25)) * 0.85,
+          };
+        }
+      } catch (_) {
+        grid = null;
+      }
+      return (gridCache[colIdx] = grid);
+    }
+    // width of the note area at natural spacing / at a given stretch t (px per unit)
+    const gridWidthAt = (g, t, first) =>
+      first +
+      g.minGaps.reduce((a, m, i) => a + Math.max(m, t * g.rhythm[i]), 0) +
+      Math.max(g.minTail, t * g.rhythmTail);
+    const gridNaturalWidth = (g) => gridWidthAt(g, RHYTHM_Q, g.first);
+    // x (relative to the start of the note area) of every moment, filling width A
+    function layoutGrid(g, A, firstMin) {
+      const first = Math.max(g.first, firstMin || 0);
+      const pos = new Map();
+      if (gridWidthAt(g, 0, first) >= A) {
+        // too tight for even the minimum: shrink everything evenly
+        const k = A / gridWidthAt(g, 0, first);
+        let x = first * k;
+        g.keys.forEach((key, i) => {
+          pos.set(key, x);
+          if (i < g.minGaps.length) x += g.minGaps[i] * k;
+        });
+        return pos;
+      }
+      let lo = 0;
+      let hi = Math.max(A, 1) * 20;
+      for (let i = 0; i < 48; i++) {
+        const mid = (lo + hi) / 2;
+        if (gridWidthAt(g, mid, first) > A) hi = mid;
+        else lo = mid;
+      }
+      let x = first;
+      g.keys.forEach((key, i) => {
+        pos.set(key, x);
+        if (i < g.minGaps.length) x += Math.max(g.minGaps[i], lo * g.rhythm[i]);
+      });
+      return pos;
     }
 
     // Widest lyric starting at each beat position of bar `colIdx`, across ALL
@@ -1616,6 +1765,21 @@ export default function ScoreRenderer() {
                   if (k > (hasLyrics ? 1 : 0.6))
                     tcs.forEach((tc) => tc.setX(x0 + (tc.getX() - x0) * k));
                 }
+              }
+            } catch (_) {}
+
+            // ── Shared grid: every part puts the same musical moment at the same x ─
+            try {
+              const grid = getColumnGrid(col);
+              if (grid && vfNotes.length) {
+                const A = stave.getNoteEndX() - stave.getNoteStartX() - SP * 0.3;
+                const gridPos = layoutGrid(grid, A, isFirst ? SP * 1.4 : 0);
+                let acc = 0;
+                renderSeq.forEach((nn, i) => {
+                  const x = gridPos.get(Math.round(acc * 1000));
+                  acc += noteDuration(nn);
+                  if (x != null) vfNotes[i].getTickContext().setX(x);
+                });
               }
             } catch (_) {}
 
