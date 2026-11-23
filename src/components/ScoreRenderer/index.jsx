@@ -10,6 +10,7 @@ import {
   StaveConnector,
   Dot,
   Beam,
+  Stem,
   StaveTie,
   Tuplet,
   Barline,
@@ -63,6 +64,16 @@ const EMPTY_ARR = [];
 // SP = pixels per staff space. Increase to make everything bigger, decrease for smaller.
 // 10 = compact, 12 = medium, 14 = large, 16 = very large
 const SP = 14;
+
+// Keep all rendered stems (including ghost-note previews) noticeably thinner
+// than VexFlow's default 1.5 px engraving width.
+const NOTE_STEM_WIDTH = 1.1;
+try {
+  Object.defineProperty(Stem, "WIDTH", {
+    value: NOTE_STEM_WIDTH,
+    configurable: true,
+  });
+} catch (_) {}
 
 const STAFF_HEIGHT = SP * 4; // 48px — full staff (4 spaces between 5 lines)
 const PART_HEIGHT = SP * 11; // 154px — staff + gap to next staff in system
@@ -442,7 +453,7 @@ function GhostNote({ x, y, pos, ls, top, duration, dots, tone, label, sub, showB
   const flags = bare ? 0 : { 8: 1, 16: 2, 32: 3, 64: 4 }[duration] || 0;
   const up = stemUpForPos(pos);
   const stemLen = ls * 3.4;
-  const sw = Math.max(1.2, ls * 0.15);
+  const sw = Math.max(1.0, ls * 0.08);
   const stemX = up ? x + w / 2 - sw : x - w / 2;
   const stemTop = up ? y - stemLen : y;
   const common = { position: "absolute", pointerEvents: "none" };
