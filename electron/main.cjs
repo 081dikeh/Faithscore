@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, Menu, shell } = require("electron");
 const path = require("path");
 
 const startUrl = process.env.ELECTRON_START_URL;
@@ -32,7 +32,7 @@ function createWindow() {
 
   if (startUrl) {
     window.loadURL(startUrl);
-  } else if (!app.isPackaged) {
+  } else if (!app.isPackaged && !process.env.ELECTRON_PREVIEW) {
     window.loadURL("http://localhost:5173");
   } else {
     window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
@@ -41,6 +41,8 @@ function createWindow() {
 
 app.whenReady().then(() => {
   app.setAppUserModelId("com.faithscore.app");
+  // the installed app has no File/Edit/View/DevTools menu bar (the app has its own menus)
+  if (app.isPackaged) Menu.setApplicationMenu(null);
   createWindow();
 
   app.on("activate", () => {

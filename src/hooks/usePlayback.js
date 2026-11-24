@@ -532,7 +532,8 @@ export function usePlayback() {
       applyMixToEngine(score)
       engineRef.current = true
       const startAt = await soundEngine.play(startSec)
-      if (startAt == null) return
+      if (startAt == null && soundEngine.status !== 'error') return  // superseded by a newer play/stop
+      if (startAt != null) {
       if (metronomeOnRef.current) {
         const met = getMetronome()
         const secPerBeat = 60 / effectiveTempo
@@ -549,8 +550,9 @@ export function usePlayback() {
       setIsPlaying(true)
       startCursorLoop()
       return
+      }
     }
-    engineRef.current = false
+    engineRef.current = false   // the sound bank couldn't render: use the basic piano below
 
     const instrument = await getInstrument()
     const LEAD = 0.1

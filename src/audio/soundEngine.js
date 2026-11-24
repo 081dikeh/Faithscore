@@ -181,24 +181,38 @@ class SoundEngine {
       worker = new Worker(new URL('./soundWorker.js', import.meta.url), { type: 'module' })
     } catch (_) { worker = null }
     if (worker) {
-      await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('sound worker did not start')), 60000)
-        worker.onmessage = (ev) => {
-          if (ev.data.type === 'ready') { clearTimeout(timer); resolve() }
-          else if (ev.data.type === 'error') { clearTimeout(timer); reject(new Error(ev.data.message)) }
-        }
-        worker.onerror = (e) => { clearTimeout(timer); reject(new Error(e.message || 'sound worker failed')) }
-        worker.postMessage({ type: 'init', soundfont: sf }, [sf])
-      })
-      worker.onmessage = (ev) => this._onWorker(ev.data)
-      worker.onerror = () => {}
-      this.worker = worker
-    } else {
-      // no Worker support: render on the main thread (slower to respond, same sound)
-      const core = await import('./renderCore.js')
-      this.core = core
-      this.bank = core.parseSoundBank(sf)
+      try {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('sound worker did not start')), 20000)
+          worker.onmessage = (ev) => {
+            if (ev.data.type === 'ready') { clearTimeout(timer); resolve() }
+            else if (ev.data.type === 'error') { clearTimeout(timer); reject(new Error(ev.data.message)) }
+          }
+          worker.onerror = (e) => { clearTimeout(timer); reject(new Error(e.message || 'sound worker failed')) }
+          // send a COPY: the worker takes the buffer, and we keep ours in case it fails
+          const copy = sf.slice(0)
+          worker.postMessage({ type: 'init', soundfont: copy }, [copy])
+        })
+        worker.onmessage = (ev) => this._onWorker(ev.data)
+        // if the worker dies later, fail the renders waiting on it instead of hanging
+        worker.onerror = (e) => this._failPending(new Error(e.message || 'sound worker failed'))
+        this.worker = worker
+        return
+      } catch (_) {
+        try { worker.terminate() } catch (__) {}
+        worker = null
+      }
     }
+    // No (working) Worker — e.g. a restricted desktop/webview setup: render on the
+    // main thread instead. Same sound, just less smooth while it renders.
+    const core = await import('./renderCore.js')
+    this.core = core
+    this.bank = core.parseSoundBank(sf)
+  }
+
+  _failPending(err) {
+    for (const p of this.pending.values()) p.reject(err)
+    this.pending.clear()
   }
 
   _onWorker(m) {
@@ -358,7 +372,14 @@ class SoundEngine {
     const token = ++this.token
     this.playing = false
     const first = Math.floor(fromSec / WINDOW_SECS)
-    const chunk = await this._renderChunk(first)
+    let chunk
+    try {
+      chunk = await this._renderChunk(first)
+    } catch (e) {
+      // rendering failed: report it so the caller can fall back to the basic sound
+      this._setStatus('error', { message: String(e?.message || e) })
+      return null
+    }
     if (token !== this.token) return null
     if (!chunk) return null
     this.offset = fromSec
