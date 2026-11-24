@@ -62,6 +62,8 @@ FaithScore provides an interactive staff notation editor supporting common music
 
 The rendering system is powered by **VexFlow**, while FaithScore's own application logic determines how musical structures should be represented and edited.
 
+Staff notation uses VexFlow's 10-unit staff space as its reference and calibrates the default space to 1.75 mm on the selected page's printable width. Engraving symbols scale independently from measure spacing so the current horizontal layout is preserved. Tonic Sol-fa uses a separate renderer and sizing system.
+
 ---
 
 ## 🎵 Tonic Sol-fa

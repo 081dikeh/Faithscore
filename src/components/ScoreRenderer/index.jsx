@@ -22,7 +22,13 @@ import {
   measureCapacity,
   keySignatureAccidentals,
   planPlacement,
+  PAGE_SIZES_MM,
 } from "../../store/scoreStore";
+import {
+  STAFF_LINE_WIDTH_PX,
+  VEXFLOW_STAFF_SPACE_PX,
+  notationScaleForPage,
+} from "../../utils/notationScale";
 import {
   getNoteLyric,
   anyNoteHasVerse,
@@ -61,25 +67,40 @@ const MEASURES_PER_LINE = 5;
 // dependency array) causes an infinite render loop. Reusing one constant avoids that.
 const EMPTY_ARR = [];
 
-// SP = pixels per staff space. Increase to make everything bigger, decrease for smaller.
-// 10 = compact, 12 = medium, 14 = large, 16 = very large
-const SP = 14;
-
-// Keep all rendered stems (including ghost-note previews) noticeably thinner
-// than VexFlow's default 1.5 px engraving width.
 const NOTE_STEM_WIDTH = 1.1;
-try {
+const NOTE_STEM_HEIGHT = Stem.HEIGHT;
+const LEDGER_LINE_OFFSET = StaveNote.LEDGER_LINE_OFFSET;
+
+function setVexFlowSymbolScale(scale) {
   Object.defineProperty(Stem, "WIDTH", {
-    value: NOTE_STEM_WIDTH,
+    value: NOTE_STEM_WIDTH * scale,
     configurable: true,
   });
-} catch (_) {}
+  Object.defineProperty(Stem, "HEIGHT", {
+    value: NOTE_STEM_HEIGHT * scale,
+    configurable: true,
+  });
+  Object.defineProperty(StaveNote, "LEDGER_LINE_OFFSET", {
+    value: LEDGER_LINE_OFFSET * scale,
+    configurable: true,
+  });
+}
 
-const STAFF_HEIGHT = SP * 4; // 48px — full staff (4 spaces between 5 lines)
-const PART_HEIGHT = SP * 11; // 154px — staff + gap to next staff in system
-const SYSTEM_GAP = SP * 8; // 96px — gap between rows of systems
-const STAVE_TOP = SP * 3; // 36px — top margin
-const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3; // 84px — click zone includes ledger lines
+function scaleMusicGlyphs(svg, scale) {
+  if (!svg || scale === 1) return;
+
+  svg.querySelectorAll("text").forEach((text) => {
+    const family = text.getAttribute("font-family") || "";
+    const isTupletText = text.closest(".vf-tuplet");
+    if (!/Bravura|Academico/i.test(family) && !isTupletText) return;
+
+    const size = text.getAttribute("font-size");
+    const match = size?.match(/^(\d*\.?\d+)(.*)$/);
+    if (!match) return;
+
+    text.setAttribute("font-size", `${Number(match[1]) * scale}${match[2]}`);
+  });
+}
 // ── Unified "above/below staff" clearance ──────────────────────────────────
 // Every marking that sits above or below the staff (dynamics, hairpins,
 // staff text/tempo, 8va/8vb, articulations) uses THIS SAME calculation, so
@@ -648,10 +669,30 @@ export default function ScoreRenderer() {
     if (!containerRef.current) return;
     containerRef.current.innerHTML = "";
 
+    let PAGE_W = 0;
+    let pageElement = containerRef.current.parentElement;
+    while (pageElement && PAGE_W < 50) {
+      PAGE_W = Math.floor(pageElement.clientWidth);
+      pageElement = pageElement.parentElement;
+    }
+    if (PAGE_W < 50) PAGE_W = 720;
+
     // Dynamic layout values from store (user-adjustable in Layout tab)
     // ── Dynamic layout constants ─────────────────────────────────────────────
     const SP = staffSize;
-    const STAFF_HEIGHT = SP * 4;
+    const pageSettings = score.pageSettings || {};
+    const pageSizeMm = PAGE_SIZES_MM[pageSettings.size] || PAGE_SIZES_MM.A4;
+    const usablePageWidthMm =
+      pageSizeMm.w - 2 * (pageSettings.marginSide ?? 14);
+    const notationScale = notationScaleForPage(PAGE_W, usablePageWidthMm);
+    const notationSP = SP * notationScale;
+    const scaledTieCurveDepth = (distance) =>
+      tieCurveDepth(distance) * notationScale;
+    const scaledSlurCurveDepth = (distance) =>
+      slurCurveDepth(distance) * notationScale;
+    setVexFlowSymbolScale(notationScale);
+
+    const STAFF_HEIGHT = notationSP * 4;
     // Extra headroom when the sol-fa-above-staff overlay is on: a fixed,
     // generous clearance for the sol-fa row (see the "Vertical clearance"
     // comment further down) needs real room reserved for it, or it
@@ -665,7 +706,7 @@ export default function ScoreRenderer() {
     // clearance directly — otherwise the first system's row renders at a
     // negative Y, off the top of the page entirely.
     const STAVE_TOP = score.showSolfaAbove ? SP * 6 : SP * 4;
-    const STAVE_HEIGHT = STAFF_HEIGHT + SP * 3;
+    const STAVE_HEIGHT = STAFF_HEIGHT + notationSP * 3;
     const LEFT_MARGIN = 20;
     const RIGHT_MARGIN = 20;
 
@@ -1088,13 +1129,6 @@ export default function ScoreRenderer() {
     // Preferred bars per line is a soft target — we break earlier if content
     // is too wide, or fit more if content is sparse.
     // Walk up DOM to get available width
-    let PAGE_W = 0;
-    let el = containerRef.current?.parentElement;
-    while (el && PAGE_W < 50) {
-      PAGE_W = Math.floor(el.clientWidth);
-      el = el.parentElement;
-    }
-    if (PAGE_W < 50) PAGE_W = 720;
     let SCALE = SP / 10;
     let DRAW_W = Math.round(PAGE_W / SCALE);
     let DRAW_H = Math.round((totalCols * 100) / SCALE); // temporary value for line breaking
@@ -1158,23 +1192,8 @@ export default function ScoreRenderer() {
 
     const totalLines = lines.length;
 
-    // Walk up the DOM to find a container with a real non-zero width.
-    // containerRef.current = VexFlow SVG div
-    // parentElement = div wrapper (width:100%)
-    // parentElement.parentElement = .score-page card
-    PAGE_W = 0;
-    el = containerRef.current?.parentElement;
-    while (el && PAGE_W < 50) {
-      PAGE_W = Math.floor(el.clientWidth);
-      el = el.parentElement;
-    }
-    if (PAGE_W < 50) PAGE_W = 720; // absolute fallback
-
-    // Subtract horizontal padding of the score-page card (37px each side = 74px)
-    // so the SVG canvas exactly fills the white paper between margins
-    // Symbol scale factor: SP=10 is VexFlow default size.
-    // At SP=14, symbols are 40% bigger. We scale the drawing context
-    // and adjust the internal coordinate space accordingly.
+    // Keep measure-layout SP intact; only VexFlow's engraving unit and glyphs
+    // use notationScale so note positions and system widths do not move.
     SCALE = SP / 10; // e.g. SP=14 → SCALE=1.4
     DRAW_W = Math.round(PAGE_W / SCALE); // internal drawing width
     DRAW_H = Math.round((totalLines * systemH + 80) / SCALE);
@@ -1369,7 +1388,9 @@ export default function ScoreRenderer() {
           const width = colWidths[colInLine];
           const x = colX[colInLine];
 
-          const stave = new Stave(x, partY, width);
+          const stave = new Stave(x, partY, width, {
+            spacingBetweenLinesPx: notationSP,
+          });
           if (isFirst) {
             addClefTo(stave, clef);
             // Courtesy cancellation: if this line's opening key differs
@@ -1443,8 +1464,17 @@ export default function ScoreRenderer() {
             col === selectedMeasureIndex &&
             part.id === selectedPartId &&
             !selectedNoteId;
-          if (isMeasureSel)
-            stave.setStyle({ fillStyle: "#1d4ed8", strokeStyle: "#1d4ed8" });
+          stave.setStyle({
+            ...stave.getStyle(),
+            lineWidth: STAFF_LINE_WIDTH_PX * notationScale,
+            ...(isMeasureSel
+              ? { fillStyle: "#1d4ed8", strokeStyle: "#1d4ed8" }
+              : {}),
+          });
+          stave.setDefaultLedgerLineStyle({
+            strokeStyle: "#444",
+            lineWidth: STAFF_LINE_WIDTH_PX * notationScale,
+          });
           stave.setContext(ctx).draw();
 
           // 1st / 2nd-time ending brackets -- only above the first part. Each bar
@@ -1924,6 +1954,10 @@ export default function ScoreRenderer() {
                 applyGroupDir(runVfNotes, runSeqNotes);
                 try {
                   const beam = new Beam(runVfNotes, false);
+                  beam.renderOptions.beamWidth *= notationScale;
+                  beam.renderOptions.stemletExtension *= notationScale;
+                  beam.renderOptions.partialBeamLength *= notationScale;
+                  beam.renderOptions.minFlatBeamOffset *= notationScale;
                   runVfNotes.forEach((vfn) => {
                     try {
                       vfn.setFlagStyle({
@@ -2051,7 +2085,7 @@ export default function ScoreRenderer() {
                   (seqNote.articulation ? [seqNote.articulation] : []);
                 if (!marks.length || seqNote.isRest) return;
                 const vfNote = vfNotes[ni];
-                const nx = vfNote.getAbsoluteX() + 4;
+                const nx = vfNote.getAbsoluteX() + 4 * notationScale;
 
                 // Default: just above the staff, using the SAME clearance
                 // (1.2 staff-spaces) as dynamics/hairpins/text/8va, so every
@@ -2059,19 +2093,19 @@ export default function ScoreRenderer() {
                 // notehead itself sits higher (on ledger lines above the
                 // staff), lift the whole stack just enough to clear it —
                 // capped so it never drifts far from the staff.
-                let baseAy = partY - SP * 1.2;
+                let baseAy = partY - notationSP * 1.2;
                 try {
                   const ys = vfNote.getYs ? vfNote.getYs() : [];
                   if (ys.length) {
                     const topY = Math.min(...ys);
                     if (topY < baseAy) {
-                      baseAy = Math.max(topY - SP, partY - SP * 4);
+                      baseAy = Math.max(topY - notationSP, partY - notationSP * 4);
                     }
                   }
                 } catch (_) {}
 
-                const STACK_GAP = SP * 1.7; // vertical spacing between stacked marks
-                const artFontSize = SP * 1.6;
+                const STACK_GAP = notationSP * 1.7;
+                const artFontSize = notationSP * 1.6;
 
                 marks.forEach((art, markIndex) => {
                   const ay = baseAy - markIndex * STACK_GAP;
@@ -2082,63 +2116,83 @@ export default function ScoreRenderer() {
 
                   if (art === "staccato") {
                     ctx.beginPath();
-                    ctx.arc(nx, ay, SP * 0.4, 0, Math.PI * 2);
+                    ctx.arc(nx, ay, notationSP * 0.4, 0, Math.PI * 2);
                     ctx.fill();
                   } else if (art === "tenuto") {
-                    ctx.fillRect(nx - SP * 0.8, ay, SP * 1.6, SP * 0.35);
+                    ctx.fillRect(
+                      nx - notationSP * 0.8,
+                      ay,
+                      notationSP * 1.6,
+                      notationSP * 0.35,
+                    );
                   } else if (art === "accent") {
-                    ctx.font = `bold ${SP * 2.2}px serif`;
-                    ctx.fillText(">", nx - SP * 0.8, ay + SP * 0.6);
+                    ctx.font = `bold ${notationSP * 2.2}px serif`;
+                    ctx.fillText(">", nx - notationSP * 0.8, ay + notationSP * 0.6);
                   } else if (art === "marcato") {
-                    ctx.font = `bold ${SP * 2}px serif`;
-                    ctx.fillText("^", nx - SP * 0.6, ay + SP * 0.2);
+                    ctx.font = `bold ${notationSP * 2}px serif`;
+                    ctx.fillText("^", nx - notationSP * 0.6, ay + notationSP * 0.2);
                   } else if (art === "fermata") {
-                    ctx.font = `bold ${SP * 2.4}px serif`;
-                    ctx.fillText("𝄐", nx - SP * 0.8, ay + SP * 0.2);
+                    ctx.font = `bold ${notationSP * 2.4}px serif`;
+                    ctx.fillText("𝄐", nx - notationSP * 0.8, ay + notationSP * 0.2);
                   } else if (art === "trill") {
-                    ctx.font = `italic bold ${SP * 1.8}px serif`;
-                    ctx.fillText("tr", nx - SP * 0.6, ay + SP * 0.2);
+                    ctx.font = `italic bold ${notationSP * 1.8}px serif`;
+                    ctx.fillText("tr", nx - notationSP * 0.6, ay + notationSP * 0.2);
                   } else if (art === "mordent") {
-                    ctx.font = `bold ${SP * 2}px serif`;
-                    ctx.fillText("𝆁", nx - SP * 0.6, ay + SP * 0.2);
+                    ctx.font = `bold ${notationSP * 2}px serif`;
+                    ctx.fillText("𝆁", nx - notationSP * 0.6, ay + notationSP * 0.2);
                   } else if (art === "turn") {
-                    ctx.font = `bold ${SP * 2}px serif`;
-                    ctx.fillText("𝆃", nx - SP * 0.6, ay + SP * 0.2);
+                    ctx.font = `bold ${notationSP * 2}px serif`;
+                    ctx.fillText("𝆃", nx - notationSP * 0.6, ay + notationSP * 0.2);
                   } else if (art === "staccatissimo") {
                     ctx.beginPath();
-                    ctx.moveTo(nx, ay - SP * 0.5);
-                    ctx.lineTo(nx - SP * 0.4, ay + SP * 0.3);
-                    ctx.lineTo(nx + SP * 0.4, ay + SP * 0.3);
+                    ctx.moveTo(nx, ay - notationSP * 0.5);
+                    ctx.lineTo(nx - notationSP * 0.4, ay + notationSP * 0.3);
+                    ctx.lineTo(nx + notationSP * 0.4, ay + notationSP * 0.3);
                     ctx.closePath();
                     ctx.fill();
                   } else if (art === "portato") {
                     ctx.fillRect(
-                      nx - SP * 0.7,
-                      ay + SP * 0.2,
-                      SP * 1.4,
-                      SP * 0.3,
+                      nx - notationSP * 0.7,
+                      ay + notationSP * 0.2,
+                      notationSP * 1.4,
+                      notationSP * 0.3,
                     );
                     ctx.beginPath();
-                    ctx.arc(nx, ay - SP * 0.4, SP * 0.3, 0, Math.PI * 2);
+                    ctx.arc(
+                      nx,
+                      ay - notationSP * 0.4,
+                      notationSP * 0.3,
+                      0,
+                      Math.PI * 2,
+                    );
                     ctx.fill();
                   } else if (art === "harmonic") {
                     ctx.strokeStyle = "#1e293b";
-                    ctx.lineWidth = 1.8;
+                    ctx.lineWidth = 1.8 * notationScale;
                     ctx.beginPath();
-                    ctx.arc(nx, ay, 5, 0, Math.PI * 2);
+                    ctx.arc(nx, ay, 5 * notationScale, 0, Math.PI * 2);
                     ctx.stroke();
                   } else if (art === "snap-pizz") {
-                    ctx.font = "bold 20px serif";
-                    ctx.fillText("⊙", nx - 6, ay + 5);
+                    ctx.font = `bold ${20 * notationScale}px serif`;
+                    ctx.fillText(
+                      "⊙",
+                      nx - 6 * notationScale,
+                      ay + 5 * notationScale,
+                    );
                   } else if (art === "vibrato") {
                     // Short wavy squiggle above the note
                     ctx.strokeStyle = "#1e293b";
-                    ctx.lineWidth = 1.8;
+                    ctx.lineWidth = 1.8 * notationScale;
                     ctx.beginPath();
-                    const wy = ay - 2;
-                    ctx.moveTo(nx - 8, wy);
+                    const wy = ay - 2 * notationScale;
+                    ctx.moveTo(nx - 8 * notationScale, wy);
                     for (let i = -8; i <= 8; i += 4) {
-                      ctx.quadraticCurveTo(nx + i + 2, wy - 3, nx + i + 4, wy);
+                      ctx.quadraticCurveTo(
+                        nx + (i + 2) * notationScale,
+                        wy - 3 * notationScale,
+                        nx + (i + 4) * notationScale,
+                        wy,
+                      );
                     }
                     ctx.stroke();
                   }
@@ -2219,7 +2273,14 @@ export default function ScoreRenderer() {
             // hardcoded, letting both reuse the exact same clearance/inset
             // geometry instead of two separately-tuned (and previously
             // inconsistent) drawing paths.
-            const drawTieCanvas = (x1, y1, x2, y2, stemUp, depthFn = tieCurveDepth) =>
+            const drawTieCanvas = (
+              x1,
+              y1,
+              x2,
+              y2,
+              stemUp,
+              depthFn = scaledTieCurveDepth,
+            ) =>
               drawTieCurve(ctx, x1, y1, x2, y2, stemUp, depthFn);
 
             // Record where each note sits (used by the cross-bar pass below).
@@ -2371,7 +2432,7 @@ export default function ScoreRenderer() {
                 ty = ny;
               }
 
-              drawTieCanvas(nx, ny, tx, ty, stemUp, slurCurveDepth);
+              drawTieCanvas(nx, ny, tx, ty, stemUp, scaledSlurCurveDepth);
             });
 
             // ── MIXED NOTATION: sol-fa syllable above each note ────────────────
@@ -2395,12 +2456,12 @@ export default function ScoreRenderer() {
 
               if (beats) {
                 const solfaY = partY - SP * -0.5;
-                const solfaFont = `600 ${SP * 1.4}px Georgia, serif`;
-                const rhythmFont = `600 ${SP * 1.1}px Georgia, serif`;
+                const solfaFont = `600 ${notationSP * 1.4}px Georgia, serif`;
+                const rhythmFont = `600 ${notationSP * 1.1}px Georgia, serif`;
                 // Octave number — sized relative to the main syllable the
                 // same way SolfaRenderer sizes its own OCT_SZ relative to
                 // its NOTE_SZ (8/14 of the main glyph).
-                const octFont = `700 ${SP * 1.4 * (8 / 14)}px Georgia, serif`;
+                const octFont = `700 ${notationSP * 1.4 * (8 / 14)}px Georgia, serif`;
 
                 const drawChar = (ch, cx, font, color) => {
                   if (cx == null) return;
@@ -2472,10 +2533,10 @@ export default function ScoreRenderer() {
                 try {
                   ctx.save();
                   ctx.strokeStyle = "#1a1a1a";
-                  ctx.lineWidth = Math.max(1, SP * 0.08);
+                  ctx.lineWidth = Math.max(0.5, notationSP * 0.08);
                   ctx.beginPath();
-                  ctx.moveTo(x, solfaY - SP * 1.3);
-                  ctx.lineTo(x, solfaY + SP * 0.5);
+                  ctx.moveTo(x, solfaY - notationSP * 1.3);
+                  ctx.lineTo(x, solfaY + notationSP * 0.5);
                   ctx.stroke();
                   ctx.restore();
                 } catch (_) {}
@@ -2526,7 +2587,9 @@ export default function ScoreRenderer() {
                           ctx.fillStyle = "#1a1a1a";
                           ctx.textAlign = "left";
                           ctx.textBaseline = ev.octave > 0 ? "alphabetic" : "hanging";
-                          const octY = ev.octave > 0 ? solfaY - SP * 0.55 : solfaY + SP * 0.1;
+                          const octY = ev.octave > 0
+                            ? solfaY - notationSP * 0.55
+                            : solfaY + notationSP * 0.1;
                           ctx.fillText(String(Math.abs(ev.octave)), noteX + bodyW, octY);
                           ctx.restore();
                         } catch (_) {}
@@ -2557,8 +2620,8 @@ export default function ScoreRenderer() {
                   const sx = posCX.get(`${startPos.beatIdx}-${startPos.eventIdx}`);
                   const ex = posCX.get(`${endPos.beatIdx}-${endPos.eventIdx}`);
                   if (sx == null || ex == null || ex <= sx) continue;
-                  const arcY = solfaY - SP * 0.9;
-                  drawTieCanvas(sx, arcY, ex, arcY, false, () => SP * 0.6);
+                  const arcY = solfaY - notationSP * 0.9;
+                  drawTieCanvas(sx, arcY, ex, arcY, false, () => notationSP * 0.6);
                 }
               }
             }
@@ -2785,8 +2848,8 @@ export default function ScoreRenderer() {
                 ? next.notes.find((q) => !q.chordWith && !q.isRest && pitchesMatch(n, q))
                 : null;
               const E = target ? noteGeom.get(target.id) : null;
-              if (E) connect(S, E, tieCurveDepth);
-              else stub(S, tieCurveDepth);
+              if (E) connect(S, E, scaledTieCurveDepth);
+              else stub(S, scaledTieCurveDepth);
             }
             // SLURS whose end is not in this bar
             if (n.slurStart) {
@@ -2795,13 +2858,15 @@ export default function ScoreRenderer() {
               const S = noteGeom.get(n.id);
               if (!S) return;
               const E = endId ? noteGeom.get(endId) : null;
-              if (E) connect(S, E, slurCurveDepth);
-              else stub(S, slurCurveDepth);
+              if (E) connect(S, E, scaledSlurCurveDepth);
+              else stub(S, scaledSlurCurveDepth);
             }
           });
         });
       });
     }
+
+    scaleMusicGlyphs(svgEl, notationScale);
 
     // Zones are measured in drawing units, but everything that uses them
     // (hit areas, the ghost note, highlights) is positioned in screen pixels.

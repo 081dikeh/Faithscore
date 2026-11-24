@@ -5,6 +5,8 @@
 import { useEffect, useRef, useCallback } from 'react'
 import * as Tone from 'tone'
 import { useScoreStore, noteDuration, measureCapacity } from '../store/scoreStore'
+import { soundEngine } from '../audio/soundEngine'
+import { getInstrument } from '../audio/instruments'
 import { buildPlaySegments, expandRepeats, effectiveRepeats, markersFromStaffTexts } from '../utils/segnoNavigation'
 
 // ── SAMPLER CONFIG ────────────────────────────────────────────────────────────
@@ -55,6 +57,40 @@ function pitchToTone(pitch) {
             : pitch.accidental === '##' ? '##'
             : pitch.accidental === 'bb' ? 'bb' : ''
   return `${pitch.step}${acc}${pitch.octave}`
+}
+
+// ── Sound engine (real instrument sounds, one per part) ───────────────────────
+const NOTE_SEMITONE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }
+function toneNameToMidi(name) {
+  const m = /^([A-G])(#{1,2}|b{1,2})?(-?\d+)$/.exec(String(name))
+  if (!m) return null
+  const acc = m[2] ? (m[2][0] === '#' ? m[2].length : -m[2].length) : 0
+  return (parseInt(m[3], 10) + 1) * 12 + NOTE_SEMITONE[m[1]] + acc
+}
+// 0..1 dynamics → MIDI velocity (pp ≈ 45, mf ≈ 90, ff ≈ 116) — SoundFonts switch to
+// brighter/louder sample layers as velocity rises, which is what makes dynamics audible.
+const toMidiVelocity = (v) => Math.max(1, Math.min(127, Math.round(24 + 100 * v)))
+
+// score + schedule → what the sound engine renders: events per part, per-part instrument
+function buildEngineSpec(score, schedule) {
+  const byPart = new Map(score.parts.map(p => [p.id, []]))
+  for (const ev of schedule.events) {
+    const list = byPart.get(ev.partId)
+    if (!list) continue
+    const vel = toMidiVelocity(ev.velocity)
+    for (const name of ev.notes) {
+      const midi = toneNameToMidi(name)
+      if (midi != null) list.push({ t: ev.time, d: Math.max(0.05, ev.dur), midi, vel })
+    }
+  }
+  // voices in a multi-part score are spread gently across the stereo field (S left … B right)
+  const voiceIdx = score.parts.map((p, i) => getInstrument(p.instrument).voice ? i : -1).filter(i => i >= 0)
+  const tracks = score.parts.map((p, i) => {
+    const vi = voiceIdx.indexOf(i)
+    const pan = vi >= 0 && voiceIdx.length >= 3 ? -0.3 + (0.6 * vi) / (voiceIdx.length - 1) : undefined
+    return { id: p.id, instrumentId: p.instrument, events: byPart.get(p.id), pan }
+  })
+  return { tracks, total: schedule.totalSecs }
 }
 
 // ── Build full event schedule from score ──────────────────────────────────────
@@ -336,6 +372,7 @@ export function usePlayback() {
   // load a separate instrument per part.
   const partVolsRef    = useRef({}) // partId -> 0..100, default 100
   const partMutesRef   = useRef({}) // partId -> boolean
+  const engineRef      = useRef(false) // true while the sound engine (not the old sampler) is playing
 
   // ── Effects chain ─────────────────────────────────────────────────────────
   function getEffectsChain() {
@@ -413,6 +450,21 @@ export function usePlayback() {
     }
   }
 
+  const currentSecNow = () =>
+    engineRef.current ? soundEngine.getPosition() : seekOffsetRef.current + (Tone.now() - transportStart.current)
+
+  // part.mix (saved with the score) → live mixer
+  function applyMixToEngine(sc) {
+    sc.parts.forEach(p => {
+      const m = p.mix || {}
+      soundEngine.setPartMix(p.id, {
+        volume: partVolsRef.current[p.id] ?? m.volume ?? 100,
+        pan: m.pan ?? 0, solo: !!m.solo, reverb: m.reverb ?? 100,
+        mute: partMutesRef.current[p.id] ?? !!m.mute,
+      })
+    })
+  }
+
   // ── Cursor RAF loop ───────────────────────────────────────────────────────
   function startCursorLoop() {
     const tick = () => {
@@ -421,10 +473,11 @@ export function usePlayback() {
       const totalSec   = totalSecsRef.current
       const secPerBeat = 60 / tempoRef.current
 
-      const positionSec = seekOffsetRef.current + elapsed
+      const positionSec = engineRef.current ? soundEngine.getPosition() : seekOffsetRef.current + elapsed
       if (positionSec >= totalSec + 0.15) {
         if (loopRef.current) {
           // Loop: restart from beginning
+          if (engineRef.current) { scheduleAndPlay(0); return }
           seekOffsetRef.current  = 0
           transportStart.current = Tone.now()
           setPlaybackBeat(0)
@@ -447,6 +500,7 @@ export function usePlayback() {
 
   // ── Internal stop ─────────────────────────────────────────────────────────
   function doStop(clearBeat = true) {
+    soundEngine.stop()
     Tone.getTransport().stop()
     Tone.getTransport().cancel()
     isPlayingRef.current = false
@@ -470,6 +524,33 @@ export function usePlayback() {
     seekOffsetRef.current = startSec
 
     if (schedule.events.length === 0) return
+
+    // ── Preferred path: real instrument sounds, one per part ──────────────
+    // (falls back to the single built-in piano sampler if the sound bank can't load)
+    if (await soundEngine.ready()) {
+      soundEngine.setScore(buildEngineSpec(score, schedule))
+      applyMixToEngine(score)
+      engineRef.current = true
+      const startAt = await soundEngine.play(startSec)
+      if (startAt == null) return
+      if (metronomeOnRef.current) {
+        const met = getMetronome()
+        const secPerBeat = 60 / effectiveTempo
+        const firstBeat  = Math.ceil(startSec / secPerBeat - 1e-6)
+        const lastBeat   = Math.min(Math.floor(schedule.totalSecs / secPerBeat), firstBeat + 600)
+        for (let b = firstBeat; b <= lastBeat; b++) {
+          const t = startAt + (b * secPerBeat - startSec)
+          if (t < soundEngine.now()) continue
+          try { met.triggerAttackRelease(b % 4 === 0 ? 'C6' : 'G5', '32n', t) } catch (_) {}
+        }
+      }
+      isPlayingRef.current = true
+      isPausedRef.current  = false
+      setIsPlaying(true)
+      startCursorLoop()
+      return
+    }
+    engineRef.current = false
 
     const instrument = await getInstrument()
     const LEAD = 0.1
@@ -520,6 +601,14 @@ export function usePlayback() {
   const play = useCallback(async () => {
     await Tone.start()
     // If paused, resume from where we stopped
+    if (isPausedRef.current && engineRef.current) {
+      await soundEngine.resume()
+      isPlayingRef.current = true
+      isPausedRef.current  = false
+      setIsPlaying(true)
+      startCursorLoop()
+      return
+    }
     if (isPausedRef.current) {
       Tone.getTransport().start()
       isPlayingRef.current = true
@@ -535,6 +624,15 @@ export function usePlayback() {
 
   const pause = useCallback(() => {
     if (!isPlayingRef.current) return
+    if (engineRef.current) {
+      soundEngine.pause()
+      seekOffsetRef.current = soundEngine.getPosition()
+      isPlayingRef.current = false
+      isPausedRef.current  = true
+      setIsPlaying(false)
+      stopCursorLoop()
+      return
+    }
     // Save current position before pausing
     const elapsed = Tone.now() - transportStart.current
     seekOffsetRef.current += elapsed
@@ -581,10 +679,11 @@ export function usePlayback() {
   const setTempo = useCallback((bpm) => {
     userTempoRef.current = bpm ? Math.max(20, Math.min(300, bpm)) : null
     if (isPlayingRef.current) {
-      // Restart from current position with new tempo
-      const elapsed = Tone.now() - transportStart.current
-      const currentSec = seekOffsetRef.current + elapsed
-      scheduleAndPlay(currentSec)
+      // Restart from current position with new tempo. Event times scale with
+      // the tempo, so the position is converted from the old tempo's seconds.
+      const oldTempo = tempoRef.current
+      const newTempo = userTempoRef.current || score.tempo || 120
+      scheduleAndPlay(currentSecNow() * (oldTempo / newTempo))
     }
   }, [score])
 
@@ -595,6 +694,8 @@ export function usePlayback() {
   // actually take effect, same as setTempo just above.
   const setPartVolume = useCallback((partId, pct) => {
     partVolsRef.current[partId] = pct
+    useScoreStore.getState().setPartMix?.(partId, { volume: pct })
+    if (engineRef.current) { soundEngine.setPartMix(partId, { volume: pct }); return }
     if (isPlayingRef.current) {
       const elapsed = Tone.now() - transportStart.current
       const currentSec = seekOffsetRef.current + elapsed
@@ -604,6 +705,8 @@ export function usePlayback() {
 
   const setPartMute = useCallback((partId, muted) => {
     partMutesRef.current[partId] = muted
+    useScoreStore.getState().setPartMix?.(partId, { mute: muted })
+    if (engineRef.current) { soundEngine.setPartMix(partId, { mute: muted }); return }
     if (isPlayingRef.current) {
       const elapsed = Tone.now() - transportStart.current
       const currentSec = seekOffsetRef.current + elapsed
@@ -611,6 +714,11 @@ export function usePlayback() {
     }
   }, [score])
 
+  // Pan / solo / reverb exist only with the sound engine (live, instant). They are
+  // saved with the score so a part keeps its mix next time.
+  const setPartPan    = useCallback((partId, pan)   => { useScoreStore.getState().setPartMix?.(partId, { pan });    soundEngine.setPartMix(partId, { pan }) }, [])
+  const setPartSolo   = useCallback((partId, solo)  => { useScoreStore.getState().setPartMix?.(partId, { solo });   soundEngine.setPartMix(partId, { solo }) }, [])
+  const setPartReverb = useCallback((partId, wet)   => { useScoreStore.getState().setPartMix?.(partId, { reverb: wet }); soundEngine.setPartMix(partId, { reverb: wet }) }, [])
   const getPartVolume = useCallback((partId) => partVolsRef.current[partId] ?? 100, [])
   const getPartMuted  = useCallback((partId) => partMutesRef.current[partId] ?? false, [])
 
@@ -635,7 +743,7 @@ export function usePlayback() {
   const getCurrentSec = useCallback(() => {
     if (!isPlayingRef.current && !isPausedRef.current) return 0
     if (isPausedRef.current) return seekOffsetRef.current
-    return seekOffsetRef.current + (Tone.now() - transportStart.current)
+    return currentSecNow()
   }, [])
 
   const getTotalSecs  = useCallback(() => totalSecsRef.current, [])
@@ -664,5 +772,6 @@ export function usePlayback() {
     isLooping:     () => loopRef.current,
     isPaused:      () => isPausedRef.current,
     setPartVolume, setPartMute, getPartVolume, getPartMuted,
+    setPartPan, setPartSolo, setPartReverb,
   }
 }

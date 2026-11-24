@@ -13,6 +13,7 @@ import { useState } from 'react'
 import { Search } from 'lucide-react'
 import { useScoreStore, measureCapacity } from '../../store/scoreStore'
 import VersePanel from '../VersePanel'
+import InstrumentSelect from '../InstrumentSelect'
 import RepeatsPanel from '../RepeatsPanel'
 import { verseNumbersInNotes } from '../../utils/lyricVerses'
 
@@ -372,6 +373,7 @@ function PartsTab() {
   const movePartDown = useScoreStore(s => s.movePartDown)
   const selectedPartId = useScoreStore(s => s.selectedPartId)
   const setSelectedPart = useScoreStore(s => s.setSelectedPart)
+  const setPartInstrument = useScoreStore(s => s.setPartInstrument)
 
   return (
     <div style={{ padding:'10px 12px' }}>
@@ -382,7 +384,7 @@ function PartsTab() {
         <div key={p.id}
           onClick={() => setSelectedPart?.(p.id)}
           style={{
-            display:'flex', alignItems:'center', gap:6, padding:'6px 8px',
+            display:'flex', alignItems:'center', gap:6, padding:'6px 8px', flexWrap:'wrap',
             marginBottom:3, borderRadius:6, cursor:'pointer',
             background: selectedPartId === p.id ? '#eff6ff' : 'white',
             border: `1px solid ${selectedPartId === p.id ? '#93c5fd' : '#e5e7eb'}`,
@@ -408,6 +410,9 @@ function PartsTab() {
               style={{ width:18, height:18, border:'none', background:'none', cursor:'pointer',
                 fontSize:11, color:'#f87171', borderRadius:3 }}
               title="Remove part">×</button>
+          </div>
+          <div style={{ flexBasis:'100%' }}>
+            <InstrumentSelect value={p.instrument} onChange={id => setPartInstrument(p.id, id)} style={{ width:'100%' }} />
           </div>
         </div>
       ))}

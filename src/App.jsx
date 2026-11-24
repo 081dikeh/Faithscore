@@ -55,6 +55,8 @@ import { convertStaffScoreToSolfa } from "./utils/staffToSolfa";
 import { convertSolfaScoreToStaff } from "./utils/solfaToStaff";
 import PublishToFaithLibrary from "./components/PublishToFaithLibrary";
 import { usePlayback } from "./hooks/usePlayback";
+import { useSoundStatus } from "./audio/useSoundStatus";
+import InstrumentSelect from "./components/InstrumentSelect";
 import PianoKeyboard from "./components/PianoKeyboard";
 import { supabase } from "./lib/supabase";
 import SolfaApp from "./components/SolfaApp";
@@ -970,7 +972,11 @@ export default function App() {
     toggleLoop,
     setPartVolume,
     setPartMute,
+    setPartPan,
+    setPartSolo,
   } = usePlayback();
+  const soundStatus = useSoundStatus();
+  const setPartInstrument = useScoreStore((s) => s.setPartInstrument);
 
   // ── Local UI state — all declared together before any logic ───────────────
   const [samplesLoaded, setSamplesLoaded] = useState(false);
@@ -2723,9 +2729,19 @@ export default function App() {
             >
               <SlidersHorizontal size={16} strokeWidth={1.75} />
             </button>
-            {samplesLoading && (
+            {(samplesLoading || soundStatus.status === "loading") && (
               <span className="text-amber-500 text-xs animate-pulse">
-                Loading…
+                {soundStatus.status === "loading" && soundStatus.info?.stage === "download" && !soundStatus.info?.cached
+                  ? `Loading instrument sounds${soundStatus.info.total ? ` ${Math.round((soundStatus.info.loaded / soundStatus.info.total) * 100)}%` : "…"}`
+                  : "Loading…"}
+              </span>
+            )}
+            {soundStatus.status === "error" && (
+              <span
+                className="text-red-500 text-xs"
+                title={`${soundStatus.info?.message || ""} Playing with the basic piano sound instead.`}
+              >
+                Basic sound only
               </span>
             )}
           </div>
@@ -2850,8 +2866,14 @@ export default function App() {
                   <span
                     style={{ fontSize: 12, fontWeight: 700, color: "#e5e7eb" }}
                   >
-                    {part.name || part.instrument || "Part"}
+                    {part.name || "Part"}
                   </span>
+                  <InstrumentSelect
+                    dark
+                    value={part.instrument}
+                    onChange={(id) => setPartInstrument(part.id, id)}
+                    style={{ width: 118 }}
+                  />
                   <input
                     type="range"
                     min={0}
@@ -2905,6 +2927,26 @@ export default function App() {
                   >
                     {muted ? "UNMUTE" : "MUTE"}
                   </button>
+                  <button
+                    onClick={() => setPartSolo(part.id, !part.mix?.solo)}
+                    title="Solo — hear only this part"
+                    style={{
+                      width: 40, height: 20, borderRadius: 4, border: "none", cursor: "pointer",
+                      fontSize: 9, fontWeight: 700,
+                      background: part.mix?.solo ? "#f59e0b" : "#374151", color: "white",
+                    }}
+                  >
+                    SOLO
+                  </button>
+                  <label style={{ fontSize: 9, color: "#9ca3af", display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                    PAN {Math.abs(part.mix?.pan ?? 0) < 4 ? "C" : (part.mix.pan < 0 ? "L" : "R") + Math.abs(part.mix.pan)}
+                    <input
+                      type="range" min={-100} max={100} value={part.mix?.pan ?? 0}
+                      onChange={(e) => setPartPan(part.id, Number(e.target.value))}
+                      onDoubleClick={() => setPartPan(part.id, 0)}
+                      style={{ width: 80 }}
+                    />
+                  </label>
                 </div>
               );
             })}

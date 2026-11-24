@@ -597,6 +597,16 @@ export const useScoreStore = create((set, get) => ({
     )}
   })),
 
+  // Mixer settings for a part ({ volume 0-100, pan -100..100, mute, solo, reverb 0-100 }) —
+  // saved with the score. Not an undo step: moving a fader isn't an edit of the music.
+  setPartMix: (partId, patch) => {
+    set(s => ({
+      score: { ...s.score, parts: s.score.parts.map(p =>
+        p.id === partId ? { ...p, mix: { ...(p.mix || {}), ...patch } } : p
+      )}
+    }))
+  },
+
   setPartInstrument: (partId, instrument) => set(s => ({
     score: { ...s.score, parts: s.score.parts.map(p =>
       p.id === partId ? { ...p, instrument } : p

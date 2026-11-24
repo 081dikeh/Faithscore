@@ -391,7 +391,9 @@ export function convertSolfaScoreToStaff(solfaScore) {
       endNote.slurEnd = true
     }
 
-    return { id: crypto.randomUUID(), name, instrument: 'piano', clef, measures }
+    // each Solfa voice plays as that voice, not as a piano
+    const instrument = { s: 'soprano-voice', a: 'alto-voice', t: 'tenor-voice', b: 'bass-voice' }[voicePart.id] || 'voice'
+    return { id: crypto.randomUUID(), name, instrument, clef, measures }
   })
 
   return { score: staffScore, warnings: [...new Set(warnings)] }

@@ -4,4 +4,6 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  base: './',
+  worker: { format: 'es' }, // the sound-rendering worker is an ES module
 })

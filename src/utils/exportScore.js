@@ -5,6 +5,7 @@
 
 import { DURATION_BEATS, noteDuration, measureCapacity, normalizeMeasure, PAGE_SIZES_MM, useScoreStore } from '../store/scoreStore.js'
 import { dialog } from './dialog.js'
+import { guessInstrumentId, getInstrument, INSTRUMENTS } from '../audio/instruments.js'
 import { buildPlaySegments, expandRepeats, effectiveRepeats, markersFromStaffTexts } from './segnoNavigation.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -49,7 +50,13 @@ export function exportMusicXML(score) {
 
   const partListItems = parts.map((p, i) =>
     xml('score-part', { id: `P${i+1}` },
-      xmlLeaf('part-name', p.name)
+      xmlLeaf('part-name', p.name),
+      xml('score-instrument', { id: `P${i+1}-I1` }, xmlLeaf('instrument-name', getInstrument(p.instrument).name)),
+      xml('midi-instrument', { id: `P${i+1}-I1` },
+        xmlLeaf('midi-channel', getInstrument(p.instrument).unpitched ? '10' : String(Math.min(16, i + 1 + (i >= 9 ? 1 : 0)))),
+        getInstrument(p.instrument).unpitched
+          ? xmlLeaf('midi-unpitched', String(getInstrument(p.instrument).drum + 1))
+          : xmlLeaf('midi-program', String(getInstrument(p.instrument).program + 1)))
     )
   )
 
@@ -289,8 +296,13 @@ export function importMusicXML(xmlText) {
   }
 
   const partNameById = {}
+  const partInstrById = {}
   root.querySelectorAll('part-list > score-part').forEach(sp => {
     partNameById[sp.getAttribute('id')] = sp.querySelector('part-name')?.textContent?.trim() || sp.getAttribute('id')
+    partInstrById[sp.getAttribute('id')] = {
+      name: sp.querySelector('score-instrument > instrument-name')?.textContent?.trim() || '',
+      program: parseInt(sp.querySelector('midi-instrument > midi-program')?.textContent || '', 10),
+    }
   })
 
   const partEls = Array.from(root.querySelectorAll('part'))
@@ -464,7 +476,17 @@ export function importMusicXML(xmlText) {
       }
     })
 
-    return { id: internalPartId, name, instrument: 'piano', clef, measures }
+    // What does this part play? Try the part's own name, then the instrument the
+    // file declares, then its MIDI program; "Soprano"/"Alto"/"Tenor"/"Bass" parts
+    // of a 3+ part score are voices.
+    const declared = partInstrById[xmlPartId] || {}
+    let instrument = guessInstrumentId(name, partEls.length)
+    if (instrument === 'piano' && declared.name) instrument = guessInstrumentId(declared.name, partEls.length)
+    if (instrument === 'piano' && declared.program > 0) {
+      const byProgram = INSTRUMENTS.find((x) => !x.unpitched && x.program === declared.program - 1)
+      if (byProgram) instrument = byProgram.id
+    }
+    return { id: internalPartId, name, instrument, clef, measures }
   })
 
   // Defensive: pad all parts to the same measure count
