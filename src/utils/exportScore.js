@@ -877,7 +877,7 @@ export function printScore(score) {
     #faithscore-print-root { display: none; }
     .fs-print-header {
       text-align: center; margin-bottom: 2mm; padding-bottom: 1mm;
-      border-bottom: 0.5pt solid #ccc; font-family: 'Times New Roman', serif;
+      border-bottom: 0.5pt solid #ccc; font-family: Edwin, 'Gentium Plus', 'Times New Roman', serif;
     }
     .fs-print-header h1 { font-size: 15pt; font-weight: bold; margin: 0; }
     .fs-print-header p  { font-size: 9pt; color: #555; text-align: right; margin: 1mm 0 0; }

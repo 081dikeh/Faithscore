@@ -3,6 +3,7 @@
 
 import { useState } from 'react'
 import { useSolfaStore } from '../../store/solfaStore'
+import { FONT_SCORE } from '../../fonts/fonts'
 
 const SYLLABLES = ['d', 'r', 'm', 'f', 's', 'l', 't']
 const CHROMATIC = ['de', 'ri', 'fe', 'se', 'ta']  // chromatic alterations
@@ -56,7 +57,7 @@ export default function SolfaEditor() {
         background: active ? (color ? color + '18' : '#eff6ff') : 'white',
         color: active ? (color || '#2563eb') : '#374151',
         borderRadius: 5, cursor: 'pointer', transition: 'all 0.1s',
-        fontFamily: '"Times New Roman", serif',
+        fontFamily: FONT_SCORE,
       }}>
       {label}
     </button>
@@ -162,7 +163,7 @@ export default function SolfaEditor() {
 
       {/* Cursor position indicator */}
       {canInput && (
-        <span style={{ fontSize:10, color:'#9ca3af', fontFamily:'monospace' }}>
+        <span style={{ fontSize:10, color:'#9ca3af', fontFamily:'var(--font-mono)' }}>
           beat {beatCursor + 1}
         </span>
       )}

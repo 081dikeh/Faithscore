@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import DialogHost from './components/DialogHost'
+import { loadAppFonts } from './fonts/fonts'
 
 // If this window was opened specifically to complete the FaithLibrary
 // OAuth connect flow (see connectGoogle in PublishToFaithLibrary), it
@@ -27,7 +28,7 @@ const pending = params.get('pending')
 
 if (isFaithLibraryPopup) {
   document.getElementById('root').innerHTML =
-    '<div style="font-family:system-ui,sans-serif;padding:48px 24px;text-align:center;color:#374151;font-size:14px">Connecting to FaithLibrary…</div>'
+    '<div style="font-family:var(--font-ui);padding:48px 24px;text-align:center;color:#374151;font-size:14px">Connecting to FaithLibrary…</div>'
 
   import('./lib/faithlibrary').then(async ({ faithlibrary, getFaithLibrarySession }) => {
     if (pending === 'google') {
@@ -48,7 +49,7 @@ if (isFaithLibraryPopup) {
       })
       if (error || !data?.url) {
         document.getElementById('root').innerHTML =
-          `<div style="font-family:system-ui,sans-serif;padding:48px 24px;text-align:center;color:#dc2626;font-size:14px">Could not start Google sign-in${error?.message ? `: ${error.message}` : ''}. You can close this window and try again.</div>`
+          `<div style="font-family:var(--font-ui);padding:48px 24px;text-align:center;color:#dc2626;font-size:14px">Could not start Google sign-in${error?.message ? `: ${error.message}` : ''}. You can close this window and try again.</div>`
         return
       }
       // Self-navigation — always allowed under any COOP policy, on any
@@ -72,17 +73,21 @@ if (isFaithLibraryPopup) {
         setTimeout(() => tryNotify(attemptsLeft - 1), 300)
       } else {
         document.getElementById('root').innerHTML =
-          '<div style="font-family:system-ui,sans-serif;padding:48px 24px;text-align:center;color:#dc2626;font-size:14px">Could not complete sign-in. You can close this window and try again.</div>'
+          '<div style="font-family:var(--font-ui);padding:48px 24px;text-align:center;color:#dc2626;font-size:14px">Could not complete sign-in. You can close this window and try again.</div>'
       }
     }
     tryNotify()
   })
 } else {
-  createRoot(document.getElementById('root')).render(
-    <StrictMode>
-      <App />
-      {/* FaithScore's own alert / confirm / prompt / toast popups */}
-      <DialogHost />
-    </StrictMode>,
-  )
+  // Fonts first: bar widths are computed from measured text, so measuring before the
+  // real fonts are in would give wrong layouts. (Never waits more than a few seconds.)
+  loadAppFonts().finally(() => {
+    createRoot(document.getElementById('root')).render(
+      <StrictMode>
+        <App />
+        {/* FaithScore's own alert / confirm / prompt / toast popups */}
+        <DialogHost />
+      </StrictMode>,
+    )
+  })
 }

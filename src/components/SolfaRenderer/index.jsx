@@ -42,8 +42,9 @@ import {
   resolveVerses,
   wrapLyricBlock,
 } from "../../utils/lyricVerses";
+import { FONT_SCORE } from "../../fonts/fonts";
 
-const FONT = '"Times New Roman", Georgia, serif';
+const FONT = FONT_SCORE;
 const NOTE_SZ = 14;
 const OCT_SZ = 8;
 const SYM_SZ = 10;

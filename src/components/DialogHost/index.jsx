@@ -28,7 +28,7 @@ const DEFAULT_TITLE = {
   choose:  '',
 }
 
-const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+const FONT = 'var(--font-ui)'
 
 const BTN = {
   base: {
@@ -249,7 +249,7 @@ export default function DialogHost() {
                   flex: '0 0 auto', width: 38, height: 38, borderRadius: '50%',
                   background: tone.bg, color: tone.c, boxShadow: `0 0 0 4px ${tone.ring}55`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontWeight: 800, fontSize: 18, fontFamily: 'Georgia, serif',
+                  fontWeight: 800, fontSize: 18, fontFamily: 'var(--font-score)',
                 }}
               >
                 {tone.icon}

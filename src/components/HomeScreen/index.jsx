@@ -384,7 +384,7 @@ function Wizard({ onDone, onCancel }) {
         <div style={{ ...hd, paddingTop:14, paddingBottom:0 }}>
           <div style={{ display:'flex', alignItems:'center', marginBottom:8 }}>
             <div style={{ display:'flex', alignItems:'center', gap:7 }}>
-              <img src="/FaithScore_logo.png" alt="" style={{ height:18, width:'auto' }} />
+              <img src={`${import.meta.env.BASE_URL}FaithScore_logo.png`} alt="" style={{ height:18, width:'auto' }} />
               <span style={{ fontWeight:600, fontSize:14, color:'#1e2433' }}>New score</span>
             </div>
             <button onClick={onCancel} style={{ marginLeft:'auto', border:'none', background:'none', cursor:'pointer', fontSize:22, color:'#9ca3af', lineHeight:1, padding:'0 2px' }}>×</button>
@@ -847,7 +847,7 @@ export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSi
                   onMouseEnter={e=>{e.currentTarget.style.borderColor='#d97706';e.currentTarget.style.background='#fffbeb'}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor='#d1d5db';e.currentTarget.style.background='white'}}>
                   <div style={{ height:138, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:8 }}>
-                    <div style={{ width:44, height:44, borderRadius:'50%', background:'#fef3c7', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, fontFamily:'"Times New Roman",serif', fontWeight:700, color:'#92400e' }}>d·r·m</div>
+                    <div style={{ width:44, height:44, borderRadius:'50%', background:'#fef3c7', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, fontFamily:'var(--font-score)', fontWeight:700, color:'#92400e' }}>d·r·m</div>
                     <span style={{ fontSize:11, fontWeight:600, color:'#d97706', letterSpacing:'0.05em' }}>TONIC SOL-FA</span>
                   </div>
                   <div style={{ padding:'10px 12px 14px', borderTop:'1px solid #fef3c7', background:'#fffdf0' }}>
@@ -913,7 +913,7 @@ export default function HomeScreen({ onOpenEditor, onOpenSolfaEditor, user, onSi
                 <button onClick={()=>setSolfaWizard(true)} style={{ display:'flex', alignItems:'center', gap:14, padding:'12px 16px', border:'1px dashed #d1d5db', borderRadius:9, background:'white', cursor:'pointer', transition:'all 0.15s' }}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor='#d97706';e.currentTarget.style.background='#fffbeb'}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor='#d1d5db';e.currentTarget.style.background='white'}}>
-                  <div style={{ width:38,height:38,borderRadius:8,background:'#fef3c7',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontFamily:'"Times New Roman",serif',fontWeight:700,color:'#92400e',flexShrink:0 }}>d·r·m</div>
+                  <div style={{ width:38,height:38,borderRadius:8,background:'#fef3c7',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontFamily:'var(--font-score)',fontWeight:700,color:'#92400e',flexShrink:0 }}>d·r·m</div>
                   <div>
                     <div style={{ fontSize:13, fontWeight:700, color:'#1e2433' }}>New Solfa Score</div>
                     <div style={{ fontSize:11, color:'#6b7280' }}>Choral tonic sol-fa notation</div>

@@ -132,7 +132,7 @@ export default function Toolbar() {
 
       {/* Triplet */}
       <Btn active={false} onClick={()=>insertTriplet()} title="Triplet: select a note/rest, then click to split it into 3 equal parts">
-        <span style={{fontSize:11, fontWeight:900, fontFamily:'monospace'}}>³</span>
+        <span style={{fontSize:11, fontWeight:900, fontFamily:'var(--font-mono)'}}>³</span>
       </Btn>
 
       <Sep />
@@ -151,7 +151,7 @@ export default function Toolbar() {
       <span style={{fontSize:10, color:'#9ca3af', fontWeight:700, flexShrink:0}}>Oct</span>
       {octaveOptions.map(o => (
         <Btn key={o} active={selectedOctave===o} onClick={()=>setSelectedOctave(o)} title={`Octave ${o}`}>
-          <span style={{fontSize:11, fontFamily:'monospace', fontWeight:700}}>{o}</span>
+          <span style={{fontSize:11, fontFamily:'var(--font-mono)', fontWeight:700}}>{o}</span>
         </Btn>
       ))}
 

@@ -6,7 +6,7 @@
 // PDF Blob, entirely in the browser — no print dialog, no manual "save as
 // PDF" step. This is what makes a one-click Publish button possible.
 import { jsPDF } from 'jspdf'
-import { BRAVURA_WOFF2_BASE64, ACADEMICO_WOFF2_BASE64 } from './musicFontData'
+import { getPdfFontStyle } from '../fonts/pdfFontCss'
 
 // Target resolution for the rasterized pages, in DPI. 300 is standard print
 // quality for line-art/engraving; going higher just inflates file size for
@@ -19,21 +19,8 @@ const MM_PER_INCH = 25.4
 // exports under a typical server upload limit.
 const JPEG_QUALITY = 0.92
 
-// A self-contained @font-face block using the exact font bytes VexFlow
-// itself embeds — see musicFontData.js for why this has to be self-embedded
-// rather than relying on the font already being loaded into the page.
-const FONT_FACE_STYLE = `
-  <style>
-    @font-face {
-      font-family: 'Bravura';
-      src: url(data:font/woff2;base64,${BRAVURA_WOFF2_BASE64}) format('woff2');
-    }
-    @font-face {
-      font-family: 'Academico';
-      src: url(data:font/woff2;base64,${ACADEMICO_WOFF2_BASE64}) format('woff2');
-    }
-  </style>
-`
+// The fonts the page needs are embedded inside each page's SVG copy as @font-face rules —
+// see fonts/pdfFontCss.js for why that has to be self-contained.
 
 // How much room the footer needs at the bottom of every page, in mm. Kept
 // small and out of the way — this is a footer, not a second header.
@@ -151,7 +138,7 @@ export async function buildPdfFromSvgPages({
 //
 // The fix that actually works: self-embed the exact same font bytes as a
 // real @font-face rule *inside* the SVG being rasterized (see
-// FONT_FACE_STYLE above, sourced from musicFontData.js). A plain <img>
+// fonts/pdfFontCss.js). A plain <img>
 // loading that self-contained SVG as a data URL — the browser's native SVG
 // decoder, the same one used for on-screen rendering — correctly parses and
 // applies @font-face rules declared within the SVG document itself, with no
@@ -165,7 +152,7 @@ async function rasterizeSvgPage(svgElement, totalW, sliceHeight, scale) {
 
   // Insert the font-face style as the SVG's first child so it's guaranteed
   // to be parsed before any <text> element tries to use it.
-  clone.insertAdjacentHTML('afterbegin', FONT_FACE_STYLE)
+  clone.insertAdjacentHTML('afterbegin', await getPdfFontStyle(svgElement))
 
   const svgString = new XMLSerializer().serializeToString(clone)
   const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })

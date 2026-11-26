@@ -63,6 +63,7 @@ import {
 } from "../../utils/exportSolfa";
 import { supabase } from "../../lib/supabase";
 import { saveRegistry } from "../../utils/saveRegistry.js";
+import { FONT_SCORE } from "../../fonts/fonts";
 
 const SYLLABLES = ["d", "r", "m", "f", "s", "l", "t"];
 const CHROMATIC = ["de", "ri", "fe", "se", "ta"];
@@ -97,7 +98,7 @@ const DUR_LABELS = {
 
 function OctLabel({ o }) {
   const s = {
-    fontFamily: '"Times New Roman",serif',
+    fontFamily: FONT_SCORE,
     fontSize: 13,
     lineHeight: 1,
   };
@@ -177,7 +178,7 @@ function PlaybackSeekBar({
           fontSize: 10,
           color: "#9ca3af",
           minWidth: 36,
-          fontFamily: "monospace",
+          fontFamily: "var(--font-mono)",
         }}
       >
         0:00
@@ -207,7 +208,7 @@ function PlaybackSeekBar({
           fontSize: 10,
           color: "#9ca3af",
           minWidth: 36,
-          fontFamily: "monospace",
+          fontFamily: "var(--font-mono)",
         }}
       >
         0:00
@@ -238,7 +239,7 @@ function PlaybackBeatReadout({ onBeat }) {
         display: "none",
         fontSize: 10,
         color: "#6ee7b7",
-        fontFamily: "monospace",
+        fontFamily: "var(--font-mono)",
         minWidth: 60,
       }}
     />
@@ -847,7 +848,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
         display: "flex",
         flexDirection: "column",
         background: "#f3f4f6",
-        fontFamily: "system-ui,sans-serif",
+        fontFamily: "var(--font-ui)",
       }}
     >
       {/* ── Sticky top chrome: menu bar + toolbar + playback bar, pinned as one unit ── */}
@@ -885,7 +886,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
             onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
           >
             <img
-              src="/FaithScore_logo.png"
+              src={`${import.meta.env.BASE_URL}FaithScore_logo.png`}
               alt=""
               style={{ height: 20, width: "auto" }}
             />
@@ -999,7 +1000,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
               style={{
                 fontSize: 10,
                 color: "#6b7280",
-                fontFamily: "monospace",
+                fontFamily: "var(--font-mono)",
                 background: "#f3f4f6",
                 padding: "2px 7px",
                 borderRadius: 3,
@@ -1323,7 +1324,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                   fontSize: 14,
                   fontWeight: 600,
                   color: "#1e2433",
-                  fontFamily: '"Times New Roman",serif',
+                  fontFamily: FONT_SCORE,
                 }}
               >
                 {syl}
@@ -1359,7 +1360,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                     fontSize: 12,
                     fontWeight: 600,
                     color: "#92400e",
-                    fontFamily: '"Times New Roman",serif',
+                    fontFamily: FONT_SCORE,
                   }}
                 >
                   {syl}
@@ -1381,7 +1382,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
             style={{
               ...abtn(false),
               padding: "3px 10px",
-              fontFamily: '"Times New Roman",serif',
+              fontFamily: FONT_SCORE,
             }}
           >
             – Hold
@@ -1404,7 +1405,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                   style={{
                     ...abtn(active),
                     minWidth: 40,
-                    fontFamily: '"Times New Roman",serif',
+                    fontFamily: FONT_SCORE,
                     fontSize: 12,
                   }}
                 >
@@ -1815,7 +1816,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                       fontSize: 12,
                       fontWeight: 700,
                       color: "#e5e7eb",
-                      fontFamily: '"Times New Roman",serif',
+                      fontFamily: FONT_SCORE,
                     }}
                   >
                     {part.label}
@@ -1850,7 +1851,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                     style={{
                       fontSize: 9,
                       color: muted ? "#dc2626" : "#6ee7b7",
-                      fontFamily: "monospace",
+                      fontFamily: "var(--font-mono)",
                       fontWeight: 700,
                     }}
                   >
@@ -1923,7 +1924,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                 style={{
                   fontSize: 9,
                   color: "#93c5fd",
-                  fontFamily: "monospace",
+                  fontFamily: "var(--font-mono)",
                 }}
               >
                 VOL
@@ -1986,7 +1987,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                   style={{
                     fontSize: 26,
                     fontWeight: 700,
-                    fontFamily: '"Times New Roman",serif',
+                    fontFamily: FONT_SCORE,
                     color: "#111",
                   }}
                 >
@@ -1998,7 +1999,7 @@ export default function SolfaApp({ user, onGoHome, onConvertToStaff }) {
                       fontSize: 13,
                       color: "#555",
                       textAlign: "right",
-                      fontFamily: '"Times New Roman",serif',
+                      fontFamily: FONT_SCORE,
                       margin: "4px 0 0",
                     }}
                   >

@@ -125,7 +125,7 @@ export default function PianoKeyboard() {
             textAlign: 'center',
             fontSize: 9,
             color: '#64748b',
-            fontFamily: 'monospace',
+            fontFamily: 'var(--font-mono)',
             fontWeight: 600,
           }}>C{oct}</div>
         ))}

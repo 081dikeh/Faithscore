@@ -5,6 +5,7 @@
 
 import { useState } from 'react'
 import { VOICE_COMBOS, buildEmptySolfaScore } from '../../store/solfaStore'
+import { FONT_SCORE } from '../../fonts/fonts'
 
 const KEYS = ['C','G','D','A','E','B','F#','Db','Ab','Eb','Bb','F']
 const TIME_SIGS = [{beats:2,label:'2/4'},{beats:3,label:'3/4'},{beats:4,label:'4/4'},{beats:6,label:'6/8'}]
@@ -43,7 +44,7 @@ export default function SolfaWizard({onDone, onCancel}) {
   const S = {
     overlay: {position:'fixed',inset:0,background:'rgba(0,0,0,0.55)',
       display:'flex',alignItems:'center',justifyContent:'center',zIndex:200,
-      fontFamily:'system-ui, sans-serif'},
+      fontFamily:'var(--font-ui)'},
     card: {background:'white',borderRadius:16,width:'100%',maxWidth:700,
       maxHeight:'90vh',overflowY:'auto',boxShadow:'0 20px 60px rgba(0,0,0,0.25)'},
     header: {padding:'24px 28px 16px',borderBottom:'1px solid #e5e7eb'},
@@ -174,7 +175,7 @@ export default function SolfaWizard({onDone, onCancel}) {
                         borderRadius:6,background:timeSig.beats===ts.beats?'#eff6ff':'white',
                         cursor:'pointer',fontSize:14,fontWeight:700,
                         color:timeSig.beats===ts.beats?'#2563eb':'#374151',
-                        fontFamily:'"Times New Roman",serif'}}>
+                        fontFamily:FONT_SCORE}}>
                       {ts.label}
                     </button>
                   ))}

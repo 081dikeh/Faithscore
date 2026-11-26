@@ -62,6 +62,7 @@ import { supabase } from "./lib/supabase";
 import SolfaApp from "./components/SolfaApp";
 import { dialog } from "./utils/dialog.js";
 import { saveRegistry } from "./utils/saveRegistry.js";
+import { FONT_SCORE } from "./fonts/fonts";
 
 const DURATION_KEYS = {
   1: "w",
@@ -142,7 +143,7 @@ function PageSettingsModal({ pageSettings, onChange, onClose }) {
           width: 340,
           padding: "18px 20px 16px",
           boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
-          fontFamily: "system-ui,sans-serif",
+          fontFamily: "var(--font-ui)",
         }}
       >
         <div
@@ -350,7 +351,7 @@ function ScoreInfoModal({ score, onChange, onClose }) {
           width: 360,
           padding: "18px 20px 16px",
           boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
-          fontFamily: "system-ui,sans-serif",
+          fontFamily: "var(--font-ui)",
         }}
       >
         <div
@@ -431,7 +432,7 @@ function OpenRecentModal({ items, loading, onPick, onClose }) {
           display: "flex",
           flexDirection: "column",
           boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
-          fontFamily: "system-ui,sans-serif",
+          fontFamily: "var(--font-ui)",
           overflow: "hidden",
         }}
       >
@@ -1526,7 +1527,7 @@ export default function App() {
       >
         <div style={{ textAlign: "center" }}>
           <img
-            src="/FaithScore_logo.png"
+            src={`${import.meta.env.BASE_URL}FaithScore_logo.png`}
             alt="FaithScore"
             style={{ height: 60, width: "auto", marginBottom: 12 }}
           />
@@ -1639,7 +1640,7 @@ export default function App() {
             onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
           >
             <img
-              src="/FaithScore_logo.png"
+              src={`${import.meta.env.BASE_URL}FaithScore_logo.png`}
               alt="FaithScore"
               style={{ height: 20, width: "auto", objectFit: "contain" }}
             />
@@ -2900,7 +2901,7 @@ export default function App() {
                     style={{
                       fontSize: 9,
                       color: muted ? "#dc2626" : "#6ee7b7",
-                      fontFamily: "monospace",
+                      fontFamily: "var(--font-mono)",
                       fontWeight: 700,
                     }}
                   >
@@ -3179,7 +3180,7 @@ export default function App() {
                     style={{
                       fontSize: 28,
                       fontWeight: 700,
-                      fontFamily: "Times New Roman, serif",
+                      fontFamily: FONT_SCORE,
                       color: "#111",
                       margin: 0,
                     }}
@@ -3192,7 +3193,7 @@ export default function App() {
                         fontSize: 13,
                         color: "#555",
                         textAlign: "right",
-                        fontFamily: "Times New Roman, serif",
+                        fontFamily: FONT_SCORE,
                         margin: "4px 0 0",
                       }}
                     >

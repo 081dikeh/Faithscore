@@ -59,6 +59,7 @@ import {
   convertMeasureToSolfaBeats,
   resolveScoreSlurs,
 } from "../../utils/staffToSolfa";
+import { FONT_SCORE } from "../../fonts/fonts";
 
 const MEASURES_PER_LINE = 5;
 
@@ -360,7 +361,7 @@ function buildVfNote(
 }
 
 // Rendered width (px) of a lyric syllable as it is actually drawn:
-// ctx.setFont("Times New Roman", 11, ...) is 11 POINTS in VexFlow 5, i.e.
+// ctx.setFont(FONT_SCORE, 11, ...) is 11 POINTS in VexFlow 5, i.e.
 // 11 * 4/3 = 14.67 CSS px. Measured with a canvas (cached) so bar widths and
 // note spacing reflect the real text, not a characters-times-constant guess.
 const LYRIC_FONT_PX = (11 * 4) / 3;
@@ -380,7 +381,7 @@ function measureTextPx(text, px) {
     if (!_txtCtx && typeof document !== "undefined")
       _txtCtx = document.createElement("canvas").getContext("2d");
     if (_txtCtx) {
-      _txtCtx.font = `${px}px "Times New Roman", Times, serif`;
+      _txtCtx.font = `${px}px ${FONT_SCORE}`;
       w = _txtCtx.measureText(t).width;
     }
   } catch (_) {}
@@ -407,7 +408,7 @@ function measureLyricPx(text) {
   try {
     if (!_lyricMeasureCtx && typeof document !== "undefined") {
       _lyricMeasureCtx = document.createElement("canvas").getContext("2d");
-      _lyricMeasureCtx.font = `${LYRIC_FONT_PX}px "Times New Roman", Times, serif`;
+      _lyricMeasureCtx.font = `${LYRIC_FONT_PX}px ${FONT_SCORE}`;
     }
     w = _lyricMeasureCtx
       ? _lyricMeasureCtx.measureText(t).width
@@ -1229,7 +1230,7 @@ export default function ScoreRenderer() {
     }
 
     ctx.scale(SCALE, SCALE);
-    ctx.setFont("Times New Roman", 10);
+    ctx.setFont(FONT_SCORE, 10);
 
     const allZones = [];
 
@@ -1296,16 +1297,16 @@ export default function ScoreRenderer() {
       let by = (totalLines - 1) * systemH + STAVE_TOP + partsTotalH + SP * 3.4;
       blockPrepared.forEach((v) => {
         try {
-          ctx.setFont("Times New Roman", 12, "bold");
+          ctx.setFont(FONT_SCORE, 12, "bold");
           ctx.fillText(v.label || `Verse ${v.number}`, LEFT_MARGIN + 4, by);
           by += BLOCK_HEAD_H;
-          ctx.setFont("Times New Roman", 11, "normal");
+          ctx.setFont(FONT_SCORE, 11, "normal");
           v.lines.forEach((ln) => {
             if (ln) ctx.fillText(ln, LEFT_MARGIN + SP, by);
             by += BLOCK_LINE_H;
           });
           by += SP;
-          ctx.setFont("Times New Roman", 10);
+          ctx.setFont(FONT_SCORE, 10);
         } catch (_) {}
       });
     }
@@ -1332,7 +1333,7 @@ export default function ScoreRenderer() {
 
       // Measure number label
       ctx.save();
-      ctx.setFont("Arial", 9);
+      ctx.setFont(FONT_SCORE, 9);
       ctx.fillText(String(startCol + 1), 24, sysY - 10);
       ctx.restore();
 
@@ -1507,7 +1508,7 @@ export default function ScoreRenderer() {
               if (closed) ctx.lineTo(x1, yB);
               ctx.stroke();
               if (startsHere) {
-                ctx.setFont("Times New Roman", 13, "bold");
+                ctx.setFont(FONT_SCORE, 13, "bold");
                 ctx.setFillStyle("#111");
                 ctx.fillText(voltaLabel(v), x0 + 5, yT + 13);
               }
@@ -1520,7 +1521,7 @@ export default function ScoreRenderer() {
             const rm = rehearsalMarks.find((r) => r.measureIndex === col);
             if (rm) {
               ctx.save();
-              ctx.setFont("Arial", 13);
+              ctx.setFont(FONT_SCORE, 13);
               const rmW = Math.max(20, rm.text.length * 10 + 8);
               ctx.setFillStyle("#1d3a6e");
               ctx.fillRect(x + 2, partY - 30, rmW, 20);
@@ -1537,7 +1538,7 @@ export default function ScoreRenderer() {
             const nm = lineIdx === 0 ? part.name || "" : shortNameOf(part);
             if (nm) {
               ctx.save();
-              ctx.setFont("Times New Roman", NAME_PT, "normal");
+              ctx.setFont(FONT_SCORE, NAME_PT, "normal");
               ctx.fillText(nm, x - SP * 1.3 - measureTextPx(nm, NAME_PX), stave.getYForLine(2) + 4);
               ctx.restore();
             }
@@ -2039,7 +2040,7 @@ export default function ScoreRenderer() {
             const verseRows = partVerseList[pIdx];
             if (rowBottomLineY == null) rowBottomLineY = stave.getBottomLineY();
             if (verseRows.length) {
-              ctx.setFont("Times New Roman", 11, "normal");
+              ctx.setFont(FONT_SCORE, 11, "normal");
               // Lowest thing hanging below this staff in this bar: low notes,
               // ledger lines, down-stems — the lyric line has to clear it.
               vfNotes.forEach((vn, ni) => {
@@ -2069,7 +2070,7 @@ export default function ScoreRenderer() {
                 if (showVerseTags && isFirst)
                   lyricQueue.push({ vk, text: verse.tag, x: stave.getX() + SP * 1.3, bold: true });
               });
-              ctx.setFont("Times New Roman", 10);
+              ctx.setFont(FONT_SCORE, 10);
             }
 
             // ── Articulations ────────────────────────────────────────────────
@@ -2111,7 +2112,7 @@ export default function ScoreRenderer() {
                   const ay = baseAy - markIndex * STACK_GAP;
 
                   ctx.save();
-                  ctx.setFont("Times New Roman", artFontSize);
+                  ctx.setFont(FONT_SCORE, artFontSize);
                   ctx.setFillStyle("#1e293b");
 
                   if (art === "staccato") {
@@ -2456,12 +2457,12 @@ export default function ScoreRenderer() {
 
               if (beats) {
                 const solfaY = partY - SP * -0.5;
-                const solfaFont = `600 ${notationSP * 1.4}px Georgia, serif`;
-                const rhythmFont = `600 ${notationSP * 1.1}px Georgia, serif`;
+                const solfaFont = `600 ${notationSP * 1.4}px ${FONT_SCORE}`;
+                const rhythmFont = `600 ${notationSP * 1.1}px ${FONT_SCORE}`;
                 // Octave number — sized relative to the main syllable the
                 // same way SolfaRenderer sizes its own OCT_SZ relative to
                 // its NOTE_SZ (8/14 of the main glyph).
-                const octFont = `700 ${notationSP * 1.4 * (8 / 14)}px Georgia, serif`;
+                const octFont = `700 ${notationSP * 1.4 * (8 / 14)}px ${FONT_SCORE}`;
 
                 const drawChar = (ch, cx, font, color) => {
                   if (cx == null) return;
@@ -2778,12 +2779,12 @@ export default function ScoreRenderer() {
           ctx.save();
           lyricQueue.forEach((q) => {
             try {
-              ctx.setFont("Times New Roman", 11, q.bold ? "bold" : "normal");
+              ctx.setFont(FONT_SCORE, 11, q.bold ? "bold" : "normal");
               ctx.fillText(q.text, q.x, base + q.vk * LYRIC_LINE_H);
             } catch (_) {}
           });
           ctx.restore();
-          ctx.setFont("Times New Roman", 10);
+          ctx.setFont(FONT_SCORE, 10);
         }
       });
 
@@ -3533,7 +3534,7 @@ export default function ScoreRenderer() {
               top: z.y - gap - fontSize - lane * laneStep + 50,
               fontSize,
               fontStyle: "italic",
-              fontFamily: "Times New Roman, serif",
+              fontFamily: FONT_SCORE,
               fontWeight: 800,
               color: "#1e293b",
               pointerEvents: "auto",
@@ -3675,7 +3676,7 @@ export default function ScoreRenderer() {
                 top: textTop,
                 fontSize,
                 fontStyle: "italic",
-                fontFamily: "Times New Roman, serif",
+                fontFamily: FONT_SCORE,
                 fontWeight: 800,
                 color,
                 whiteSpace: "nowrap",
@@ -3755,7 +3756,7 @@ export default function ScoreRenderer() {
               left: px,
               top: z.y - gap - fontSize - lane * laneStep + 50,
               fontSize,
-              fontFamily: "Times New Roman, serif",
+              fontFamily: FONT_SCORE,
               fontWeight: 800,
               color: isSel ? "#2563eb" : "#374151",
               pointerEvents: "auto",

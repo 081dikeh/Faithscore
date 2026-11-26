@@ -1,1 +1,15 @@
 @import "tailwindcss";
+
+/* Fonts (bundled — see src/fonts/fonts.js). Tailwind's font-sans / font-serif / font-mono follow them. */
+@import "./fonts/fonts.css";
+@theme {
+  --font-sans: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif: Edwin, "Gentium Plus", "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+:root {
+  --font-ui: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-score: Edwin, "Gentium Plus", "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+html, body { font-family: var(--font-ui); }
