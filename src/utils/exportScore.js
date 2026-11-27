@@ -7,6 +7,7 @@ import { DURATION_BEATS, noteDuration, measureCapacity, normalizeMeasure, PAGE_S
 import { dialog } from './dialog.js'
 import { guessInstrumentId, getInstrument, INSTRUMENTS } from '../audio/instruments.js'
 import { buildPlaySegments, expandRepeats, effectiveRepeats, markersFromStaffTexts } from './segnoNavigation.js'
+import { unzipSync } from 'fflate'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function xml(tag, attrs, ...children) {
@@ -250,6 +251,99 @@ function importUid() {
     : `${Date.now()}_${Math.random().toString(36).slice(2)}`
 }
 
+function makeImportRests(beats) {
+  const values = [
+    { duration: 'w', dots: 0, beats: 4 },
+    { duration: 'h', dots: 1, beats: 3 },
+    { duration: 'h', dots: 0, beats: 2 },
+    { duration: 'q', dots: 1, beats: 1.5 },
+    { duration: 'q', dots: 0, beats: 1 },
+    { duration: '8', dots: 1, beats: 0.75 },
+    { duration: '8', dots: 0, beats: 0.5 },
+    { duration: '16', dots: 1, beats: 0.375 },
+    { duration: '16', dots: 0, beats: 0.25 },
+    { duration: '32', dots: 0, beats: 0.125 },
+    { duration: '64', dots: 0, beats: 0.0625 },
+  ]
+  const rests = []
+  let remaining = beats
+
+  while (remaining > 0.001) {
+    const rest = values.find(value => value.beats <= remaining + 0.001)
+    if (!rest) break
+    rests.push({
+      id: importUid(),
+      isRest: true,
+      pitch: null,
+      duration: rest.duration,
+      dots: rest.dots,
+    })
+    remaining -= rest.beats
+  }
+
+  return rests
+}
+
+function xmlNodeName(node) {
+  return node?.localName || node?.tagName?.split(':').pop() || ''
+}
+
+function xmlElementChildren(node) {
+  return Array.from(node?.childNodes || []).filter(child => child.nodeType === 1)
+}
+
+function xmlQueryAll(node, selector) {
+  const chain = selector.trim().split(/\s*>\s*/)
+  let matches = [node]
+
+  chain.forEach((part, index) => {
+    const attributeStart = part.indexOf('[')
+    const tag = attributeStart === -1 ? part : part.slice(0, attributeStart)
+    const attribute = attributeStart === -1 ? null : part.slice(attributeStart + 1, -1)
+    const candidates = index === 0
+      ? Array.from(node.getElementsByTagName('*'))
+      : matches.flatMap(xmlElementChildren)
+
+    matches = candidates.filter(element =>
+      (tag === '*' || xmlNodeName(element) === tag)
+      && (!attribute || element.hasAttribute(attribute)),
+    )
+  })
+
+  return matches
+}
+
+function xmlQuery(node, selector) {
+  return xmlQueryAll(node, selector)[0] || null
+}
+
+function parseMusicXMLDocument(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml')
+  if (xmlQuery(doc, 'parsererror')) throw new Error('The file is not valid XML.')
+  return doc
+}
+
+export async function importMusicXMLFile(file) {
+  if (!/\.mxl$/i.test(file.name)) return importMusicXML(await file.text())
+
+  const archive = unzipSync(new Uint8Array(await file.arrayBuffer()))
+  const containerBytes = archive['META-INF/container.xml']
+  if (!containerBytes) {
+    throw new Error('This compressed MusicXML file is missing META-INF/container.xml.')
+  }
+
+  const container = parseMusicXMLDocument(new TextDecoder().decode(containerBytes))
+  const scorePath = xmlQueryAll(container, 'rootfile')
+    .map(rootfile => rootfile.getAttribute('full-path'))
+    .find(Boolean)
+  const scoreBytes = scorePath && archive[scorePath]
+  if (!scoreBytes) {
+    throw new Error('No MusicXML score was found inside this compressed file.')
+  }
+
+  return importMusicXML(new TextDecoder().decode(scoreBytes))
+}
+
 // Parses a MusicXML string (score-partwise) into a score object matching this
 // app's data model (see EMPTY_SCORE in scoreStore.js). Returns { score, warnings }.
 // score is null if the file couldn't be parsed at all; warnings lists anything
@@ -258,37 +352,36 @@ function importUid() {
 export function importMusicXML(xmlText) {
   let doc
   try {
-    doc = new DOMParser().parseFromString(xmlText, 'application/xml')
-    if (doc.querySelector('parsererror')) throw new Error('The file is not valid XML.')
+    doc = parseMusicXMLDocument(xmlText)
   } catch (e) {
     return { score: null, warnings: ['Could not parse this file as MusicXML: ' + e.message] }
   }
 
   const root = doc.documentElement
-  if (root.tagName === 'score-timewise') {
+  if (xmlNodeName(root) === 'score-timewise') {
     return { score: null, warnings: [
       'This file uses "timewise" MusicXML layout, which isn\'t supported. ' +
       'Please re-export it as "partwise" (the default in most notation software).'
     ] }
   }
-  if (root.tagName !== 'score-partwise') {
+  if (xmlNodeName(root) !== 'score-partwise') {
     return { score: null, warnings: ['This doesn\'t look like a MusicXML file (expected <score-partwise>).'] }
   }
 
-  const title = root.querySelector('work > work-title')?.textContent?.trim()
-    || root.querySelector('movement-title')?.textContent?.trim()
+  const title = xmlQuery(root, 'work > work-title')?.textContent?.trim()
+    || xmlQuery(root, 'movement-title')?.textContent?.trim()
     || 'Imported Score'
-  const composerEl = Array.from(root.querySelectorAll('identification > creator'))
+  const composerEl = xmlQueryAll(root, 'identification > creator')
     .find(c => c.getAttribute('type') === 'composer')
   const composer = composerEl?.textContent?.trim() || ''
 
   let tempo = 120
-  const soundTempo = root.querySelector('sound[tempo]')
+  const soundTempo = xmlQuery(root, 'sound[tempo]')
   if (soundTempo) {
     const t = Math.round(parseFloat(soundTempo.getAttribute('tempo')))
     if (t > 0) tempo = t
   } else {
-    const perMin = root.querySelector('metronome > per-minute')
+    const perMin = xmlQuery(root, 'metronome > per-minute')
     if (perMin) {
       const t = Math.round(parseFloat(perMin.textContent))
       if (t > 0) tempo = t
@@ -297,89 +390,103 @@ export function importMusicXML(xmlText) {
 
   const partNameById = {}
   const partInstrById = {}
-  root.querySelectorAll('part-list > score-part').forEach(sp => {
-    partNameById[sp.getAttribute('id')] = sp.querySelector('part-name')?.textContent?.trim() || sp.getAttribute('id')
+  xmlQueryAll(root, 'part-list > score-part').forEach(sp => {
+    partNameById[sp.getAttribute('id')] = xmlQuery(sp, 'part-name')?.textContent?.trim() || sp.getAttribute('id')
     partInstrById[sp.getAttribute('id')] = {
-      name: sp.querySelector('score-instrument > instrument-name')?.textContent?.trim() || '',
-      program: parseInt(sp.querySelector('midi-instrument > midi-program')?.textContent || '', 10),
+      name: xmlQuery(sp, 'score-instrument > instrument-name')?.textContent?.trim() || '',
+      program: parseInt(xmlQuery(sp, 'midi-instrument > midi-program')?.textContent || '', 10),
     }
   })
 
-  const partEls = Array.from(root.querySelectorAll('part'))
+  const partEls = xmlQueryAll(root, 'part')
   if (!partEls.length) return { score: null, warnings: ['No parts found in this file.'] }
 
   const dynamics = [], hairpins = [], rehearsalMarks = [], staffTexts = [], barlines = [], voltas = [], openVoltas = []
-  let skippedVoiceNotes = 0, sawGraceNotes = false, sawUnsupportedDur = false
+  let splitVoiceCount = 0, sawGraceNotes = false, sawUnsupportedDur = false
 
-  const parts = partEls.map((partEl, pi) => {
+  const parts = partEls.flatMap((partEl, pi) => {
     const xmlPartId = partEl.getAttribute('id')
     const name = partNameById[xmlPartId] || `Part ${pi + 1}`
-    const internalPartId = `part-${importUid()}`
+    const voiceInfoByKey = new Map()
+    xmlQueryAll(partEl, 'note').forEach(note => {
+      const staff = xmlQuery(note, 'staff')?.textContent?.trim() || '1'
+      const voice = xmlQuery(note, 'voice')?.textContent?.trim() || '1'
+      const key = `${staff}\u0000${voice}`
+      if (!voiceInfoByKey.has(key)) voiceInfoByKey.set(key, { staff, voice })
+    })
+    if (!voiceInfoByKey.size) voiceInfoByKey.set('1\u00001', { staff: '1', voice: '1' })
+
+    const voiceKeys = Array.from(voiceInfoByKey.keys())
+    const internalPartIds = new Map(voiceKeys.map(key => [key, `part-${importUid()}`]))
+    const primaryPartId = internalPartIds.get(voiceKeys[0])
+    const measuresByVoice = new Map(voiceKeys.map(key => [key, []]))
+    if (voiceKeys.length > 1) splitVoiceCount += voiceKeys.length - 1
 
     let divisions = 4
-    let clef = 'treble'
+    const clefsByStaff = new Map([['1', 'treble']])
     let currentTs = { beats: 4, beatType: 4 }
     let currentKs = 0
 
-    const measures = Array.from(partEl.querySelectorAll('measure')).map((measureEl, mi) => {
-      const attrsEl = measureEl.querySelector('attributes')
+    xmlQueryAll(partEl, 'measure').forEach((measureEl, mi) => {
+      const attrsEl = xmlQuery(measureEl, 'attributes')
       if (attrsEl) {
-        const divEl = attrsEl.querySelector('divisions')
+        const divEl = xmlQuery(attrsEl, 'divisions')
         if (divEl) divisions = parseFloat(divEl.textContent) || divisions
-        const fifths = attrsEl.querySelector('key > fifths')
+        const fifths = xmlQuery(attrsEl, 'key > fifths')
         if (fifths) currentKs = parseInt(fifths.textContent, 10) || 0
-        const beats = attrsEl.querySelector('time > beats')
-        const beatType = attrsEl.querySelector('time > beat-type')
+        const beats = xmlQuery(attrsEl, 'time > beats')
+        const beatType = xmlQuery(attrsEl, 'time > beat-type')
         if (beats && beatType) {
           currentTs = { beats: parseInt(beats.textContent, 10) || 4, beatType: parseInt(beatType.textContent, 10) || 4 }
         }
-        const clefSign = attrsEl.querySelector('clef > sign')
-        if (clefSign) {
-          const sign = clefSign.textContent
-          const octChange = parseInt(attrsEl.querySelector('clef > clef-octave-change')?.textContent || '0', 10)
-          clef = sign === 'F' ? 'bass' : sign === 'C' ? 'alto' : (octChange === -1 ? 'treble8' : 'treble')
-        }
+        xmlQueryAll(attrsEl, 'clef').forEach(clefEl => {
+          const sign = xmlQuery(clefEl, 'sign')?.textContent
+          if (!sign) return
+          const staff = clefEl.getAttribute('number') || '1'
+          const octChange = parseInt(xmlQuery(clefEl, 'clef-octave-change')?.textContent || '0', 10)
+          const clef = sign === 'F' ? 'bass' : sign === 'C' ? 'alto' : (octChange === -1 ? 'treble8' : 'treble')
+          clefsByStaff.set(staff, clef)
+        })
       }
 
       const capacity = measureCapacity(currentTs)
-      const notes = []
+      const notesByVoice = new Map(voiceKeys.map(key => [key, []]))
+      const lastNoteIdByVoice = new Map()
       let cursorBeat = 0
-      let firstVoiceSeen = null
-      let lastRealNoteId = null
 
-      Array.from(measureEl.children).forEach(child => {
-        const tag = child.tagName
+      xmlElementChildren(measureEl).forEach(child => {
+        const tag = xmlNodeName(child)
         if (tag === 'direction') {
-          const dyn = child.querySelector('direction-type > dynamics')
+          const dyn = xmlQuery(child, 'direction-type > dynamics')
           if (dyn) {
-            const dynEl = Array.from(dyn.children)[0]
-            const value = dynEl?.tagName === 'other-dynamics' ? dynEl.textContent : dynEl?.tagName
-            if (value) dynamics.push({ id: importUid(), partId: internalPartId, measureIndex: mi, beat: cursorBeat, value })
+            const dynEl = xmlElementChildren(dyn)[0]
+            const value = xmlNodeName(dynEl) === 'other-dynamics' ? dynEl.textContent : xmlNodeName(dynEl)
+            if (value) dynamics.push({ id: importUid(), partId: primaryPartId, measureIndex: mi, beat: cursorBeat, value })
           }
-          const words = child.querySelector('direction-type > words')
+          const words = xmlQuery(child, 'direction-type > words')
           if (words && words.textContent.trim()) {
-            staffTexts.push({ id: importUid(), partId: internalPartId, measureIndex: mi, beat: cursorBeat, text: words.textContent.trim() })
+            staffTexts.push({ id: importUid(), partId: primaryPartId, measureIndex: mi, beat: cursorBeat, text: words.textContent.trim() })
           }
-          const rehearsal = child.querySelector('direction-type > rehearsal')
+          const rehearsal = xmlQuery(child, 'direction-type > rehearsal')
           if (rehearsal && pi === 0) {
             rehearsalMarks.push({ id: importUid(), measureIndex: mi, text: rehearsal.textContent.trim() })
           }
-          const wedge = child.querySelector('direction-type > wedge')
+          const wedge = xmlQuery(child, 'direction-type > wedge')
           if (wedge) {
             const type = wedge.getAttribute('type')
             if (type === 'crescendo' || type === 'diminuendo') {
               hairpins.push({
-                id: importUid(), partId: internalPartId, startMeasure: mi, startBeat: cursorBeat,
+                id: importUid(), partId: primaryPartId, startMeasure: mi, startBeat: cursorBeat,
                 endMeasure: mi, endBeat: capacity, type: type === 'crescendo' ? 'cresc' : 'decresc',
               })
             } else if (type === 'stop') {
-              const last = hairpins.filter(h => h.partId === internalPartId).pop()
+              const last = hairpins.filter(h => h.partId === primaryPartId).pop()
               if (last) { last.endMeasure = mi; last.endBeat = cursorBeat }
             }
           }
         } else if (tag === 'barline') {
-          const style = child.querySelector('bar-style')?.textContent
-          const repeat = child.querySelector('repeat')
+          const style = xmlQuery(child, 'bar-style')?.textContent
+          const repeat = xmlQuery(child, 'repeat')
           let type = null
           if (repeat?.getAttribute('direction') === 'forward') type = 'repeat-start'
           else if (repeat?.getAttribute('direction') === 'backward') type = 'repeat-end'
@@ -387,7 +494,7 @@ export function importMusicXML(xmlText) {
           else if (style === 'light-heavy') type = 'final'
           if (type) barlines.push({ id: importUid(), measureIndex: mi, type })
           // 1st / 2nd-time endings: <ending number="1,2" type="start|stop|discontinue">
-          child.querySelectorAll('ending').forEach(en => {
+          xmlQueryAll(child, 'ending').forEach(en => {
             const et = en.getAttribute('type')
             const nums = (en.getAttribute('number') || '1').split(',').flatMap(tok => {
               const m = tok.trim().match(/^(\d+)\s*-\s*(\d+)$/)
@@ -403,26 +510,33 @@ export function importMusicXML(xmlText) {
               if (v) v.endMeasure = mi
             }
           })
-        } else if (tag === 'backup') {
-          skippedVoiceNotes++
+        } else if (tag === 'backup' || tag === 'forward') {
+          const duration = parseFloat(xmlQuery(child, 'duration')?.textContent)
+          if (Number.isFinite(duration) && divisions > 0) {
+            const direction = tag === 'backup' ? -1 : 1
+            cursorBeat = Math.max(0, cursorBeat + direction * duration / divisions)
+          }
         } else if (tag === 'note') {
-          const voice = child.querySelector('voice')?.textContent || '1'
-          if (firstVoiceSeen === null) firstVoiceSeen = voice
-          if (voice !== firstVoiceSeen) { skippedVoiceNotes++; return }
-          if (child.querySelector('grace')) { sawGraceNotes = true; return }
+          const staff = xmlQuery(child, 'staff')?.textContent?.trim() || '1'
+          const voice = xmlQuery(child, 'voice')?.textContent || '1'
+          const voiceKey = `${staff}\u0000${voice}`
+          const voiceNotes = notesByVoice.get(voiceKey)
+          if (!voiceNotes) return
+          if (xmlQuery(child, 'grace')) { sawGraceNotes = true; return }
 
-          const isChord = !!child.querySelector('chord')
-          const isRest = !!child.querySelector('rest')
-          const typeEl = child.querySelector('type')
+          const noteStartBeat = cursorBeat
+          const isChord = !!xmlQuery(child, 'chord')
+          const isRest = !!xmlQuery(child, 'rest')
+          const typeEl = xmlQuery(child, 'type')
           const duration = typeEl ? (XML_TO_DUR[typeEl.textContent] || 'q') : 'q'
           if (typeEl && !XML_TO_DUR[typeEl.textContent]) sawUnsupportedDur = true
-          const dots = child.querySelectorAll('dot').length
+          const dots = xmlQueryAll(child, 'dot').length
 
-          const timeMod = child.querySelector('time-modification')
+          const timeMod = xmlQuery(child, 'time-modification')
           let tuplet = null
           if (timeMod) {
-            const actual = parseInt(timeMod.querySelector('actual-notes')?.textContent, 10)
-            const normal = parseInt(timeMod.querySelector('normal-notes')?.textContent, 10)
+            const actual = parseInt(xmlQuery(timeMod, 'actual-notes')?.textContent, 10)
+            const normal = parseInt(xmlQuery(timeMod, 'normal-notes')?.textContent, 10)
             if (actual && normal) tuplet = { num: actual, den: normal }
           }
 
@@ -430,17 +544,17 @@ export function importMusicXML(xmlText) {
           if (tuplet) noteObj.tuplet = tuplet
 
           if (!isRest) {
-            const step = child.querySelector('pitch > step')?.textContent || 'C'
-            const octave = parseInt(child.querySelector('pitch > octave')?.textContent, 10)
-            const alter = parseInt(child.querySelector('pitch > alter')?.textContent || '0', 10)
+            const step = xmlQuery(child, 'pitch > step')?.textContent || 'C'
+            const octave = parseInt(xmlQuery(child, 'pitch > octave')?.textContent, 10)
+            const alter = parseInt(xmlQuery(child, 'pitch > alter')?.textContent || '0', 10)
             const accidental = alter === 1 ? '#' : alter === -1 ? 'b' : alter === 2 ? '##' : alter === -2 ? 'bb' : ''
             noteObj.pitch = { step, octave: isNaN(octave) ? 4 : octave, accidental }
 
-            if (Array.from(child.querySelectorAll('tie')).some(t => t.getAttribute('type') === 'start')) {
+            if (xmlQueryAll(child, 'tie').some(t => t.getAttribute('type') === 'start')) {
               noteObj.tieStart = true
             }
-            child.querySelectorAll('lyric').forEach(ly => {
-              const t = ly.querySelector('text')?.textContent
+            xmlQueryAll(child, 'lyric').forEach(ly => {
+              const t = xmlQuery(ly, 'text')?.textContent
               if (!t) return
               const num = parseInt(ly.getAttribute('number') || '1', 10)
               if (!num || num === 1) noteObj.lyric = t
@@ -448,45 +562,70 @@ export function importMusicXML(xmlText) {
             })
 
             const arts = []
-            child.querySelectorAll('notations > articulations > *').forEach(a => { if (XML_TO_ARTICULATION[a.tagName]) arts.push(XML_TO_ARTICULATION[a.tagName]) })
-            child.querySelectorAll('notations > fermata').forEach(() => arts.push('fermata'))
-            child.querySelectorAll('notations > ornaments > *').forEach(o => { if (XML_TO_ARTICULATION[o.tagName]) arts.push(XML_TO_ARTICULATION[o.tagName]) })
-            child.querySelectorAll('notations > technical > *').forEach(t => { if (XML_TO_ARTICULATION[t.tagName]) arts.push(XML_TO_ARTICULATION[t.tagName]) })
+            xmlQueryAll(child, 'notations > articulations > *').forEach(a => { if (XML_TO_ARTICULATION[xmlNodeName(a)]) arts.push(XML_TO_ARTICULATION[xmlNodeName(a)]) })
+            xmlQueryAll(child, 'notations > fermata').forEach(() => arts.push('fermata'))
+            xmlQueryAll(child, 'notations > ornaments > *').forEach(o => { if (XML_TO_ARTICULATION[xmlNodeName(o)]) arts.push(XML_TO_ARTICULATION[xmlNodeName(o)]) })
+            xmlQueryAll(child, 'notations > technical > *').forEach(t => { if (XML_TO_ARTICULATION[xmlNodeName(t)]) arts.push(XML_TO_ARTICULATION[xmlNodeName(t)]) })
             if (arts.length) noteObj.articulations = arts
           }
 
-          const beatLen = DURATION_BEATS[duration + (dots ? 'd' : '')] || DURATION_BEATS[duration] || 1
-          if (isChord && lastRealNoteId) {
-            noteObj.chordWith = lastRealNoteId
+          const beatLen = noteDuration(noteObj)
+          const lastNoteId = lastNoteIdByVoice.get(voiceKey)
+          if (isChord && lastNoteId) {
+            noteObj.chordWith = lastNoteId
           } else {
-            lastRealNoteId = noteObj.id
-            cursorBeat += beatLen
+            lastNoteIdByVoice.set(voiceKey, noteObj.id)
+            const xmlDuration = parseFloat(xmlQuery(child, 'duration')?.textContent)
+            cursorBeat += Number.isFinite(xmlDuration) && divisions > 0
+              ? xmlDuration / divisions
+              : beatLen
           }
-          notes.push(noteObj)
+          voiceNotes.push({ beat: noteStartBeat, note: noteObj })
         }
       })
 
-      // normalizeMeasure guarantees exact capacity fill regardless of any
-      // rounding drift or incomplete measures in the source file.
-      return {
-        id: importUid(),
-        timeSignature: { ...currentTs },
-        keySignature: currentKs,
-        notes: normalizeMeasure(notes, capacity),
-      }
+      voiceKeys.forEach(key => {
+        const voiceNotes = notesByVoice.get(key).sort((a, b) => a.beat - b.beat)
+        const notes = []
+        let voiceCursor = 0
+
+        voiceNotes.forEach(({ beat, note }) => {
+          if (note.chordWith) {
+            notes.push(note)
+            return
+          }
+          if (beat > voiceCursor + 0.001) notes.push(...makeImportRests(beat - voiceCursor))
+          notes.push(note)
+          voiceCursor = Math.max(voiceCursor, beat + noteDuration(note))
+        })
+
+        measuresByVoice.get(key).push({
+          id: importUid(),
+          timeSignature: { ...currentTs },
+          keySignature: currentKs,
+          notes: normalizeMeasure(notes, capacity),
+        })
+      })
     })
 
-    // What does this part play? Try the part's own name, then the instrument the
-    // file declares, then its MIDI program; "Soprano"/"Alto"/"Tenor"/"Bass" parts
-    // of a 3+ part score are voices.
     const declared = partInstrById[xmlPartId] || {}
-    let instrument = guessInstrumentId(name, partEls.length)
-    if (instrument === 'piano' && declared.name) instrument = guessInstrumentId(declared.name, partEls.length)
-    if (instrument === 'piano' && declared.program > 0) {
-      const byProgram = INSTRUMENTS.find((x) => !x.unpitched && x.program === declared.program - 1)
-      if (byProgram) instrument = byProgram.id
-    }
-    return { id: internalPartId, name, instrument, clef, measures }
+    return voiceKeys.map(key => {
+      const { staff, voice } = voiceInfoByKey.get(key)
+      const partName = voiceKeys.length > 1 ? `${name} (Staff ${staff}, Voice ${voice})` : name
+      let instrument = guessInstrumentId(partName, partEls.length)
+      if (instrument === 'piano' && declared.name) instrument = guessInstrumentId(declared.name, partEls.length)
+      if (instrument === 'piano' && declared.program > 0) {
+        const byProgram = INSTRUMENTS.find((x) => !x.unpitched && x.program === declared.program - 1)
+        if (byProgram) instrument = byProgram.id
+      }
+      return {
+        id: internalPartIds.get(key),
+        name: partName,
+        instrument,
+        clef: clefsByStaff.get(staff) || clefsByStaff.get('1') || 'treble',
+        measures: measuresByVoice.get(key),
+      }
+    })
   })
 
   // Defensive: pad all parts to the same measure count
@@ -503,8 +642,8 @@ export function importMusicXML(xmlText) {
   })
 
   const warnings = []
-  if (skippedVoiceNotes > 0) {
-    warnings.push(`This file has more than one voice per staff (e.g. divisi or a counter-melody sharing a staff) — only the first voice in each measure was imported. ${skippedVoiceNotes} additional note(s) were skipped.`)
+  if (splitVoiceCount > 0) {
+    warnings.push(`This file contains multiple voices or staves within a part. All were imported as separate staves (${splitVoiceCount} additional staff${splitVoiceCount === 1 ? '' : 's'}).`)
   }
   if (sawGraceNotes) warnings.push("Grace notes were found and skipped — they aren't supported yet.")
   if (sawUnsupportedDur) warnings.push('Some notes had an unusual duration type and were approximated as quarter notes.')

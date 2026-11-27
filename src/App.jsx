@@ -49,7 +49,7 @@ import {
   exportMusicXML,
   exportMIDI,
   printScore,
-  importMusicXML,
+  importMusicXMLFile,
 } from "./utils/exportScore";
 import { convertStaffScoreToSolfa } from "./utils/staffToSolfa";
 import { convertSolfaScoreToStaff } from "./utils/solfaToStaff";
@@ -852,16 +852,8 @@ export default function App() {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-selecting the same file later
     if (!file) return;
-    if (/\.mxl$/i.test(file.name)) {
-      dialog.alert(
-        "This is a compressed MusicXML file (.mxl), which isn't supported yet.\n\nIn MuseScore (or similar), use File → Export → uncompressed MusicXML (.xml/.musicxml) instead.",
-        { tone: "warn", title: "File type not supported" },
-      );
-      return;
-    }
     try {
-      const text = await file.text();
-      const { score: imported, warnings } = importMusicXML(text);
+      const { score: imported, warnings } = await importMusicXMLFile(file);
       if (!imported) {
         dialog.alert(warnings[0] || "Unknown error", {
           tone: "danger",
@@ -1571,7 +1563,7 @@ export default function App() {
       <input
         ref={openFileInputRef}
         type="file"
-        accept=".xml,.musicxml,application/vnd.recordare.musicxml+xml,text/xml,application/xml"
+        accept=".xml,.musicxml,.mxl,application/vnd.recordare.musicxml+xml,text/xml,application/xml"
         style={{ display: "none" }}
         onChange={handleOpenFileChosen}
       />
